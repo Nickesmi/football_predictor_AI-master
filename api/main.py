@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import math
+import ssl
 import urllib.request
 from datetime import date, datetime, timezone
 from typing import Optional, Union
@@ -86,16 +87,38 @@ def _poisson_over(lam: float, threshold: int) -> float:
 
 
 def _categorize_market(market_name: str) -> str:
-    """Assign a market to one of 7 display sections."""
+    """Assign a market to one of the display sections."""
     m = market_name.lower()
-    if "handicap" in m or "ah " in m:
-        return "Handicaps"
     if "corner" in m:
         return "Corners"
     if "card" in m:
         return "Cards"
+    # Handicap markets (must check before FH/SH prefix)
+    if "handicap" in m or m.startswith("ah ") or m.startswith("eh "):
+        return "Handicaps"
+    if m.startswith("sh "):
+        return "Second Half"
     if m.startswith("fh "):
         return "First Half"
+    # Combo markets (Result+Goals, Result+BTTS, BTTS+Goals)
+    if " & " in m:
+        return "Result"
+    # Correct Score
+    if m.startswith("cs ") or "correct score" in m:
+        return "Goals"
+    # Winning Margin
+    if "win by" in m or "winning margin" in m or "exact draw" in m:
+        return "Result"
+    # Clean Sheet / Fail to Score
+    if "clean sheet" in m or "fails to score" in m:
+        return "Result"
+    # Exact Team Goals
+    if "exact" in m and "goals" in m and "total" not in m:
+        return "Team Goals"
+    # Score in Both Halves
+    if "score in both" in m:
+        return "Goals"
+    # Standard result markets
     if "1x " in m or "x2 " in m or "12 " in m:
         return "Result"
     if m in ("home win", "away win", "draw"):
@@ -108,14 +131,92 @@ def _categorize_market(market_name: str) -> str:
     return "Goals"
 
 
-def _compute_match_analysis(home_name: str, away_name: str, league_name: str = "Premier League") -> dict:
+# ══════════════════════════════════════════════════════
+# DIXON-COLES CORRECTION — Fix Poisson independence flaw
+# ══════════════════════════════════════════════════════
+#
+# Standard bivariate Poisson assumes home/away goals are independent.
+# This causes: overestimated BTTS, wrong draw probabilities,
+# unrealistic high-score tails.
+#
+# Dixon-Coles introduces correlation parameter ρ (rho) that adjusts
+# low-score cells (0-0, 1-0, 0-1, 1-1) where the independence
+# assumption is most violated.
+#
+# ρ typically ranges from -0.10 to -0.15 (negative = draws more
+# likely than independent Poisson suggests).
+
+# ρ values tuned per context (FH has less variance, needs smaller correction)
+DIXON_COLES_RHO_FT = -0.12   # Full-time: moderate correction
+DIXON_COLES_RHO_FH = -0.05   # First half: less variance, smaller correction
+DIXON_COLES_RHO_SH = -0.08   # Second half: between FT and FH
+
+
+def _dixon_coles_tau(h: int, a: int, lam_h: float, lam_a: float, rho: float) -> float:
+    """Dixon-Coles correction factor τ for score (h, a).
+
+    Only adjusts low-score cells where Poisson independence is most wrong.
+    The (1,1) cell uses a softened 0.5×ρ to avoid over-boosting BTTS.
+    Returns a multiplicative factor to apply to the raw Poisson probability.
     """
-    Per-match analysis. Clean modular pipeline:
-      1. Team stats + Poisson + Corners + Cards + XGBoost
-      2. Generate ALL markets across 7 sections
-      3. Filter: probability >= 80% ONLY
-      4. Group by section for display
-      5. Top picks = ALL >=80%, shuffled randomly
+    if h == 0 and a == 0:
+        return 1.0 - lam_h * lam_a * rho
+    elif h == 0 and a == 1:
+        return 1.0 + lam_h * rho
+    elif h == 1 and a == 0:
+        return 1.0 + lam_a * rho
+    elif h == 1 and a == 1:
+        return 1.0 - 0.35 * rho  # Dampened: boosts draws without inflating BTTS
+    return 1.0
+
+
+def _build_joint_matrix(lam_h: float, lam_a: float, max_goals: int,
+                        rho: float = None, apply_dc: bool = True) -> dict:
+    """Build a Dixon-Coles corrected bivariate Poisson joint probability matrix.
+
+    Args:
+        lam_h: Expected goals for home/team A
+        lam_a: Expected goals for away/team B
+        max_goals: Maximum goals to consider per side
+        rho: Dixon-Coles correlation parameter (default: DIXON_COLES_RHO)
+        apply_dc: Whether to apply Dixon-Coles correction (False for corners/cards)
+
+    Returns:
+        dict mapping (h, a) -> probability, normalized to sum=1.0
+    """
+    from src.ml.poisson_model import _poisson_pmf
+
+    if rho is None:
+        rho = DIXON_COLES_RHO_FT
+
+    matrix = {}
+    for h in range(max_goals + 1):
+        for a in range(max_goals + 1):
+            p = _poisson_pmf(h, lam_h) * _poisson_pmf(a, lam_a)
+            if apply_dc:
+                tau = _dixon_coles_tau(h, a, lam_h, lam_a, rho)
+                p *= max(0.0, tau)  # Safety: prevent negative probabilities
+            matrix[(h, a)] = p
+
+    # Renormalize so probabilities sum to exactly 1.0
+    total = sum(matrix.values())
+    if total > 0:
+        matrix = {k: v / total for k, v in matrix.items()}
+
+    return matrix
+
+
+def _compute_match_analysis(home_name: str, away_name: str, league_name: str = "Premier League", shuffle_tiers: bool = True) -> dict:
+    """
+    Per-match MODULAR analysis — 2-Layer Architecture:
+
+    LAYER 1 — Structured Analysis:
+      Compute ALL markets independently across 7 modules:
+        Goals | First Half | Team Goals | Result | Corners | Cards | Handicaps
+      Each module = separate probabilities — NO mixing.
+
+    LAYER 2 — Top Picks:
+      From ALL modules → filter ≥80% → combine → shuffle randomly.
     """
     import random
     from src.ml.poisson_model import _poisson_pmf
@@ -184,69 +285,168 @@ def _compute_match_analysis(home_name: str, away_name: str, league_name: str = "
         if lam <= 0: return 0.0
         return max(0, min(100, (1 - sum(_poisson_pmf(k, lam) for k in range(threshold + 1))) * 100))
 
-    MG = 8
-    ft = {(h, a): _poisson_pmf(h, pred.lambda_home) * _poisson_pmf(a, pred.lambda_away) for h in range(MG+1) for a in range(MG+1)}
+    # Dynamic MG based on lambdas to prevent tail truncation bias.
+    # Ensures negligible probability mass is lost at the edges.
+    MG = max(10, int(pred.lambda_home + pred.lambda_away + 6))
+
+    # ── Dixon-Coles corrected goal matrices ──
+    # FT, FH, SH each get context-specific ρ correction.
+    # Corners and Cards remain uncorrected (independent events).
+    ft = _build_joint_matrix(pred.lambda_home, pred.lambda_away, MG, rho=DIXON_COLES_RHO_FT)
     fh_lh, fh_la = pred.lambda_home * 0.45, pred.lambda_away * 0.45
-    fhm = {(h, a): _poisson_pmf(h, fh_lh) * _poisson_pmf(a, fh_la) for h in range(MG+1) for a in range(MG+1)}
+    fhm = _build_joint_matrix(fh_lh, fh_la, MG, rho=DIXON_COLES_RHO_FH)
+
+    # Corners & Cards — NO Dixon-Coles (independence assumption is fine here)
     MC = 24
-    cm = {(h, a): _poisson_pmf(h, exp_h_corn) * _poisson_pmf(a, exp_a_corn) for h in range(MC+1) for a in range(MC+1)}
+    cm = _build_joint_matrix(exp_h_corn, exp_a_corn, MC, apply_dc=False)
     MK = 14
-    km = {(h, a): _poisson_pmf(h, exp_h_card) * _poisson_pmf(a, exp_a_card) for h in range(MK+1) for a in range(MK+1)}
+    km = _build_joint_matrix(exp_h_card, exp_a_card, MK, apply_dc=False)
 
     def mx(matrix, mx_val, cond):
         return sum(matrix[(h, a)] for h in range(mx_val+1) for a in range(mx_val+1) if cond(h, a)) * 100
 
+    # ══════════════════════════════════════════════════════
+    # PROBABILITY CALIBRATION — Prevent overconfidence
+    # ══════════════════════════════════════════════════════
+    #
+    # Raw Poisson probabilities are systematically overconfident
+    # because the model can't account for real-world variance
+    # (injuries, weather, tactics, referee, luck).
+    #
+    # Formula: calibrated = 0.5 + (raw - 0.5) × SHRINK
+    #
+    # Properties:
+    #   - Symmetric: cal(x) + cal(1-x) = 1 (Over+Under = 100%)
+    #   - 50% stays 50% (uncertain stays uncertain)
+    #   - Extremes get compressed toward realistic ranges
+    #   - SHRINK=0.82 → max possible output = 91%, min = 9%
+    #
+    # Realistic target ranges after calibration:
+    #   Over 0.5: 85-91%  |  Over 1.5: 70-85%
+    #   Over 2.5: 55-75%  |  Match Winner: 55-80%
+
+    CALIBRATION_SHRINK = 0.82
+
+    def calibrate(prob_pct: float) -> float:
+        """Compress probability toward 50% to prevent overconfidence."""
+        p = prob_pct / 100.0
+        cal = 0.5 + (p - 0.5) * CALIBRATION_SHRINK
+        return round(max(5.0, min(92.0, cal * 100.0)), 1)
+
     raw = []
     def add(name, prob):
+        prob = calibrate(max(0, min(100, prob)))
+        if prob > 0:
+            raw.append({"market": name, "probability": prob})
+
+    def add_group(names_and_probs):
+        """Calibrate a group of mutually exclusive outcomes, then renormalize to 100%.
+
+        This preserves the simplex constraint: P(A) + P(B) + ... = 100%.
+        Critical for 1X2, correct score, and any multi-way market.
+        """
+        calibrated = [(name, calibrate(max(0, min(100, prob)))) for name, prob in names_and_probs]
+        total = sum(p for _, p in calibrated)
+        if total > 0:
+            for name, p in calibrated:
+                renorm_p = round(p / total * 100, 1)
+                if renorm_p > 0:
+                    raw.append({"market": name, "probability": renorm_p})
+        # Return renormalized values for downstream use (e.g., double chance)
+        if total > 0:
+            return {name: round(p / total * 100, 1) for name, p in calibrated}
+        return {name: 0.0 for name, _ in names_and_probs}
+
+    def add_raw(name, prob):
+        """Add a market with an already-calibrated probability (no double-calibration)."""
         prob = round(max(0, min(100, prob)), 1)
         if prob > 0:
             raw.append({"market": name, "probability": prob})
 
-    # ━━ RESULT ━━
-    add("Home Win", pred.home_win)
-    add("Draw", pred.draw)
-    add("Away Win", pred.away_win)
-    add(f"1X ({home_name} or Draw)", pred.home_win + pred.draw)
-    add(f"X2 ({away_name} or Draw)", pred.away_win + pred.draw)
-    add("12 (Any Team to Win)", pred.home_win + pred.away_win)
+    # ━━ RESULT (1X2 — renormalized) ━━
+    ft_1x2 = add_group([
+        ("Home Win", pred.home_win),
+        ("Draw", pred.draw),
+        ("Away Win", pred.away_win),
+    ])
+    # Double Chance derived from renormalized 1X2 (already calibrated — use add_raw)
+    add_raw(f"1X ({home_name} or Draw)", ft_1x2["Home Win"] + ft_1x2["Draw"])
+    add_raw(f"X2 ({away_name} or Draw)", ft_1x2["Away Win"] + ft_1x2["Draw"])
+    add_raw("12 (Any Team to Win)", ft_1x2["Home Win"] + ft_1x2["Away Win"])
 
     # ━━ GOALS ━━
-    for label, val in [("Over 0.5", pred.over_0_5), ("Under 0.5", pred.under_0_5),
-                       ("Over 1.5", pred.over_1_5), ("Under 1.5", pred.under_1_5),
-                       ("Over 2.5", pred.over_2_5), ("Under 2.5", pred.under_2_5),
-                       ("Over 3.5", pred.over_3_5), ("Under 3.5", pred.under_3_5),
-                       ("Over 4.5", pred.over_4_5), ("Under 4.5", 100 - pred.over_4_5)]:
-        add(f"{label} Goals", val)
-    add("BTTS - Yes", pred.btts_yes)
-    add("BTTS - No", pred.btts_no)
+    # ALL goal markets computed from the SAME joint matrix (ft).
+    # Binary pairs use symmetric calibration (sum preserved automatically).
+    for t in [0, 1, 2, 3, 4]:
+        total_over = mx(ft, MG, lambda h, a, _t=t: h + a > _t)
+        add(f"Over {t}.5 Goals", total_over)
+        add(f"Under {t}.5 Goals", 100 - total_over)
+    btts_yes = mx(ft, MG, lambda h, a: h >= 1 and a >= 1)
+    btts_no = 100 - btts_yes
+    add("BTTS - Yes", btts_yes)
+    add("BTTS - No", btts_no)
 
     # ━━ TEAM GOALS ━━
+    # Computed from the SAME joint matrix as total goals for consistency.
     for t in [0, 1, 2]:
-        add(f"{home_name} Over {t}.5 Goals", p_over(pred.lambda_home, t))
-        add(f"{home_name} Under {t}.5 Goals", 100 - p_over(pred.lambda_home, t))
-        add(f"{away_name} Over {t}.5 Goals", p_over(pred.lambda_away, t))
-        add(f"{away_name} Under {t}.5 Goals", 100 - p_over(pred.lambda_away, t))
+        add(f"{home_name} Over {t}.5 Goals", mx(ft, MG, lambda h, a, _t=t: h > _t))
+        add(f"{home_name} Under {t}.5 Goals", mx(ft, MG, lambda h, a, _t=t: h <= _t))
+        add(f"{away_name} Over {t}.5 Goals", mx(ft, MG, lambda h, a, _t=t: a > _t))
+        add(f"{away_name} Under {t}.5 Goals", mx(ft, MG, lambda h, a, _t=t: a <= _t))
 
     # ━━ FIRST HALF ━━
-    add("FH Over 0.5 Goals", pred.fh_over_0_5)
-    add("FH Under 0.5 Goals", 100 - pred.fh_over_0_5)
-    add("FH Over 1.5 Goals", pred.fh_over_1_5)
-    add("FH Under 1.5 Goals", 100 - pred.fh_over_1_5)
-    add("FH Home Win", pred.fh_home_win)
-    add("FH Draw", pred.fh_draw)
-    add("FH Away Win", pred.fh_away_win)
-    add(f"FH 1X ({home_name} or Draw)", pred.fh_home_win + pred.fh_draw)
-    add(f"FH X2 ({away_name} or Draw)", pred.fh_away_win + pred.fh_draw)
+    for t in [0, 1]:
+        fh_total_over = mx(fhm, MG, lambda h, a, _t=t: h + a > _t)
+        add(f"FH Over {t}.5 Goals", fh_total_over)
+        add(f"FH Under {t}.5 Goals", 100 - fh_total_over)
+    # FH 1X2 — renormalized
+    fh_1x2 = add_group([
+        ("FH Home Win", pred.fh_home_win),
+        ("FH Draw", pred.fh_draw),
+        ("FH Away Win", pred.fh_away_win),
+    ])
+    add_raw(f"FH 1X ({home_name} or Draw)", fh_1x2["FH Home Win"] + fh_1x2["FH Draw"])
+    add_raw(f"FH X2 ({away_name} or Draw)", fh_1x2["FH Away Win"] + fh_1x2["FH Draw"])
     add("FH BTTS - Yes", mx(fhm, MG, lambda h, a: h >= 1 and a >= 1))
     add("FH BTTS - No", mx(fhm, MG, lambda h, a: h == 0 or a == 0))
     add(f"FH {home_name} to Score", mx(fhm, MG, lambda h, a: h >= 1))
     add(f"FH {away_name} to Score", mx(fhm, MG, lambda h, a: a >= 1))
     add("FH No Goal", mx(fhm, MG, lambda h, a: h == 0 and a == 0))
     for t in [0, 1]:
-        add(f"FH {home_name} Over {t}.5 Goals", p_over(fh_lh, t))
-        add(f"FH {home_name} Under {t}.5 Goals", 100 - p_over(fh_lh, t))
-        add(f"FH {away_name} Over {t}.5 Goals", p_over(fh_la, t))
-        add(f"FH {away_name} Under {t}.5 Goals", 100 - p_over(fh_la, t))
+        add(f"FH {home_name} Over {t}.5 Goals", mx(fhm, MG, lambda h, a, _t=t: h > _t))
+        add(f"FH {home_name} Under {t}.5 Goals", mx(fhm, MG, lambda h, a, _t=t: h <= _t))
+        add(f"FH {away_name} Over {t}.5 Goals", mx(fhm, MG, lambda h, a, _t=t: a > _t))
+        add(f"FH {away_name} Under {t}.5 Goals", mx(fhm, MG, lambda h, a, _t=t: a <= _t))
+
+    # ━━ SECOND HALF ━━
+    sh_lh = pred.lambda_home * 0.55
+    sh_la = pred.lambda_away * 0.55
+    shm = _build_joint_matrix(sh_lh, sh_la, MG, rho=DIXON_COLES_RHO_SH)
+    for t in [0, 1]:
+        sh_total_over = mx(shm, MG, lambda h, a, _t=t: h + a > _t)
+        add(f"SH Over {t}.5 Goals", sh_total_over)
+        add(f"SH Under {t}.5 Goals", 100 - sh_total_over)
+    # SH 1X2 — renormalized
+    sh_hw = mx(shm, MG, lambda h, a: h > a)
+    sh_dr = mx(shm, MG, lambda h, a: h == a)
+    sh_aw = mx(shm, MG, lambda h, a: h < a)
+    sh_1x2 = add_group([
+        ("SH Home Win", sh_hw),
+        ("SH Draw", sh_dr),
+        ("SH Away Win", sh_aw),
+    ])
+    add_raw(f"SH 1X ({home_name} or Draw)", sh_1x2["SH Home Win"] + sh_1x2["SH Draw"])
+    add_raw(f"SH X2 ({away_name} or Draw)", sh_1x2["SH Away Win"] + sh_1x2["SH Draw"])
+    add("SH BTTS - Yes", mx(shm, MG, lambda h, a: h >= 1 and a >= 1))
+    add("SH BTTS - No", mx(shm, MG, lambda h, a: h == 0 or a == 0))
+    add(f"SH {home_name} to Score", mx(shm, MG, lambda h, a: h >= 1))
+    add(f"SH {away_name} to Score", mx(shm, MG, lambda h, a: a >= 1))
+    add("SH No Goal", mx(shm, MG, lambda h, a: h == 0 and a == 0))
+    for t in [0, 1]:
+        add(f"SH {home_name} Over {t}.5 Goals", mx(shm, MG, lambda h, a, _t=t: h > _t))
+        add(f"SH {home_name} Under {t}.5 Goals", mx(shm, MG, lambda h, a, _t=t: h <= _t))
+        add(f"SH {away_name} Over {t}.5 Goals", mx(shm, MG, lambda h, a, _t=t: a > _t))
+        add(f"SH {away_name} Under {t}.5 Goals", mx(shm, MG, lambda h, a, _t=t: a <= _t))
 
     # ━━ CORNERS ━━
     for t in [7, 8, 9, 10, 11]:
@@ -261,11 +461,6 @@ def _compute_match_analysis(home_name: str, away_name: str, league_name: str = "
     add(f"More Corners: {home_name}", c_hw); add("Corners Draw", c_dr); add(f"More Corners: {away_name}", c_aw)
     add(f"1X Corners ({home_name} or Draw)", c_hw + c_dr)
     add(f"X2 Corners ({away_name} or Draw)", c_aw + c_dr)
-    for hc in [1, 2, 3]:
-        add(f"{home_name} Corner Handicap (+{hc}.5)", mx(cm, MC, lambda h, a: (h + hc) > a))
-        add(f"{away_name} Corner Handicap (+{hc}.5)", mx(cm, MC, lambda h, a: (a + hc) > h))
-        add(f"{home_name} Corner Handicap (-{hc}.5)", mx(cm, MC, lambda h, a: (h - hc) > a))
-        add(f"{away_name} Corner Handicap (-{hc}.5)", mx(cm, MC, lambda h, a: (a - hc) > h))
 
     # ━━ CARDS ━━
     for t in [2, 3, 4, 5, 6]:
@@ -280,51 +475,414 @@ def _compute_match_analysis(home_name: str, away_name: str, league_name: str = "
     add(f"More Cards: {home_name}", k_hw); add("Cards Draw", k_dr); add(f"More Cards: {away_name}", k_aw)
     add(f"1X Cards ({home_name} or Draw)", k_hw + k_dr)
     add(f"X2 Cards ({away_name} or Draw)", k_aw + k_dr)
-    for hc in [1, 2]:
-        add(f"{home_name} Card Handicap (+{hc}.5)", mx(km, MK, lambda h, a: (h + hc) > a))
-        add(f"{away_name} Card Handicap (+{hc}.5)", mx(km, MK, lambda h, a: (a + hc) > h))
 
-    # ━━ HANDICAPS ━━
-    for hc in [1, 2, 3]:
-        add(f"{home_name} Handicap (-{hc}.5)", mx(ft, MG, lambda h, a: (h - a) > hc))
-        add(f"{home_name} Handicap (+{hc}.5)", mx(ft, MG, lambda h, a: (h - a) > -hc - 1))
-        add(f"{away_name} Handicap (-{hc}.5)", mx(ft, MG, lambda h, a: (a - h) > hc))
-        add(f"{away_name} Handicap (+{hc}.5)", mx(ft, MG, lambda h, a: (a - h) > -hc - 1))
-    add(f"{home_name} AH -0.5", pred.home_win)
-    add(f"{away_name} AH -0.5", pred.away_win)
-    add(f"{home_name} AH +0.5", pred.home_win + pred.draw)
-    add(f"{away_name} AH +0.5", pred.away_win + pred.draw)
+
+
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    # EXPANDED MARKET COVERAGE — New markets
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+    import math
+
+
+    # ━━ ADVANCED GOALS ━━
+    for g in range(7):
+        add(f"Exact Total Goals: {g}", mx(ft, MG, lambda h, a, _g=g: h + a == _g))
+    add("Goal Range 0-1", mx(ft, MG, lambda h, a: h + a <= 1))
+    add("Goal Range 2-3", mx(ft, MG, lambda h, a: 2 <= h + a <= 3))
+    add("Goal Range 4+", mx(ft, MG, lambda h, a: h + a >= 4))
+    add("Odd/Even Total Goals: Odd", mx(ft, MG, lambda h, a: (h + a) % 2 == 1))
+    add("Odd/Even Total Goals: Even", mx(ft, MG, lambda h, a: (h + a) % 2 == 0))
+
+    # ━━ TIME-BASED ━━
+    lam_15 = (pred.lambda_home + pred.lambda_away) * (15 / 90)
+    p_goal_15 = (1 - math.exp(-lam_15)) * 100
+    add("Goal in First 15 Min - Yes", p_goal_15)
+    add("Goal in First 15 Min - No", 100 - p_goal_15)
+    p_fh_any = mx(fhm, MG, lambda h, a: h + a >= 1)
+    p_sh_any = mx(shm, MG, lambda h, a: h + a >= 1)
+    add("Goal in Both Halves - Yes", (p_fh_any / 100) * p_sh_any)
+    add("Goal in Both Halves - No", 100 - (p_fh_any / 100) * p_sh_any)
+
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    # PHASE 5 — DERIVED MARKETS (all from Dixon-Coles ft matrix)
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+    # ━━ TIER A: CORRECT SCORE (FT) ━━
+    # Explicit scorelines 0-0 through 4-4, "Other" is the remainder
+    for h_cs in range(5):
+        for a_cs in range(5):
+            p_cs = ft[(h_cs, a_cs)] * 100
+            add(f"CS {h_cs}-{a_cs}", p_cs)
+    # "Other" = all scorelines NOT in the 0-4 grid (explicit from matrix)
+    p_cs_other = sum(ft[(h, a)] for h in range(MG+1) for a in range(MG+1)
+                     if not (h <= 4 and a <= 4)) * 100
+    add("CS Other", p_cs_other)
+
+    # ━━ TIER A: WINNING MARGIN ━━
+    add(f"{home_name} Win by 1", mx(ft, MG, lambda h, a: h - a == 1))
+    add(f"{home_name} Win by 2", mx(ft, MG, lambda h, a: h - a == 2))
+    add(f"{home_name} Win by 3+", mx(ft, MG, lambda h, a: h - a >= 3))
+    add(f"{away_name} Win by 1", mx(ft, MG, lambda h, a: a - h == 1))
+    add(f"{away_name} Win by 2", mx(ft, MG, lambda h, a: a - h == 2))
+    add(f"{away_name} Win by 3+", mx(ft, MG, lambda h, a: a - h >= 3))
+    add("Exact Draw 0-0", ft[(0, 0)] * 100)
+
+    # ━━ TIER A: CLEAN SHEET & FAIL TO SCORE ━━
+    add(f"{home_name} Clean Sheet", mx(ft, MG, lambda h, a: a == 0))
+    add(f"{away_name} Clean Sheet", mx(ft, MG, lambda h, a: h == 0))
+    add(f"{home_name} Fails to Score", mx(ft, MG, lambda h, a: h == 0))
+    add(f"{away_name} Fails to Score", mx(ft, MG, lambda h, a: a == 0))
+
+    # ━━ TIER A: EXACT TEAM GOALS ━━
+    for n in range(4):
+        add(f"{home_name} Exact {n} Goals", mx(ft, MG, lambda h, a, _n=n: h == _n))
+        add(f"{away_name} Exact {n} Goals", mx(ft, MG, lambda h, a, _n=n: a == _n))
+    add(f"{home_name} Exact 3+ Goals", mx(ft, MG, lambda h, a: h >= 3))
+    add(f"{away_name} Exact 3+ Goals", mx(ft, MG, lambda h, a: a >= 3))
+
+    # ━━ TIER B: RESULT + GOALS COMBOS ━━
+    # All computed from the SAME joint matrix — guaranteed consistency
+    add(f"Home Win & Over 1.5", mx(ft, MG, lambda h, a: h > a and h + a > 1))
+    add(f"Home Win & Over 2.5", mx(ft, MG, lambda h, a: h > a and h + a > 2))
+    add(f"Home Win & Under 2.5", mx(ft, MG, lambda h, a: h > a and h + a <= 2))
+    add(f"Away Win & Over 1.5", mx(ft, MG, lambda h, a: a > h and h + a > 1))
+    add(f"Away Win & Over 2.5", mx(ft, MG, lambda h, a: a > h and h + a > 2))
+    add(f"Away Win & Under 2.5", mx(ft, MG, lambda h, a: a > h and h + a <= 2))
+    add(f"Draw & Over 2.5", mx(ft, MG, lambda h, a: h == a and h + a > 2))
+    add(f"Draw & Under 2.5", mx(ft, MG, lambda h, a: h == a and h + a <= 2))
+
+    # ━━ TIER B: RESULT + BTTS COMBOS ━━
+    add(f"Home Win & BTTS", mx(ft, MG, lambda h, a: h > a and h >= 1 and a >= 1))
+    add(f"Away Win & BTTS", mx(ft, MG, lambda h, a: a > h and h >= 1 and a >= 1))
+    add(f"Draw & BTTS", mx(ft, MG, lambda h, a: h == a and h >= 1 and a >= 1))
+
+    # ━━ TIER B: BTTS + GOALS COMBOS ━━
+    add(f"BTTS & Over 2.5", mx(ft, MG, lambda h, a: h >= 1 and a >= 1 and h + a > 2))
+    add(f"BTTS & Under 2.5", mx(ft, MG, lambda h, a: h >= 1 and a >= 1 and h + a <= 2))
+
+    # ━━ TIER B: SCORING IN BOTH HALVES ━━
+    # Bounded approximation: min(P(team≥2 goals), P(FH_scores) × P(SH_scores) × 1.1)
+    # to account for game-state dependency (scoring early changes SH intensity)
+    p_fh_home_scores = mx(fhm, MG, lambda h, a: h >= 1) / 100
+    p_sh_home_scores = mx(shm, MG, lambda h, a: h >= 1) / 100
+    p_fh_away_scores = mx(fhm, MG, lambda h, a: a >= 1) / 100
+    p_sh_away_scores = mx(shm, MG, lambda h, a: a >= 1) / 100
+    p_home_2plus = mx(ft, MG, lambda h, a: h >= 2) / 100  # needs 2+ for both halves
+    p_away_2plus = mx(ft, MG, lambda h, a: a >= 2) / 100
+    add(f"{home_name} Score in Both Halves",
+        min(p_home_2plus, p_fh_home_scores * p_sh_home_scores * 1.1) * 100)
+    add(f"{away_name} Score in Both Halves",
+        min(p_away_2plus, p_fh_away_scores * p_sh_away_scores * 1.1) * 100)
+
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    # HANDICAP MARKETS (all from Dixon-Coles ft matrix)
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+    # ━━ ASIAN HANDICAP (2-way: no draw possible) ━━
+    # AH -0.5 Home = Home must win outright (same as Home Win)
+    # AH -1.5 Home = Home must win by 2+
+    # AH -2.5 Home = Home must win by 3+
+    for spread in [0.5, 1.5, 2.5]:
+        # Home giving handicap (favorite scenario)
+        ah_home = mx(ft, MG, lambda h, a, _s=spread: (h - a) > _s)
+        add(f"AH {home_name} -{spread}", ah_home)
+        add(f"AH {away_name} +{spread}", 100 - ah_home)
+        # Away giving handicap
+        ah_away = mx(ft, MG, lambda h, a, _s=spread: (a - h) > _s)
+        add(f"AH {away_name} -{spread}", ah_away)
+        add(f"AH {home_name} +{spread}", 100 - ah_away)
+
+    # ━━ EUROPEAN HANDICAP (3-way: includes draw — renormalized) ━━
+    # EH -1 Home: After applying -1 to home, check win/draw/loss
+    for spread in [1, 2]:
+        # Home -spread
+        eh_hw = mx(ft, MG, lambda h, a, _s=spread: (h - _s) > a)
+        eh_dr = mx(ft, MG, lambda h, a, _s=spread: (h - _s) == a)
+        eh_aw = mx(ft, MG, lambda h, a, _s=spread: (h - _s) < a)
+        add_group([
+            (f"EH {home_name} -{spread} (Win)", eh_hw),
+            (f"EH {home_name} -{spread} (Draw)", eh_dr),
+            (f"EH {home_name} -{spread} (Lose)", eh_aw),
+        ])
+        # Away -spread
+        eh_aw2 = mx(ft, MG, lambda h, a, _s=spread: (a - _s) > h)
+        eh_dr2 = mx(ft, MG, lambda h, a, _s=spread: (a - _s) == h)
+        eh_hw2 = mx(ft, MG, lambda h, a, _s=spread: (a - _s) < h)
+        add_group([
+            (f"EH {away_name} -{spread} (Win)", eh_aw2),
+            (f"EH {away_name} -{spread} (Draw)", eh_dr2),
+            (f"EH {away_name} -{spread} (Lose)", eh_hw2),
+        ])
+
+    # ━━ CORNERS — HALF-BASED ━━
+    fh_h_corn = exp_h_corn * 0.48; fh_a_corn = exp_a_corn * 0.48
+    sh_h_corn = exp_h_corn * 0.52; sh_a_corn = exp_a_corn * 0.52
+    fh_total_corn = fh_h_corn + fh_a_corn; sh_total_corn = sh_h_corn + sh_a_corn
+    for t in [3, 4, 5]:
+        add(f"FH Over {t}.5 Corners", _poisson_over(fh_total_corn, t))
+        add(f"FH Under {t}.5 Corners", 100 - _poisson_over(fh_total_corn, t))
+        add(f"SH Over {t}.5 Corners", _poisson_over(sh_total_corn, t))
+        add(f"SH Under {t}.5 Corners", 100 - _poisson_over(sh_total_corn, t))
+    for t in [1, 2, 3]:
+        for prefix, lh, la in [("FH", fh_h_corn, fh_a_corn), ("SH", sh_h_corn, sh_a_corn)]:
+            add(f"{prefix} {home_name} Over {t}.5 Corners", p_over(lh, t))
+            add(f"{prefix} {home_name} Under {t}.5 Corners", 100 - p_over(lh, t))
+            add(f"{prefix} {away_name} Over {t}.5 Corners", p_over(la, t))
+            add(f"{prefix} {away_name} Under {t}.5 Corners", 100 - p_over(la, t))
+
+    # ━━ CARDS — HALF-BASED ━━
+    fh_h_card = exp_h_card * 0.45; fh_a_card = exp_a_card * 0.45
+    sh_h_card = exp_h_card * 0.55; sh_a_card = exp_a_card * 0.55
+    fh_total_card = fh_h_card + fh_a_card; sh_total_card = sh_h_card + sh_a_card
+    for t in [0, 1, 2, 3]:
+        add(f"FH Over {t}.5 Cards", _poisson_over(fh_total_card, t))
+        add(f"FH Under {t}.5 Cards", 100 - _poisson_over(fh_total_card, t))
+        add(f"SH Over {t}.5 Cards", _poisson_over(sh_total_card, t))
+        add(f"SH Under {t}.5 Cards", 100 - _poisson_over(sh_total_card, t))
+    for t in [0, 1]:
+        for prefix, lh, la in [("FH", fh_h_card, fh_a_card), ("SH", sh_h_card, sh_a_card)]:
+            add(f"{prefix} {home_name} Over {t}.5 Cards", p_over(lh, t))
+            add(f"{prefix} {home_name} Under {t}.5 Cards", 100 - p_over(lh, t))
+            add(f"{prefix} {away_name} Over {t}.5 Cards", p_over(la, t))
+            add(f"{prefix} {away_name} Under {t}.5 Cards", 100 - p_over(la, t))
+
+    # ━━ HALF WITH MOST ACTIVITY ━━
+    if fh_total_corn + sh_total_corn > 0:
+        add("Half with Most Corners: 1st Half", fh_total_corn / (fh_total_corn + sh_total_corn) * 100)
+        add("Half with Most Corners: 2nd Half", sh_total_corn / (fh_total_corn + sh_total_corn) * 100)
+    if fh_total_card + sh_total_card > 0:
+        add("Half with Most Cards: 1st Half", fh_total_card / (fh_total_card + sh_total_card) * 100)
+        add("Half with Most Cards: 2nd Half", sh_total_card / (fh_total_card + sh_total_card) * 100)
 
     # ══════════════════════════════════════════════════════
-    # Step 6: CATEGORIZE → FILTER ≥80% → GROUP → SHUFFLE
+    # SCORE ESTIMATION — Top probable scorelines
     # ══════════════════════════════════════════════════════
+    #
+    # Extract the most probable exact scores from Poisson
+    # joint probability matrices (already computed above).
+
+    # Full-time scores (from ft matrix)
+    ft_scores = []
+    for h in range(MG + 1):
+        for a in range(MG + 1):
+            prob = ft[(h, a)] * 100
+            if prob >= 1.0:  # Only include scores with >= 1% probability
+                ft_scores.append({"home": h, "away": a, "probability": round(prob, 1)})
+    ft_scores.sort(key=lambda x: x["probability"], reverse=True)
+    ft_top_scores = ft_scores[:5]
+
+    # First-half scores (from fhm matrix)
+    fh_scores = []
+    for h in range(MG + 1):
+        for a in range(MG + 1):
+            prob = fhm[(h, a)] * 100
+            if prob >= 1.0:
+                fh_scores.append({"home": h, "away": a, "probability": round(prob, 1)})
+    fh_scores.sort(key=lambda x: x["probability"], reverse=True)
+    fh_top_scores = fh_scores[:5]
+
+    score_prediction = {
+        "full_time": ft_top_scores,
+        "first_half": fh_top_scores,
+        "expected_goals": {
+            "home": round(pred.lambda_home, 2),
+            "away": round(pred.lambda_away, 2),
+            "total": round(pred.lambda_home + pred.lambda_away, 2),
+        },
+    }
+
+    # ══════════════════════════════════════════════════════
+    # DOMINANCE INSIGHTS — Who controls corners/cards
+    # ══════════════════════════════════════════════════════
+
+    c_home_more = mx(cm, MC, lambda h, a: h > a)
+    c_away_more = mx(cm, MC, lambda h, a: h < a)
+    k_home_more = mx(km, MK, lambda h, a: h > a)
+    k_away_more = mx(km, MK, lambda h, a: h < a)
+
+    dominance = {
+        "corners": {
+            "home_pct": round(c_home_more, 1),
+            "away_pct": round(c_away_more, 1),
+            "dominant": home_name if c_home_more > c_away_more else away_name,
+            "expected_home": round(exp_h_corn, 1),
+            "expected_away": round(exp_a_corn, 1),
+            "expected_total": round(exp_total_corn, 1),
+        },
+        "cards": {
+            "home_pct": round(k_home_more, 1),
+            "away_pct": round(k_away_more, 1),
+            "dominant": home_name if k_home_more > k_away_more else away_name,
+            "expected_home": round(exp_h_card, 1),
+            "expected_away": round(exp_a_card, 1),
+            "expected_total": round(exp_total_card, 1),
+        },
+    }
+
+    # ══════════════════════════════════════════════════════
+    # LAYER 1 — STRUCTURED ANALYSIS (all markets, grouped)
+    # ══════════════════════════════════════════════════════
+    #
+    # Each module is analyzed INDEPENDENTLY — no mixing.
+    # ALL probabilities are returned so the UI can show
+    # the complete picture before filtering.
 
     for m in raw:
         m["section"] = _categorize_market(m["market"])
 
-    qualified = [m for m in raw if m["probability"] >= 80.0]
+    # ══════════════════════════════════════════════════════
+    # ISOTONIC CALIBRATION — Per-market-type learned transform
+    # ══════════════════════════════════════════════════════
+    #
+    # Pipeline order:
+    #   Raw Poisson → Shrinkage calibration → Isotonic calibration
+    #
+    # The shrinkage (CALIBRATION_SHRINK=0.82) is a symmetric pre-filter.
+    # Isotonic regression is a learned monotonic correction fitted from
+    # actual outcome data per market type.
+    #
+    # After this step:
+    #   raw_probability  = pre-isotonic value (for diagnostics/retraining)
+    #   probability      = post-isotonic value (for ranking, display, EV)
+    #
+    try:
+        from src.engine.isotonic_calibrator import get_isotonic_calibrator
+        from src.db.prediction_logger import _classify_market_type
+        from src.db.database import get_db
+        _iso_conn = get_db()
+        _iso_cal = get_isotonic_calibrator(_iso_conn)
 
-    section_order = ["Goals", "Team Goals", "First Half", "Corners", "Cards", "Handicaps", "Result"]
-    sections = {}
+        for m in raw:
+            m["raw_probability"] = m["probability"]  # preserve pre-isotonic
+            m["market_type"] = _classify_market_type(m["market"])
+            m["probability"] = _iso_cal.calibrate(m["raw_probability"], m["market_type"])
+    except Exception as iso_err:
+        # Fallback: if isotonic fails, raw_probability == probability
+        logger.warning(f"Isotonic calibration failed, using raw: {iso_err}")
+        for m in raw:
+            m["raw_probability"] = m["probability"]
+            m["market_type"] = "unknown"
+
+    section_order = ["Goals", "First Half", "Second Half", "Team Goals", "Result", "Handicaps", "Corners", "Cards"]
+
+    # Full analysis: every market, sorted by probability (descending)
+    full_analysis = {}
+    for sec in section_order:
+        items = [m for m in raw if m["section"] == sec]
+        items.sort(key=lambda x: x["probability"], reverse=True)
+        full_analysis[sec] = items
+
+    # ══════════════════════════════════════════════════════
+    # LAYER 2 — TIERED PICKS (6 tiers × 10 picks = 60)
+    # ══════════════════════════════════════════════════════
+    #
+    # 1. Sort ALL raw markets by probability (descending)
+    # 2. Take top 60
+    # 3. Split into 6 tiers of 10 picks each
+    # 4. Shuffle WITHIN each tier (no visible ranking inside a tier)
+    #
+    # Tier 1 = ranks 1-10 (highest confidence)
+    # Tier 2 = ranks 7-12
+    # ...
+    # Tier 6 = ranks 31-36 (lowest of the 36)
+
+    PICKS_PER_TIER = 6
+    NUM_TIERS = 6
+    TOTAL_PICKS = PICKS_PER_TIER * NUM_TIERS  # 36
+
+    all_sorted = sorted(raw, key=lambda x: x["probability"], reverse=True)
+
+    # ── Correlation dedup: limit correlated markets in top picks ──
+    # Prevents combos/CS/redundant signals from flooding tiers.
+    CLUSTER_LIMITS = {
+        "combo": 2,       # Result+Goals, Result+BTTS, BTTS+Goals
+        "cs": 3,          # Correct Score
+        "goals_ou": 3,    # Over/Under goals (total)
+        "result": 2,      # 1X2, Double Chance
+        "btts": 1,        # BTTS Yes/No
+        "margin": 2,      # Winning margin
+    }
+
+    def _get_cluster(market_name):
+        m = market_name.lower()
+        if " & " in m: return "combo"
+        if m.startswith("cs "): return "cs"
+        if m.startswith("over") or m.startswith("under"): return "goals_ou"
+        if m in ("home win", "draw", "away win") or "1x " in m or "x2 " in m or "12 " in m: return "result"
+        if "btts" in m: return "btts"
+        if "win by" in m or "exact draw" in m: return "margin"
+        return None  # no limit
+
+    cluster_counts = {}
+    deduped = []
+    for m in all_sorted:
+        cluster = _get_cluster(m["market"])
+        if cluster:
+            count = cluster_counts.get(cluster, 0)
+            if count >= CLUSTER_LIMITS[cluster]:
+                continue  # skip — cluster full
+            cluster_counts[cluster] = count + 1
+        deduped.append(m)
+
+    top_36 = deduped[:TOTAL_PICKS]
+
+    tiers = []
+    for t in range(NUM_TIERS):
+        start = t * PICKS_PER_TIER
+        end = start + PICKS_PER_TIER
+        tier_picks = list(top_36[start:end])
+        
+        if shuffle_tiers:
+            random.shuffle(tier_picks)
+
+        # Calculate tier stats
+        probs = [p["probability"] for p in tier_picks] if tier_picks else [0]
+        tiers.append({
+            "tier": t + 1,
+            "label": f"Tier {t + 1}",
+            "rank_range": f"{start + 1}-{end}",
+            "picks": tier_picks,
+            "avg_probability": round(sum(probs) / len(probs), 1),
+            "min_probability": round(min(probs), 1),
+            "max_probability": round(max(probs), 1),
+        })
+
+    if shuffle_tiers:
+        random.shuffle(tiers)
+
+    # Legacy: flat top_picks for backward compat (all 36, shuffled)
+    top_picks = list(top_36)
+    random.shuffle(top_picks)
+
+    # Also build per-section qualified view (≥80%)
+    qualified = [m for m in raw if m["probability"] >= 80.0]
+    qualified_sections = {}
     for sec in section_order:
         items = [m for m in qualified if m["section"] == sec]
         items.sort(key=lambda x: x["probability"], reverse=True)
-        sections[sec] = items
-
-    top_picks = list(qualified)
-    random.shuffle(top_picks)
+        qualified_sections[sec] = items
 
     # ══════════════════════════════════════════════════════
-    # RETURN
+    # RETURN — Both layers exposed
     # ══════════════════════════════════════════════════════
 
     return {
-        "disclaimer": f"Poisson (λ={pred.lambda_home:.2f}+{pred.lambda_away:.2f}) + XGBoost | {league_key}",
+        "disclaimer": f"Poisson (λ={pred.lambda_home:.2f}+{pred.lambda_away:.2f}) + XGBoost | {league_key} | isotonic-calibrated",
         "total_markets_scanned": len(raw),
         "total_qualified": len(qualified),
+        "total_tiered_picks": len(top_36),
+        # Layer 2 — tiered picks (6 tiers × 6 picks)
+        "tiers": tiers,
+        # Legacy flat list
         "top_picks": top_picks,
-        "sections": sections,
+        # Layer 1 — FULL structured analysis (all markets, all probs)
+        "full_analysis": full_analysis,
+        # Qualified per section (≥80%)
+        "sections": qualified_sections,
         "poisson": pred.to_dict(),
+        "score_prediction": score_prediction,
+        "dominance": dominance,
         "xgboost_predictions": xgb_pred.to_dict().get("predictions", []),
         "averages": {
             "home": {"avg_goals_scored": home_stats.scored, "avg_goals_conceded": home_stats.conceded, "avg_corners": home_stats.corners, "avg_cards": home_stats.cards},
@@ -334,19 +892,36 @@ def _compute_match_analysis(home_name: str, away_name: str, league_name: str = "
 
 
 def _fetch_sofascore_events(date_str: str) -> list[dict]:
-    url = f"https://api.sofascore.com/api/v1/sport/football/scheduled-events/{date_str}"
-    req = urllib.request.Request(url, headers={
-        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
-        "Accept": "application/json",
-        "Referer": "https://www.sofascore.com/",
-    })
-    try:
-        resp = urllib.request.urlopen(req, timeout=15)
-        data = json.loads(resp.read())
-        return data.get("events", [])
-    except Exception as e:
-        logger.error(f"SofaScore fetch failed: {e}")
-        return []
+    """Fetch scheduled events from SofaScore for the given date.
+    
+    Also fetches the previous day's events since SofaScore uses UTC dates
+    and late-night matches in UTC+3 may appear under the previous UTC day.
+    """
+    from datetime import timedelta
+
+    all_events = []
+    # Fetch the requested date + the previous day (to catch timezone-shifted matches)
+    target = datetime.strptime(date_str, "%Y-%m-%d").date()
+    dates_to_fetch = [
+        (target - timedelta(days=1)).isoformat(),
+        date_str,
+    ]
+
+    for d in dates_to_fetch:
+        url = f"https://api.sofascore.com/api/v1/sport/football/scheduled-events/{d}"
+        req = urllib.request.Request(url, headers={
+            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15",
+            "Accept": "*/*",
+        })
+        try:
+            ctx = ssl.create_default_context()
+            resp = urllib.request.urlopen(req, timeout=15, context=ctx)
+            data = json.loads(resp.read())
+            all_events.extend(data.get("events", []))
+        except Exception as e:
+            logger.error(f"SofaScore fetch failed for {d}: {e}")
+
+    return all_events
 
 
 def _sofascore_to_fixture(event: dict) -> dict:
@@ -432,9 +1007,12 @@ def get_fixtures_by_date(date_str: str):
         return []
     
     fixtures = []
+    seen_ids = set()
     for ev in events:
         f = _sofascore_to_fixture(ev)
-        if f["date"] == date_str:
+        # Match date filter (after timezone conversion) + dedup
+        if f["date"] == date_str and f["id"] not in seen_ids:
+            seen_ids.add(f["id"])
             fixtures.append(f)
     
     fixtures.sort(key=lambda f: f["time"])
@@ -487,12 +1065,12 @@ def _fetch_event_statistics(event_id: str) -> dict:
     """Fetch match statistics (corners, cards) from SofaScore for a finished event."""
     url = f"https://api.sofascore.com/api/v1/event/{event_id}/statistics"
     req = urllib.request.Request(url, headers={
-        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
-        "Accept": "application/json",
-        "Referer": "https://www.sofascore.com/",
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15",
+        "Accept": "*/*",
     })
     try:
-        resp = urllib.request.urlopen(req, timeout=15)
+        ctx = ssl.create_default_context()
+        resp = urllib.request.urlopen(req, timeout=15, context=ctx)
         data = json.loads(resp.read())
         statistics = data.get("statistics", [])
 
@@ -580,20 +1158,27 @@ def _evaluate_prediction(pick: dict, home_name: str, away_name: str, home_goals:
     elif market == "Under 3.5 Goals": result = total_goals < 3.5
     elif market == "Over 4.5 Goals": result = total_goals > 4.5
     elif market == "Under 4.5 Goals": result = total_goals < 4.5
+    elif market == "BTTS - Yes": result = home_goals > 0 and away_goals > 0
+    elif market == "BTTS - No": result = not (home_goals > 0 and away_goals > 0)
 
-    # ── BTTS ──
-    elif market == "BTTS - Yes" and "FH" not in market: result = home_goals > 0 and away_goals > 0
-    elif market == "BTTS - No" and "FH" not in market: result = not (home_goals > 0 and away_goals > 0)
+    # ── Advanced Goals ──
+    for g in range(7):
+        if market == f"Exact Total Goals: {g}": result = total_goals == g
+    if market == "Goal Range 0-1": result = total_goals <= 1
+    elif market == "Goal Range 2-3": result = 2 <= total_goals <= 3
+    elif market == "Goal Range 4+": result = total_goals >= 4
+    elif market == "Odd/Even Total Goals: Odd": result = total_goals % 2 == 1
+    elif market == "Odd/Even Total Goals: Even": result = total_goals % 2 == 0
 
     # ── Result & Double Chance ──
-    elif market == "Home Win" and "FH" not in market: result = home_goals > away_goals
-    elif market == "Draw" and "FH" not in market: result = home_goals == away_goals
-    elif market == "Away Win" and "FH" not in market: result = away_goals > home_goals
-    elif "1X" in market and "FH" not in market and "Corner" not in market and "Card" not in market:
+    if market == "Home Win": result = home_goals > away_goals
+    elif market == "Draw" and "FH" not in market and "SH" not in market: result = home_goals == away_goals
+    elif market == "Away Win": result = away_goals > home_goals
+    elif "1X" in market and "FH" not in market and "SH" not in market and "Corner" not in market and "Card" not in market:
         result = home_goals >= away_goals
-    elif "X2" in market and "FH" not in market and "Corner" not in market and "Card" not in market:
+    elif "X2" in market and "FH" not in market and "SH" not in market and "Corner" not in market and "Card" not in market:
         result = away_goals >= home_goals
-    elif "12 " in market and "FH" not in market and "Corner" not in market and "Card" not in market:
+    elif "12 " in market and "FH" not in market and "SH" not in market and "Corner" not in market and "Card" not in market:
         result = home_goals != away_goals
 
     # ── First Half Markets ──
@@ -608,33 +1193,49 @@ def _evaluate_prediction(pick: dict, home_name: str, away_name: str, home_goals:
         elif market == "FH Home Win": result = fh_home_goals > fh_away_goals
         elif market == "FH Draw": result = fh_home_goals == fh_away_goals
         elif market == "FH Away Win": result = fh_away_goals > fh_home_goals
-        elif market == "FH 1X (Home or Draw)": result = fh_home_goals >= fh_away_goals
-        elif market == "FH X2 (Away or Draw)": result = fh_away_goals >= fh_home_goals
         elif "FH 1X" in market: result = fh_home_goals >= fh_away_goals
         elif "FH X2" in market: result = fh_away_goals >= fh_home_goals
-        elif f"FH {home_name} Over" in market:
-            for t in [0, 1]:
-                if f"Over {t}.5" in market: result = fh_home_goals > t
-        elif f"FH {home_name} Under" in market:
-            for t in [0, 1, 2]:
-                if f"Under {t}.5" in market: result = fh_home_goals <= t
-        elif f"FH {away_name} Over" in market:
-            for t in [0, 1]:
-                if f"Over {t}.5" in market: result = fh_away_goals > t
-        elif f"FH {away_name} Under" in market:
-            for t in [0, 1, 2]:
-                if f"Under {t}.5" in market: result = fh_away_goals <= t
+        for t in [0, 1]:
+            if market == f"FH {home_name} Over {t}.5 Goals": result = fh_home_goals > t
+            elif market == f"FH {home_name} Under {t}.5 Goals": result = fh_home_goals <= t
+            elif market == f"FH {away_name} Over {t}.5 Goals": result = fh_away_goals > t
+            elif market == f"FH {away_name} Under {t}.5 Goals": result = fh_away_goals <= t
+
+    # ── Second Half Markets ──
+    if fh_home_goals is not None and fh_away_goals is not None:
+        sh_home = home_goals - fh_home_goals
+        sh_away = away_goals - fh_away_goals
+        sh_total = sh_home + sh_away
+        fh_total_eval = fh_home_goals + fh_away_goals
+        if market == "SH Home Win": result = sh_home > sh_away
+        elif market == "SH Draw": result = sh_home == sh_away
+        elif market == "SH Away Win": result = sh_away > sh_home
+        elif "SH 1X" in market: result = sh_home >= sh_away
+        elif "SH X2" in market: result = sh_away >= sh_home
+        elif "SH 12" in market: result = sh_home != sh_away
+        elif market == "SH BTTS - Yes": result = sh_home > 0 and sh_away > 0
+        elif market == "SH BTTS - No": result = not (sh_home > 0 and sh_away > 0)
+        for t in [0, 1, 2]:
+            if market == f"SH Over {t}.5 Goals": result = sh_total > t
+            elif market == f"SH Under {t}.5 Goals": result = sh_total <= t
+        for t in [0, 1]:
+            if market == f"SH {home_name} Over {t}.5 Goals": result = sh_home > t
+            elif market == f"SH {home_name} Under {t}.5 Goals": result = sh_home <= t
+            elif market == f"SH {away_name} Over {t}.5 Goals": result = sh_away > t
+            elif market == f"SH {away_name} Under {t}.5 Goals": result = sh_away <= t
+        if market == f"SH {home_name} to Score": result = sh_home >= 1
+        elif market == f"SH {away_name} to Score": result = sh_away >= 1
+        elif market == "SH No Goal": result = sh_total == 0
+        # Half comparisons & cross-half markets
+        if market == "Half with Most Goals: 1st Half": result = fh_total_eval > sh_total
+        elif market == "Half with Most Goals: 2nd Half": result = sh_total > fh_total_eval
+        elif market == "Half with Most Goals: Equal": result = fh_total_eval == sh_total
+        if market == "Goal in Both Halves - Yes": result = fh_total_eval >= 1 and sh_total >= 1
+        elif market == "Goal in Both Halves - No": result = fh_total_eval == 0 or sh_total == 0
 
     # ── Corners ──
-    if "Corner" in market and "FH" not in market:
-        if "Handicap" in market:
-            if home_corners is not None and away_corners is not None:
-                for hcap in [1, 2, 3, 4]:
-                    if market == f"{home_name} Corner Handicap (-{hcap}.5)": result = (home_corners - away_corners) > hcap
-                    elif market == f"{home_name} Corner Handicap (+{hcap}.5)": result = (home_corners - away_corners) > -hcap - 1
-                    elif market == f"{away_name} Corner Handicap (-{hcap}.5)": result = (away_corners - home_corners) > hcap
-                    elif market == f"{away_name} Corner Handicap (+{hcap}.5)": result = (away_corners - home_corners) > -hcap - 1
-        elif "Over" in market or "Under" in market:
+    if "Corner" in market and "FH" not in market and "SH" not in market and "Half" not in market:
+        if "Over" in market or "Under" in market:
             if home_name in market and home_corners is not None:
                 for c in range(2, 10):
                     if market == f"{home_name} Over {c}.5 Corners": result = home_corners > c
@@ -656,15 +1257,8 @@ def _evaluate_prediction(pick: dict, home_name: str, away_name: str, home_goals:
                 result = away_corners >= home_corners
 
     # ── Cards ──
-    if "Card" in market and "FH" not in market:
-        if "Handicap" in market:
-            if home_cards is not None and away_cards is not None:
-                for hcap in [1, 2, 3]:
-                    if market == f"{home_name} Card Handicap (-{hcap}.5)": result = (home_cards - away_cards) > hcap
-                    elif market == f"{home_name} Card Handicap (+{hcap}.5)": result = (home_cards - away_cards) > -hcap - 1
-                    elif market == f"{away_name} Card Handicap (-{hcap}.5)": result = (away_cards - home_cards) > hcap
-                    elif market == f"{away_name} Card Handicap (+{hcap}.5)": result = (away_cards - home_cards) > -hcap - 1
-        elif "Over" in market or "Under" in market:
+    if "Card" in market and "FH" not in market and "SH" not in market and "Half" not in market:
+        if "Over" in market or "Under" in market:
             if home_name in market and home_cards is not None:
                 for c in range(0, 6):
                     if market == f"{home_name} Over {c}.5 Cards": result = home_cards > c
@@ -685,28 +1279,118 @@ def _evaluate_prediction(pick: dict, home_name: str, away_name: str, home_goals:
                 result = away_cards >= home_cards
 
     # ── Team Goals ──
-    if "Over" in market and "Goals" in market and "FH" not in market:
+    if "Over" in market and "Goals" in market and "FH" not in market and "SH" not in market:
         for t in [0, 1, 2, 3]:
             if market == f"{home_name} Over {t}.5 Goals": result = home_goals > t
             elif market == f"{away_name} Over {t}.5 Goals": result = away_goals > t
-    elif "Under" in market and "Goals" in market and "FH" not in market:
+    elif "Under" in market and "Goals" in market and "FH" not in market and "SH" not in market:
         for t in [0, 1, 2, 3]:
             if market == f"{home_name} Under {t}.5 Goals": result = home_goals <= t
             elif market == f"{away_name} Under {t}.5 Goals": result = away_goals <= t
 
-    # ── Goal Handicaps ──
-    if "Handicap" in market and "Corner" not in market and "Card" not in market:
-        for hcap in [1, 2, 3, 4]:
-            if market == f"{home_name} Handicap (-{hcap}.5)": result = (home_goals - away_goals) > hcap
-            elif market == f"{home_name} Handicap (+{hcap}.5)": result = (home_goals - away_goals) > -hcap - 1
-            elif market == f"{away_name} Handicap (-{hcap}.5)": result = (away_goals - home_goals) > hcap
-            elif market == f"{away_name} Handicap (+{hcap}.5)": result = (away_goals - home_goals) > -hcap - 1
-    elif "AH " in market:
-        for hcap in [0.5, 1.5, 2.5]:
-            if market == f"{home_name} AH -{hcap}": result = home_goals - away_goals > hcap
-            elif market == f"{home_name} AH +{hcap}": result = home_goals - away_goals > -hcap
-            elif market == f"{away_name} AH -{hcap}": result = away_goals - home_goals > hcap
-            elif market == f"{away_name} AH +{hcap}": result = away_goals - home_goals > -hcap
+    # ── Correct Score ──
+    if market.startswith("CS ") and market != "CS Other":
+        parts = market[3:].split("-")
+        if len(parts) == 2:
+            try:
+                cs_h, cs_a = int(parts[0]), int(parts[1])
+                result = home_goals == cs_h and away_goals == cs_a
+            except ValueError:
+                pass
+    elif market == "CS Other":
+        result = home_goals >= 5 or away_goals >= 5
+
+    # ── Winning Margin ──
+    if market == f"{home_name} Win by 1": result = home_goals - away_goals == 1
+    elif market == f"{home_name} Win by 2": result = home_goals - away_goals == 2
+    elif market == f"{home_name} Win by 3+": result = home_goals - away_goals >= 3
+    elif market == f"{away_name} Win by 1": result = away_goals - home_goals == 1
+    elif market == f"{away_name} Win by 2": result = away_goals - home_goals == 2
+    elif market == f"{away_name} Win by 3+": result = away_goals - home_goals >= 3
+    elif market == "Exact Draw 0-0": result = home_goals == 0 and away_goals == 0
+
+    # ── Clean Sheet & Fail to Score ──
+    if market == f"{home_name} Clean Sheet": result = away_goals == 0
+    elif market == f"{away_name} Clean Sheet": result = home_goals == 0
+    elif market == f"{home_name} Fails to Score": result = home_goals == 0
+    elif market == f"{away_name} Fails to Score": result = away_goals == 0
+
+    # ── Exact Team Goals ──
+    for n in range(4):
+        if market == f"{home_name} Exact {n} Goals": result = home_goals == n
+        elif market == f"{away_name} Exact {n} Goals": result = away_goals == n
+    if market == f"{home_name} Exact 3+ Goals": result = home_goals >= 3
+    elif market == f"{away_name} Exact 3+ Goals": result = away_goals >= 3
+
+    # ── Result + Goals Combos ──
+    if market == "Home Win & Over 1.5": result = home_goals > away_goals and total_goals > 1
+    elif market == "Home Win & Over 2.5": result = home_goals > away_goals and total_goals > 2
+    elif market == "Home Win & Under 2.5": result = home_goals > away_goals and total_goals <= 2
+    elif market == "Away Win & Over 1.5": result = away_goals > home_goals and total_goals > 1
+    elif market == "Away Win & Over 2.5": result = away_goals > home_goals and total_goals > 2
+    elif market == "Away Win & Under 2.5": result = away_goals > home_goals and total_goals <= 2
+    elif market == "Draw & Over 2.5": result = home_goals == away_goals and total_goals > 2
+    elif market == "Draw & Under 2.5": result = home_goals == away_goals and total_goals <= 2
+
+    # ── Result + BTTS Combos ──
+    btts_actual = home_goals >= 1 and away_goals >= 1
+    if market == "Home Win & BTTS": result = home_goals > away_goals and btts_actual
+    elif market == "Away Win & BTTS": result = away_goals > home_goals and btts_actual
+    elif market == "Draw & BTTS": result = home_goals == away_goals and btts_actual
+
+    # ── BTTS + Goals Combos ──
+    if market == "BTTS & Over 2.5": result = btts_actual and total_goals > 2
+    elif market == "BTTS & Under 2.5": result = btts_actual and total_goals <= 2
+
+    # ── Score in Both Halves ──
+    if fh_home_goals is not None and fh_away_goals is not None:
+        sh_home_eval = home_goals - fh_home_goals
+        sh_away_eval = away_goals - fh_away_goals
+        if market == f"{home_name} Score in Both Halves":
+            result = fh_home_goals >= 1 and sh_home_eval >= 1
+        elif market == f"{away_name} Score in Both Halves":
+            result = fh_away_goals >= 1 and sh_away_eval >= 1
+
+    # ── Asian Handicap ──
+    import re
+    ah_match = re.match(r'AH (.+?) ([+-]\d+\.5)', market)
+    if ah_match:
+        team_name = ah_match.group(1)
+        spread = float(ah_match.group(2))
+        if team_name == home_name:
+            adjusted_diff = home_goals + spread - away_goals
+        elif team_name == away_name:
+            adjusted_diff = away_goals + spread - home_goals
+        else:
+            adjusted_diff = None
+        if adjusted_diff is not None:
+            # Positive spread (+X): team gets advantage
+            # Negative spread (-X): team gives advantage
+            result = adjusted_diff > 0
+
+    # ── European Handicap ──
+    eh_match = re.match(r'EH (.+?) (-\d+) \((Win|Draw|Lose)\)', market)
+    if eh_match:
+        team_name = eh_match.group(1)
+        spread = int(eh_match.group(2))
+        outcome = eh_match.group(3)
+        if team_name == home_name:
+            adj_home = home_goals + spread
+            adj_away = away_goals
+        elif team_name == away_name:
+            adj_home = home_goals
+            adj_away = away_goals + spread
+        else:
+            adj_home = adj_away = None
+        if adj_home is not None:
+            if team_name == home_name:
+                if outcome == 'Win': result = adj_home > adj_away
+                elif outcome == 'Draw': result = adj_home == adj_away
+                elif outcome == 'Lose': result = adj_home < adj_away
+            else:
+                if outcome == 'Win': result = adj_away > adj_home
+                elif outcome == 'Draw': result = adj_away == adj_home
+                elif outcome == 'Lose': result = adj_away < adj_home
 
     return {
         **pick,
@@ -731,6 +1415,7 @@ def get_results_verification(date_str: str):
 
     # ── Phase 1: Build raw results per match ────────────────────
     raw_results = []
+    seen_ids = set()
 
     for ev in events:
         status = ev.get("status", {})
@@ -738,6 +1423,16 @@ def get_results_verification(date_str: str):
             continue
 
         fixture = _sofascore_to_fixture(ev)
+
+        if fixture["date"] != date_str or fixture["id"] in seen_ids:
+            continue
+
+        seen_ids.add(fixture["id"])
+
+        # Skip extra-time / penalty matches
+        if fixture.get("is_extra_time", False):
+            continue
+
         home_goals = fixture.get("home_goals")
         away_goals = fixture.get("away_goals")
 
@@ -749,30 +1444,49 @@ def get_results_verification(date_str: str):
         league_name = fixture["league"]["name"]
         event_id = fixture["id"]
 
-        # Fetch actual match statistics (corners, cards)
-        # Extract newly added FH goals
         fh_home_goals = fixture.get("fh_home_goals")
         fh_away_goals = fixture.get("fh_away_goals")
-
-        # Fetch actual match statistics (corners, cards)
         stats = _fetch_event_statistics(event_id)
         
         # Regenerate predictions for this match
         try:
-            analysis = _compute_match_analysis(home_name, away_name, league_name)
-            top_picks = analysis.get("top_picks", [])
+            analysis = _compute_match_analysis(home_name, away_name, league_name, shuffle_tiers=False)
+            tiers = analysis.get("tiers", [])
         except Exception as e:
             logger.warning(f"Could not compute analysis for {home_name} vs {away_name}: {e}")
             continue
 
-        # Evaluate each pick and tag settlement status
-        evaluated_picks = []
-        for pick in top_picks:
-            evaluated = _evaluate_prediction(pick, home_name, away_name, home_goals, away_goals, fh_home_goals, fh_away_goals, stats)
-            # Add settlement fields
-            evaluated["isSettled"] = evaluated["result"] is not None
-            evaluated["isValidForEvaluation"] = evaluated["result"] is not None
-            evaluated_picks.append(evaluated)
+        # Evaluate each pick within its tier
+        evaluated_tiers = []
+        all_evaluated_picks = []
+
+        for tier in tiers:
+            tier_picks_evaluated = []
+            for pick in tier.get("picks", []):
+                evaluated = _evaluate_prediction(pick, home_name, away_name, home_goals, away_goals, fh_home_goals, fh_away_goals, stats)
+                evaluated["isSettled"] = evaluated["result"] is not None
+                evaluated["isValidForEvaluation"] = evaluated["result"] is not None
+                evaluated["tier"] = tier["tier"]
+                tier_picks_evaluated.append(evaluated)
+                all_evaluated_picks.append(evaluated)
+
+            settled = [p for p in tier_picks_evaluated if p["isSettled"]]
+            correct = sum(1 for p in settled if p["result"] is True)
+            wrong = sum(1 for p in settled if p["result"] is False)
+
+            evaluated_tiers.append({
+                "tier": tier["tier"],
+                "label": tier["label"],
+                "rank_range": tier["rank_range"],
+                "picks": tier_picks_evaluated,
+                "summary": {
+                    "correct": correct,
+                    "wrong": wrong,
+                    "settled": len(settled),
+                    "unsettled": len(tier_picks_evaluated) - len(settled),
+                    "accuracy": round(correct / len(settled) * 100, 1) if len(settled) > 0 else 0,
+                },
+            })
 
         raw_results.append({
             "fixture": fixture,
@@ -788,8 +1502,42 @@ def get_results_verification(date_str: str):
                 "yellow_cards": stats.get("yellow_cards"),
                 "red_cards": stats.get("red_cards"),
             },
-            "picks": evaluated_picks,
+            "tiers": evaluated_tiers,
+            "picks": all_evaluated_picks,
         })
+
+        # ── Log ALL markets (not just tiered picks) for unbiased calibration ──
+        # This is critical: calibration quality depends on the full probability
+        # distribution, not just the top-36 filtered picks.
+        try:
+            from src.db.prediction_logger import log_predictions
+            from src.db.database import get_db
+            db = get_db()
+
+            # Evaluate ALL markets from full_analysis
+            full_analysis = analysis.get("full_analysis", {})
+            all_markets_evaluated = []
+            for section_name, section_markets in full_analysis.items():
+                for market_item in section_markets:
+                    evaluated_full = _evaluate_prediction(
+                        market_item, home_name, away_name,
+                        home_goals, away_goals, fh_home_goals, fh_away_goals, stats
+                    )
+                    # Check if this market was in a tier
+                    tier_num = None
+                    for ep in all_evaluated_picks:
+                        if ep.get("market") == market_item.get("market"):
+                            tier_num = ep.get("tier")
+                            break
+                    evaluated_full["tier"] = tier_num
+                    all_markets_evaluated.append(evaluated_full)
+
+            log_predictions(
+                db, event_id, date_str, home_name, away_name, league_name,
+                all_markets_evaluated,
+            )
+        except Exception as log_err:
+            logger.warning(f"Prediction logging failed for {event_id}: {log_err}")
 
     # ── Phase 2: League-level quality filter ────────────────────
     # Group by league, exclude leagues with >25% NA matches
@@ -827,17 +1575,19 @@ def get_results_verification(date_str: str):
     total_settled_picks = 0
     total_na_excluded = 0
 
+    # Per-tier global accumulators
+    tier_global = {t: {"correct": 0, "wrong": 0, "settled": 0} for t in range(1, 7)}
+
     for match in raw_results:
         league = match["league_name"]
         league_excluded = league in excluded_leagues
 
-        # Filter picks: only settled picks count
         settled_picks = [p for p in match["picks"] if p["isSettled"]]
         na_picks = [p for p in match["picks"] if not p["isSettled"]]
 
         if league_excluded:
             total_na_excluded += len(match["picks"])
-            continue  # Skip entire league
+            continue
 
         match_correct = sum(1 for p in settled_picks if p["result"] is True)
         match_wrong = sum(1 for p in settled_picks if p["result"] is False)
@@ -847,24 +1597,55 @@ def get_results_verification(date_str: str):
         total_settled_picks += len(settled_picks)
         total_na_excluded += len(na_picks)
 
-        # Match summary uses ONLY settled picks
+        # Accumulate per-tier global stats
+        for tier_data in match.get("tiers", []):
+            t = tier_data["tier"]
+            if t in tier_global:
+                tier_global[t]["correct"] += tier_data["summary"]["correct"]
+                tier_global[t]["wrong"] += tier_data["summary"]["wrong"]
+                tier_global[t]["settled"] += tier_data["summary"]["settled"]
+
         clean_results.append({
             "fixture": match["fixture"],
             "actual": match["actual"],
-            "picks": match["picks"],  # Keep all for display, but tag them
+            "tiers": match.get("tiers", []),
+            "picks": match["picks"],
             "summary": {
                 "correct": match_correct,
                 "wrong": match_wrong,
                 "unknown": len(na_picks),
-                "total": len(settled_picks),  # Only settled count
+                "total": len(settled_picks),
             },
         })
 
-    # ── Phase 4: overall summary using ONLY settled picks ───────
-    # INVARIANT: correct + wrong == total_settled_picks
+    # ── Phase 4: overall summary + per-tier summary ─────────────
     accuracy = round(
         (total_correct / total_settled_picks * 100), 1
     ) if total_settled_picks > 0 else 0.0
+
+    tier_summary = []
+    for t in range(1, 7):
+        ts = tier_global[t]
+        tier_acc = round(ts["correct"] / ts["settled"] * 100, 1) if ts["settled"] > 0 else 0
+        tier_summary.append({
+            "tier": t,
+            "label": f"Tier {t}",
+            "correct": ts["correct"],
+            "wrong": ts["wrong"],
+            "settled": ts["settled"],
+            "accuracy": tier_acc,
+        })
+
+    # Tiers remain in sequential order (1 to 6)
+
+    # ── Update daily performance stats ──
+    try:
+        from src.db.prediction_logger import update_daily_performance
+        from src.db.database import get_db
+        db = get_db()
+        update_daily_performance(db, date_str)
+    except Exception as perf_err:
+        logger.warning(f"Daily performance update failed: {perf_err}")
 
     return {
         "date": date_str,
@@ -874,11 +1655,12 @@ def get_results_verification(date_str: str):
             "total_picks": total_settled_picks,
             "total_correct": total_correct,
             "total_wrong": total_wrong,
-            "total_unknown": 0,  # Always 0 — NAs are excluded
+            "total_unknown": 0,
             "accuracy_pct": accuracy,
             "na_excluded": total_na_excluded,
             "leagues_excluded": len(excluded_leagues),
         },
+        "tier_summary": tier_summary,
         "league_quality": league_quality,
     }
 
@@ -1043,4 +1825,166 @@ def trigger_odds_fetch():
         "status": "ok",
         "leagues_fetched": result,
         "total_odds_in_db": count,
+    }
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Phase 3 — Calibration, Backtesting & Performance Dashboard
+# ═══════════════════════════════════════════════════════════════════════
+
+from src.db.prediction_logger import (
+    get_calibration_data,
+    get_all_market_types,
+    get_performance_history,
+    get_backtest_summary,
+)
+
+
+@app.get("/api/calibration/status")
+def get_calibration_status():
+    """Overview of calibration readiness per market type.
+
+    Shows how many samples exist and whether isotonic calibration
+    can be reliably applied for each market type.
+    """
+    conn = get_db()
+    return {"market_types": get_all_market_types(conn)}
+
+
+@app.get("/api/calibration/{market_type}")
+def get_market_calibration(market_type: str):
+    """Get per-market-type calibration curve.
+
+    Shows predicted vs actual rates in 5% buckets.
+    This answers: 'When we predict 75%, does it actually hit 75%?'
+    """
+    conn = get_db()
+    return get_calibration_data(conn, market_type)
+
+
+@app.get("/api/backtest/summary")
+def get_backtest(market_type: str = None):
+    """Backtesting summary: accuracy, calibration gap, per-tier breakdown.
+
+    Optional filter by market_type (goals, result, btts, cs, combo, etc.)
+    """
+    conn = get_db()
+    return get_backtest_summary(conn, market_type)
+
+
+@app.get("/api/performance/daily")
+def get_daily_performance(days: int = 30):
+    """Daily performance history for ROI dashboard.
+
+    Shows accuracy, calibration gap, and volume per day.
+    """
+    conn = get_db()
+    history = get_performance_history(conn, days)
+    return {"days": days, "history": history}
+
+
+@app.get("/api/performance/overview")
+def get_performance_overview():
+    """High-level performance overview across all logged predictions.
+
+    Returns overall stats + per-market-type breakdown + trend.
+    """
+    conn = get_db()
+
+    # Overall stats
+    overall = get_backtest_summary(conn)
+
+    # Per market type
+    market_types = get_all_market_types(conn)
+
+    # Per-type calibration gaps
+    type_gaps = []
+    for mt in market_types:
+        cal = get_calibration_data(conn, mt["market_type"], min_samples=20)
+        type_gaps.append({
+            "market_type": mt["market_type"],
+            "samples": mt["total"],
+            "settled": mt["settled"],
+            "hit_rate": mt["hit_rate"],
+            "avg_predicted": mt["avg_predicted"],
+            "calibration_ready": mt["calibration_ready"],
+            "buckets": cal["buckets"],
+        })
+
+    # Recent trend (last 7 days)
+    trend = get_performance_history(conn, 7)
+
+    return {
+        "overall": overall,
+        "market_types": type_gaps,
+        "recent_trend": trend,
+    }
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Isotonic Calibration Endpoints
+# ═══════════════════════════════════════════════════════════════════════
+
+from src.engine.isotonic_calibrator import get_isotonic_calibrator
+
+
+@app.post("/api/calibration/fit")
+def fit_isotonic_calibration():
+    """Fit (or refit) isotonic calibration models from prediction_log.
+
+    This reads all settled predictions, groups by market type, and fits
+    a monotonic transform that corrects the systematic overconfidence.
+
+    Call this after accumulating enough results (200+ per market type).
+    """
+    conn = get_db()
+    cal = get_isotonic_calibrator(conn)
+    summary = cal.fit_all(conn)
+    return {
+        "status": "ok",
+        "models_fitted": sum(1 for v in summary.values() if v.get("fitted")),
+        "details": summary,
+    }
+
+
+@app.get("/api/calibration/isotonic/status")
+def get_isotonic_status():
+    """Get status of all fitted isotonic calibration models."""
+    conn = get_db()
+    cal = get_isotonic_calibrator(conn)
+    return {"models": cal.get_status()}
+
+
+@app.get("/api/calibration/isotonic/curve/{market_type}")
+def get_isotonic_curve(market_type: str):
+    """Get the calibration transform curve for a market type.
+
+    Shows raw → calibrated mapping at 5% intervals.
+    Use this to visualize how the model's overconfidence is corrected.
+    """
+    conn = get_db()
+    cal = get_isotonic_calibrator(conn)
+    curve = cal.get_calibration_curve(market_type)
+    return {
+        "market_type": market_type,
+        "curve": curve,
+        "has_model": market_type in cal._models,
+    }
+
+
+@app.get("/api/calibration/isotonic/test")
+def test_isotonic_calibration(raw_prob: float = 82.0, market_type: str = "goals"):
+    """Test the isotonic calibrator on a single value.
+
+    Example: /api/calibration/isotonic/test?raw_prob=85&market_type=goals
+    """
+    conn = get_db()
+    cal = get_isotonic_calibrator(conn)
+    calibrated = cal.calibrate(raw_prob, market_type)
+    return {
+        "raw_prob": raw_prob,
+        "calibrated_prob": calibrated,
+        "market_type": market_type,
+        "has_fitted_model": market_type in cal._models,
+        "correction": round(calibrated - raw_prob, 1),
     }

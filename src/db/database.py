@@ -69,6 +69,9 @@ def init_db(conn: sqlite3.Connection) -> None:
             implied_prob    REAL NOT NULL,
             edge            REAL NOT NULL,
             odds_at_pick    REAL NOT NULL,
+            opening_odds    REAL,
+            closing_odds    REAL,
+            clv_pct         REAL,
             confidence      REAL DEFAULT 0.5,
             league_reliability REAL DEFAULT 0.5,
             grade           TEXT NOT NULL,
@@ -96,6 +99,70 @@ def init_db(conn: sqlite3.Connection) -> None:
         CREATE INDEX IF NOT EXISTS idx_picks_match ON picks(match_id);
         CREATE INDEX IF NOT EXISTS idx_picks_date  ON picks(created_at);
         CREATE INDEX IF NOT EXISTS idx_matches_date ON matches(date);
+
+        -- ═══ PHASE 3: Prediction Logging ═══
+        -- Every prediction from the results evaluation flow is logged here.
+        -- This is the raw data source for calibration + backtesting.
+        CREATE TABLE IF NOT EXISTS prediction_log (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            match_id        TEXT NOT NULL,
+            match_date      DATE NOT NULL,
+            home_team       TEXT NOT NULL,
+            away_team       TEXT NOT NULL,
+            league_name     TEXT NOT NULL,
+            market          TEXT NOT NULL,
+            market_type     TEXT NOT NULL,   -- goals, result, btts, cs, combo, handicap, corners, cards
+            predicted_prob  REAL NOT NULL,   -- model probability (0-100)
+            actual_outcome  INTEGER,         -- 1 = hit, 0 = miss, NULL = unsettled
+            tier            INTEGER,         -- which tier (1-6) this pick was in
+            created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_predlog_date ON prediction_log(match_date);
+        CREATE INDEX IF NOT EXISTS idx_predlog_type ON prediction_log(market_type);
+        CREATE INDEX IF NOT EXISTS idx_predlog_match ON prediction_log(match_id);
+
+        -- ═══ PHASE 3: Calibration Curves (Isotonic) ═══
+        -- Stores per-market-type calibration mappings.
+        -- Each row maps a predicted probability to a calibrated probability.
+        CREATE TABLE IF NOT EXISTS calibration_curves (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            market_type     TEXT NOT NULL,
+            raw_prob        REAL NOT NULL,   -- predicted probability (0-1)
+            calibrated_prob REAL NOT NULL,   -- actual observed rate (0-1)
+            sample_count    INTEGER NOT NULL, -- how many samples in this bucket
+            updated_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_calcurve_type ON calibration_curves(market_type);
+
+        -- ═══ PHASE 3: Daily Performance Tracking ═══
+        -- Aggregated daily stats for ROI dashboard + CLV tracking.
+        CREATE TABLE IF NOT EXISTS daily_performance (
+            date            DATE PRIMARY KEY,
+            total_predictions INTEGER DEFAULT 0,
+            total_settled   INTEGER DEFAULT 0,
+            total_correct   INTEGER DEFAULT 0,
+            total_wrong     INTEGER DEFAULT 0,
+            accuracy_pct    REAL DEFAULT 0.0,
+            avg_predicted_prob REAL DEFAULT 0.0,
+            avg_actual_rate REAL DEFAULT 0.0,
+            calibration_gap REAL DEFAULT 0.0,  -- predicted - actual (positive = overconfident)
+            updated_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+
+        -- ═══ PHASE 3: Isotonic Calibration Models ═══
+        -- Stores fitted isotonic regression models per market type.
+        -- fitted_json contains the piecewise-linear breakpoints.
+        CREATE TABLE IF NOT EXISTS calibration_models (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            market_type     TEXT NOT NULL,
+            fitted_json     TEXT NOT NULL,
+            samples         INTEGER NOT NULL,
+            brier_score     REAL,
+            log_loss        REAL,
+            created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
     """)
     conn.commit()
 
