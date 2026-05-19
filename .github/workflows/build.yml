@@ -1,0 +1,187 @@
+name: Build Desktop App (macOS + Windows)
+
+on:
+  push:
+    tags:
+      - "v*"          # Triggers on version tags: v1.0.0, v1.2.3 etc
+  workflow_dispatch:  # Allow manual trigger from GitHub UI
+
+jobs:
+  # ─────────────────────────────────────────────────────────────────────────
+  # JOB 1: Build React frontend (shared artifact)
+  # ─────────────────────────────────────────────────────────────────────────
+  build-frontend:
+    name: Build React Frontend
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Build frontend
+        working-directory: frontend
+        run: npm run build
+
+      - name: Upload frontend dist
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-dist
+          path: frontend/dist/
+          retention-days: 1
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # JOB 2: Build macOS app
+  # ─────────────────────────────────────────────────────────────────────────
+  build-macos:
+    name: Build macOS App
+    needs: build-frontend
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install Python dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pywebview pyinstaller
+
+      - name: Download frontend dist
+        uses: actions/download-artifact@v4
+        with:
+          name: frontend-dist
+          path: frontend/dist/
+
+      - name: Ensure models directory exists
+        run: mkdir -p models
+
+      - name: Build macOS app with PyInstaller
+        run: pyinstaller football_predictor.spec --clean --noconfirm
+
+      - name: Create DMG installer
+        run: |
+          brew install create-dmg
+          create-dmg \
+            --volname "Football Predictor AI" \
+            --window-pos 200 120 \
+            --window-size 600 400 \
+            --icon-size 100 \
+            --app-drop-link 450 185 \
+            "Football-Predictor-AI-macOS.dmg" \
+            "dist/Football Predictor AI.app"
+
+      - name: Upload macOS DMG
+        uses: actions/upload-artifact@v4
+        with:
+          name: Football-Predictor-AI-macOS
+          path: Football-Predictor-AI-macOS.dmg
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # JOB 3: Build Windows .exe
+  # ─────────────────────────────────────────────────────────────────────────
+  build-windows:
+    name: Build Windows App
+    needs: build-frontend
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install Python dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pywebview pyinstaller
+
+      - name: Download frontend dist
+        uses: actions/download-artifact@v4
+        with:
+          name: frontend-dist
+          path: frontend/dist/
+
+      - name: Ensure models directory exists
+        run: mkdir -p models
+
+      - name: Build Windows exe with PyInstaller
+        run: pyinstaller football_predictor.spec --clean --noconfirm
+
+      - name: Create Windows ZIP
+        run: |
+          Compress-Archive -Path "dist\Football Predictor AI\*" -DestinationPath "Football-Predictor-AI-Windows.zip"
+
+      - name: Upload Windows ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: Football-Predictor-AI-Windows
+          path: Football-Predictor-AI-Windows.zip
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # JOB 4: Create GitHub Release with both downloads
+  # ─────────────────────────────────────────────────────────────────────────
+  release:
+    name: Create GitHub Release
+    needs: [build-macos, build-windows]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download macOS artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: Football-Predictor-AI-macOS
+          path: release/
+
+      - name: Download Windows artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: Football-Predictor-AI-Windows
+          path: release/
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "Football Predictor AI ${{ github.ref_name }}"
+          body: |
+            ## 🏆 Football Predictor AI — ${{ github.ref_name }}
+
+            ### Download for your platform:
+            | Platform | File | Notes |
+            |---|---|---|
+            | 🍎 **macOS** | `Football-Predictor-AI-macOS.dmg` | Drag to Applications |
+            | 🪟 **Windows** | `Football-Predictor-AI-Windows.zip` | Extract & run .exe |
+
+            ### Requirements
+            - **None.** Python, Node.js, and all dependencies are bundled inside.
+            - macOS 12+ (Monterey or newer)
+            - Windows 10/11 (requires WebView2, which ships with all modern Windows)
+
+            ### First Launch
+            - **macOS**: If blocked by Gatekeeper, right-click → Open
+            - **Windows**: If SmartScreen warns, click "More info" → "Run anyway"
+          files: |
+            release/Football-Predictor-AI-macOS.dmg
+            release/Football-Predictor-AI-Windows.zip
+          draft: false
+          prerelease: false
