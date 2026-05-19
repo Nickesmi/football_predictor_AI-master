@@ -1058,22 +1058,47 @@ def _sofascore_to_fixture(event: dict) -> dict:
             "id": str(ut_id),
             "name": unique_tournament.get("name", tournament.get("name", "")),
             "country": category.get("name", ""),
-            "logo": f"https://api.sofascore.com/api/v1/unique-tournament/{ut_id}/image",
+            "logo": f"/api/image/tournament/{ut_id}",
         },
         "home_team": {
             "id": str(home.get("id", "")),
             "name": home.get("name", ""),
-            "logo": f"https://api.sofascore.com/api/v1/team/{home.get('id', 0)}/image",
+            "logo": f"/api/image/team/{home.get('id', 0)}",
         },
         "away_team": {
             "id": str(away.get("id", "")),
             "name": away.get("name", ""),
-            "logo": f"https://api.sofascore.com/api/v1/team/{away.get('id', 0)}/image",
+            "logo": f"/api/image/team/{away.get('id', 0)}",
         },
     }
 
-
 # ── Endpoints ──────────────────────────
+
+from fastapi.responses import Response
+
+@app.get("/api/image/team/{team_id}")
+def get_team_image(team_id: str):
+    url = f"https://api.sofascore.com/api/v1/team/{team_id}/image"
+    return _proxy_image(url)
+
+@app.get("/api/image/tournament/{tour_id}")
+def get_tournament_image(tour_id: str):
+    url = f"https://api.sofascore.com/api/v1/unique-tournament/{tour_id}/image"
+    return _proxy_image(url)
+
+def _proxy_image(url: str):
+    try:
+        req = urllib.request.Request(url, headers={
+            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15",
+            "Accept": "image/webp,image/apng,image/*,*/*;q=0.8",
+        })
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        resp = urllib.request.urlopen(req, timeout=5, context=ctx)
+        return Response(content=resp.read(), media_type="image/png")
+    except Exception as e:
+        return Response(status_code=404)
 
 @app.get("/api/health")
 def health_check():
