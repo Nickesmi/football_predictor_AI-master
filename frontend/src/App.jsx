@@ -4,8 +4,7 @@ import MatchRow from './components/MatchRow';
 import MatchDetail from './components/MatchDetail';
 import DatePicker from './components/DatePicker';
 import ResultsTracker from './components/ResultsTracker';
-
-const API = "http://127.0.0.1:8000/api";
+import { API, fixLogo } from './config';
 
 const pad = (n) => String(n).padStart(2, '0');
 const fmtDate = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
@@ -21,6 +20,7 @@ function App() {
   const [analysis, setAnalysis] = useState(null);
   const [analysisLoading, setAnalysisLoading] = useState(false);
   const [analysisError, setAnalysisError] = useState(null);
+  const [isScanning, setIsScanning] = useState(false);
 
   // Fetch fixtures for the selected date
   const fetchFixtures = useCallback(async (dateStr) => {
@@ -30,6 +30,14 @@ function App() {
       const res = await fetch(`${API}/fixtures/${dateStr}`);
       if (!res.ok) throw new Error("Failed to fetch matches");
       const data = await res.json();
+
+      // Fix relative logo URLs to absolute
+      data.forEach(f => {
+        if (f.league) f.league.logo = fixLogo(f.league.logo);
+        if (f.home_team) f.home_team.logo = fixLogo(f.home_team.logo);
+        if (f.away_team) f.away_team.logo = fixLogo(f.away_team.logo);
+      });
+
       setFixtures(data);
       // Auto-select first match if none selected
       if (data.length > 0) {
@@ -88,7 +96,7 @@ function App() {
   // If in results mode, show the full-screen results tracker
   if (viewMode === 'results') {
     return (
-      <div className="h-screen flex flex-col overflow-hidden">
+      <div className="h-screen flex flex-col overflow-hidden min-h-0">
         <header className="shrink-0 h-14 bg-surface-1 border-b border-border flex items-center px-5 gap-3 z-30">
           <Trophy className="w-5 h-5 text-gold-500" />
           <span className="text-base font-bold tracking-widest text-white">
@@ -109,7 +117,7 @@ function App() {
             Results
           </button>
         </header>
-        <div className="flex-1 overflow-hidden bg-surface-0">
+        <div className="flex-1 min-h-0 overflow-hidden bg-surface-0">
           <ResultsTracker
             onBack={() => setViewMode('predictions')}
             selectedDate={selectedDate}
@@ -118,8 +126,6 @@ function App() {
       </div>
     );
   }
-
-  const [isScanning, setIsScanning] = useState(false);
 
   const handleScanLiveOdds = async () => {
     if (isScanning) return;
@@ -139,7 +145,7 @@ function App() {
   };
 
   return (
-    <div className="h-screen flex flex-col overflow-hidden">
+    <div className="h-screen flex flex-col overflow-hidden min-h-0">
       {/* ── Top Bar ─────────────────────────────────────── */}
       <header className="shrink-0 h-14 bg-surface-1 border-b border-border flex items-center px-5 gap-3 z-30">
         <Trophy className="w-5 h-5 text-gold-500" />
@@ -178,9 +184,9 @@ function App() {
       <DatePicker selectedDate={selectedDate} onDateChange={setSelectedDate} />
 
       {/* ── Main 2-Panel Layout ──────────────────────────── */}
-      <div className="flex-1 flex overflow-hidden">
+      <div className="flex-1 min-h-0 flex overflow-hidden">
         {/* Left Panel — Match List */}
-        <aside className="w-[380px] shrink-0 bg-surface-1 border-r border-border overflow-y-auto">
+        <aside className="w-[380px] shrink-0 bg-surface-1 border-r border-border overflow-y-auto min-h-0">
           {loading ? (
             <div className="flex flex-col items-center justify-center py-20 text-slate-500">
               <Loader2 className="w-6 h-6 animate-spin text-gold-500 mb-3" />
@@ -211,7 +217,7 @@ function App() {
         </aside>
 
         {/* Center Panel — Match Detail / Analysis */}
-        <main className="flex-1 overflow-y-auto bg-surface-0">
+        <main className="flex-1 min-h-0 overflow-y-auto bg-surface-0">
           {selectedFixture ? (
             <MatchDetail
               fixture={selectedFixture}

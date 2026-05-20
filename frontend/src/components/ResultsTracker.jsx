@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Loader2, CheckCircle2, XCircle, HelpCircle, Trophy, TrendingUp, BarChart3, ChevronDown, ChevronUp, Calendar, Target, ArrowLeft, AlertTriangle, ShieldCheck, Shield } from 'lucide-react';
-
-const API = "http://127.0.0.1:8000/api";
+import { API, fixLogo } from '../config';
 
 const TIER_STYLES = {
   1: { accent: "text-yellow-400", bg: "bg-yellow-500/10", border: "border-yellow-500/30", badge: "bg-yellow-500/15 text-yellow-400", barFill: "from-yellow-500 to-yellow-400", label: "🏆 Tier 1" },
@@ -223,6 +222,18 @@ const ResultsTracker = ({ onBack, selectedDate }) => {
       const res = await fetch(`${API}/results/${dateStr}`);
       if (!res.ok) throw new Error("Failed to fetch results");
       const json = await res.json();
+
+      // Fix relative logo URLs to absolute
+      if (json && json.matches) {
+        json.matches.forEach(m => {
+          if (m.fixture) {
+            if (m.fixture.league) m.fixture.league.logo = fixLogo(m.fixture.league.logo);
+            if (m.fixture.home_team) m.fixture.home_team.logo = fixLogo(m.fixture.home_team.logo);
+            if (m.fixture.away_team) m.fixture.away_team.logo = fixLogo(m.fixture.away_team.logo);
+          }
+        });
+      }
+
       setData(json);
     } catch (e) {
       setError(e.message);
@@ -252,7 +263,7 @@ const ResultsTracker = ({ onBack, selectedDate }) => {
     .map(([name]) => name);
 
   return (
-    <div className="h-full flex flex-col overflow-hidden">
+    <div className="h-full min-h-0 flex flex-col overflow-hidden">
       {/* Header */}
       <div className="shrink-0 bg-surface-1 border-b border-border px-6 py-4">
         <div className="flex items-center gap-4 mb-4">
@@ -283,7 +294,7 @@ const ResultsTracker = ({ onBack, selectedDate }) => {
       </div>
 
       {/* Content */}
-      <div className="flex-1 overflow-y-auto px-6 py-6">
+      <div className="flex-1 min-h-0 overflow-y-auto px-6 py-6">
         {loading ? (
           <div className="flex flex-col items-center justify-center py-20">
             <Loader2 className="w-10 h-10 animate-spin text-amber-500 mb-4" />
