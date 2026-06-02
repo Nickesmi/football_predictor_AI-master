@@ -63,21 +63,6 @@ def settle_pick(
     conn.commit()
 
 
-def update_closing_odds(
-    conn: sqlite3.Connection,
-    pick_id: int,
-    closing_odds: float,
-    clv_pct: float,
-) -> None:
-    """Update closing odds and computed CLV percentage before match start."""
-    conn.execute(
-        """UPDATE picks SET closing_odds = ?, clv_pct = ?
-           WHERE id = ?""",
-        (closing_odds, clv_pct, pick_id),
-    )
-    conn.commit()
-
-
 def get_portfolio_summary(conn: sqlite3.Connection) -> dict:
     """Aggregate P&L stats across all settled picks."""
     row = conn.execute(

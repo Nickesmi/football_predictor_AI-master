@@ -1,234 +1,24 @@
-import React, { useState, useMemo, useEffect } from 'react';
-import { Loader2, AlertCircle, ShieldAlert, Cpu, ChevronDown, ChevronRight, Activity, Zap, Target, CornerUpRight, CreditCard, Trophy, Layers, Filter, BarChart3, TrendingUp, Shuffle, Crosshair, Crown, Shield } from 'lucide-react';
+import React, { useState } from 'react';
+import { Loader2, AlertCircle, ArrowRight, ShieldAlert, Cpu, ChevronDown, ChevronRight, Activity, Zap, Target, CornerUpRight, CreditCard, Trophy } from 'lucide-react';
 
 const getBarColor = (pct) => {
   if (pct >= 95) return "bg-emerald-500";
   if (pct >= 90) return "bg-green-500";
   if (pct >= 85) return "bg-lime-500";
   if (pct >= 80) return "bg-yellow-500";
-  if (pct >= 70) return "bg-orange-400";
-  if (pct >= 60) return "bg-amber-600";
-  return "bg-slate-600";
+  return "bg-slate-500";
 };
-
-const getTextColor = (pct) => {
-  if (pct >= 80) return "text-emerald-400";
-  if (pct >= 70) return "text-orange-400";
-  if (pct >= 60) return "text-amber-500";
-  return "text-slate-500";
-};
-
-const getSectionIcon = (secName) => {
-  switch (secName) {
-    case "Goals": return <Target className="w-4 h-4 text-cyan-400" />;
-    case "Team Goals": return <TrendingUp className="w-4 h-4 text-teal-400" />;
-    case "First Half": return <Activity className="w-4 h-4 text-violet-400" />;
-    case "Second Half": return <Activity className="w-4 h-4 text-orange-400" />;
-    case "Corners": return <CornerUpRight className="w-4 h-4 text-blue-400" />;
-    case "Handicaps": return <Zap className="w-4 h-4 text-fuchsia-400" />;
-    case "Cards": return <CreditCard className="w-4 h-4 text-amber-400" />;
-    case "Result": return <Trophy className="w-4 h-4 text-emerald-400" />;
-    default: return <BarChart3 className="w-4 h-4 text-slate-400" />;
-  }
-};
-
-const getSectionGradient = (secName) => {
-  switch (secName) {
-    case "Goals": return "from-cyan-500/10 to-transparent";
-    case "Team Goals": return "from-teal-500/10 to-transparent";
-    case "First Half": return "from-violet-500/10 to-transparent";
-    case "Second Half": return "from-orange-500/10 to-transparent";
-    case "Corners": return "from-blue-500/10 to-transparent";
-    case "Handicaps": return "from-fuchsia-500/10 to-transparent";
-    case "Cards": return "from-amber-500/10 to-transparent";
-    case "Result": return "from-emerald-500/10 to-transparent";
-    default: return "from-white/5 to-transparent";
-  }
-};
-
-/* ── Tier styling ──────────────────────── */
-const TIER_STYLES = {
-  1: { border: "border-yellow-500/40", glow: "shadow-[0_0_15px_rgba(234,179,8,0.08)]", accent: "text-yellow-400", bg: "from-yellow-500/10 to-transparent", badge: "bg-yellow-500/20 text-yellow-400", icon: "text-yellow-400", label: "🏆 Tier 1", desc: "Highest Confidence" },
-  2: { border: "border-emerald-500/30", glow: "shadow-[0_0_12px_rgba(16,185,129,0.06)]", accent: "text-emerald-400", bg: "from-emerald-500/8 to-transparent", badge: "bg-emerald-500/15 text-emerald-400", icon: "text-emerald-400", label: "🥈 Tier 2", desc: "Very High Confidence" },
-  3: { border: "border-cyan-500/25", glow: "", accent: "text-cyan-400", bg: "from-cyan-500/6 to-transparent", badge: "bg-cyan-500/15 text-cyan-400", icon: "text-cyan-400", label: "🥉 Tier 3", desc: "High Confidence" },
-  4: { border: "border-blue-500/20", glow: "", accent: "text-blue-400", bg: "from-blue-500/5 to-transparent", badge: "bg-blue-500/10 text-blue-400", icon: "text-blue-400", label: "Tier 4", desc: "Moderate-High" },
-  5: { border: "border-violet-500/15", glow: "", accent: "text-violet-400", bg: "from-violet-500/5 to-transparent", badge: "bg-violet-500/10 text-violet-400", icon: "text-violet-400", label: "Tier 5", desc: "Moderate" },
-  6: { border: "border-slate-500/15", glow: "", accent: "text-slate-400", bg: "from-slate-500/5 to-transparent", badge: "bg-slate-500/10 text-slate-400", icon: "text-slate-400", label: "Tier 6", desc: "Standard" },
-  7: { border: "border-stone-500/15", glow: "", accent: "text-stone-400", bg: "from-stone-500/5 to-transparent", badge: "bg-stone-500/10 text-stone-400", icon: "text-stone-400", label: "Tier 7", desc: "Marginal" },
-  8: { border: "border-zinc-500/15", glow: "", accent: "text-zinc-400", bg: "from-zinc-500/5 to-transparent", badge: "bg-zinc-500/10 text-zinc-400", icon: "text-zinc-400", label: "Tier 8", desc: "Low Confidence" },
-  9: { border: "border-neutral-500/15", glow: "", accent: "text-neutral-400", bg: "from-neutral-500/5 to-transparent", badge: "bg-neutral-500/10 text-neutral-400", icon: "text-neutral-400", label: "Tier 9", desc: "Speculative" },
-  10: { border: "border-gray-500/15", glow: "", accent: "text-gray-500", bg: "from-gray-500/5 to-transparent", badge: "bg-gray-500/10 text-gray-500", icon: "text-gray-500", label: "Tier 10", desc: "Wildcard" },
-};
-
-/* ── Score Prediction Card ──────────────────── */
-const ScorePrediction = ({ scorePrediction, dominance, homeName, awayName, poisson }) => {
-  if (!scorePrediction) return null;
-
-  const ftScores = scorePrediction.full_time || [];
-  const fhScores = scorePrediction.first_half || [];
-  const expectedGoals = scorePrediction.expected_goals || {};
-  const corners = dominance?.corners || {};
-  const cards = dominance?.cards || {};
-
-  return (
-    <div className="mb-8 space-y-4">
-      <div className="flex items-center gap-2 mb-2">
-        <Crosshair className="w-5 h-5 text-violet-400" />
-        <h3 className="text-sm font-bold tracking-[0.15em] text-white uppercase">Score Prediction</h3>
-        <span className="bg-violet-500/10 text-violet-400 text-[9px] font-bold px-2 py-0.5 rounded-sm uppercase tracking-wider">Poisson Model</span>
-      </div>
-
-      {/* xG Summary */}
-      <div className="bg-[#111318] border border-white/5 rounded-xl p-4 flex items-center justify-between">
-        <div className="flex items-center gap-6">
-          <div className="text-center">
-            <span className="text-[9px] text-slate-500 uppercase tracking-wider block mb-1">xG Home</span>
-            <span className="text-xl font-mono font-bold text-cyan-400">{expectedGoals.home}</span>
-          </div>
-          <div className="text-[10px] text-slate-600 font-mono">vs</div>
-          <div className="text-center">
-            <span className="text-[9px] text-slate-500 uppercase tracking-wider block mb-1">xG Away</span>
-            <span className="text-xl font-mono font-bold text-orange-400">{expectedGoals.away}</span>
-          </div>
-        </div>
-        <div className="text-center bg-white/5 px-4 py-2 rounded-lg">
-          <span className="text-[9px] text-slate-500 uppercase tracking-wider block mb-1">Total xG</span>
-          <span className="text-xl font-mono font-bold text-white">{expectedGoals.total}</span>
-        </div>
-      </div>
-
-      {/* FT & FH Scores */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        {[{ scores: ftScores, label: "Full Time", color: "cyan" }, { scores: fhScores, label: "First Half", color: "violet" }].map(({ scores, label, color }) => (
-          <div key={label} className="bg-[#111318] border border-white/5 rounded-xl overflow-hidden">
-            <div className="px-4 py-3 border-b border-white/5 flex items-center gap-2">
-              <div className={`w-2 h-2 rounded-full bg-${color}-400`} />
-              <span className="text-xs font-bold text-white uppercase tracking-wider">{label}</span>
-              <span className="text-[9px] text-slate-500 ml-auto">Top {scores.length}</span>
-            </div>
-            <div className="divide-y divide-white/[0.03]">
-              {scores.map((score, idx) => (
-                <div key={idx} className={`flex items-center justify-between px-4 py-2.5 ${idx === 0 ? `bg-${color}-500/[0.04]` : ''}`}>
-                  <div className="flex items-center gap-3">
-                    {idx === 0 && <Crown className="w-3.5 h-3.5 text-yellow-400" />}
-                    <span className={`text-lg font-mono font-bold ${idx === 0 ? 'text-white' : 'text-slate-400'}`}>{score.home} - {score.away}</span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <div className="w-16 h-1.5 bg-black/40 rounded-full overflow-hidden">
-                      <div className={`h-full rounded-full bg-${color}-400 animate-grow`} style={{ width: `${Math.min(score.probability * 3, 100)}%`, opacity: idx === 0 ? 1 : 0.5 }} />
-                    </div>
-                    <span className={`text-sm font-mono font-bold min-w-[44px] text-right ${idx === 0 ? `text-${color}-400` : 'text-slate-500'}`}>{score.probability}%</span>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        ))}
-      </div>
-
-      {/* Dominance Insights */}
-      {dominance && (
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          {[{ data: { home_pct: poisson?.result?.home_win || 0, away_pct: poisson?.result?.away_win || 0, expected_home: "Win", expected_total: `Draw: ${poisson?.result?.draw || 0}%`, expected_away: "Win" }, label: "Win Probability", icon: <Trophy className="w-4 h-4 text-emerald-400" />, colorA: "bg-emerald-400", colorB: "bg-purple-400", accent: "text-emerald-400" },
-            { data: corners, label: "Corner Dominance", icon: <CornerUpRight className="w-4 h-4 text-blue-400" />, colorA: "bg-blue-400", colorB: "bg-orange-400", accent: "text-blue-400" },
-            { data: cards, label: "Card Dominance", icon: <CreditCard className="w-4 h-4 text-amber-400" />, colorA: "bg-amber-400", colorB: "bg-rose-400", accent: "text-amber-400" }
-          ].map(({ data, label, icon, colorA, colorB, accent }) => (
-            <div key={label} className="bg-[#111318] border border-white/5 rounded-xl p-4 relative overflow-hidden">
-              <div className="flex items-center gap-2 mb-3">
-                {icon}
-                <span className={`text-[10px] font-bold ${accent} uppercase tracking-wider`}>{label}</span>
-              </div>
-              <div className="flex items-center gap-3 mb-3">
-                <div className="flex-1 text-center">
-                  <span className="text-[9px] text-slate-500 block mb-0.5">{homeName}</span>
-                  <span className={`text-lg font-mono font-bold ${data.home_pct > data.away_pct ? accent : 'text-slate-500'}`}>{data.home_pct}%</span>
-                </div>
-                <div className="text-[9px] text-slate-600">vs</div>
-                <div className="flex-1 text-center">
-                  <span className="text-[9px] text-slate-500 block mb-0.5">{awayName}</span>
-                  <span className={`text-lg font-mono font-bold ${data.away_pct > data.home_pct ? accent : 'text-slate-500'}`}>{data.away_pct}%</span>
-                </div>
-              </div>
-              <div className="w-full h-2 bg-black/30 rounded-full overflow-hidden flex">
-                <div className={`h-full ${colorA} rounded-l-full`} style={{ width: `${data.home_pct}%` }} />
-                <div className={`h-full ${colorB} rounded-r-full`} style={{ width: `${data.away_pct}%` }} />
-              </div>
-              <div className="flex justify-between mt-2">
-                <span className="text-[9px] text-slate-600 font-mono">{typeof data.expected_home === 'string' ? data.expected_home : `Exp: ${data.expected_home}`}</span>
-                <span className="text-[9px] text-slate-600 font-mono">{typeof data.expected_total === 'string' ? data.expected_total : `Total: ${data.expected_total}`}</span>
-                <span className="text-[9px] text-slate-600 font-mono">{typeof data.expected_away === 'string' ? data.expected_away : `Exp: ${data.expected_away}`}</span>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-};
-
-/* ── Single Tier Component ──────────────────── */
-const TierCard = ({ tier }) => {
-  const style = TIER_STYLES[tier.tier] || TIER_STYLES[6];
-  const picks = tier.picks || [];
-
-  return (
-    <div className={`bg-[#111318] border ${style.border} rounded-xl overflow-hidden ${style.glow} transition-all`}>
-      {/* Tier Header */}
-      <div className={`px-4 py-3 border-b border-white/5 bg-gradient-to-r ${style.bg} flex items-center justify-between`}>
-        <div className="flex items-center gap-2.5">
-          <Shield className={`w-4 h-4 ${style.icon}`} />
-          <span className="text-sm font-bold text-white uppercase tracking-wider">{style.label}</span>
-          <span className={`text-[9px] font-bold px-2 py-0.5 rounded-sm uppercase tracking-wider ${style.badge}`}>{style.desc}</span>
-        </div>
-        <div className="flex items-center gap-2">
-          <Shuffle className="w-3 h-3 text-slate-500 opacity-60" />
-          <span className="text-[9px] text-slate-500 font-mono">{tier.min_probability}%–{tier.max_probability}%</span>
-        </div>
-      </div>
-
-      {/* Tier Picks Grid */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-px bg-white/[0.02]">
-        {picks.map((pick, idx) => (
-          <div key={idx} className="bg-[#0D0F13] p-3.5 hover:bg-white/[0.02] transition-colors group relative">
-            <div className="absolute top-0 right-0 w-10 h-10 bg-gradient-to-bl from-white/[0.02] to-transparent rounded-bl-full pointer-events-none" />
-            <span className={`text-[9px] ${style.accent} font-bold uppercase tracking-wider mb-1 block opacity-70`}>
-              {pick.section}
-            </span>
-            <p className="text-[13px] font-medium text-slate-300 mb-3 leading-snug line-clamp-2 min-h-[36px]">{pick.market}</p>
-            <div className="flex items-end justify-between">
-              <div className="w-full">
-                <div className="flex justify-between items-center mb-1">
-                  <span className="text-[9px] text-slate-600 uppercase font-mono">Prob</span>
-                  <span className={`text-sm font-bold font-mono ${getTextColor(pick.probability)}`}>{pick.probability.toFixed(1)}%</span>
-                </div>
-                <div className="w-full h-1 bg-black/40 rounded-full overflow-hidden">
-                  <div className={`h-full ${getBarColor(pick.probability)} rounded-full animate-grow`} style={{ width: `${Math.min(pick.probability, 100)}%` }} />
-                </div>
-              </div>
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-};
-
 
 const MatchDetail = ({ fixture, analysis, loading, error }) => {
-  const [activeLayer, setActiveLayer] = useState('layer2');
-
-  useEffect(() => {
-    setActiveLayer(Math.random() > 0.5 ? 'layer1' : 'layer2');
-  }, [fixture?.id]);
   const [expandedSections, setExpandedSections] = useState({
-    "Goals": true, "First Half": true, "Second Half": true, "Team Goals": true,
-    "Result": true, "Handicaps": true, "Corners": true, "Cards": true
+    "Goals": true,
+    "Team Goals": false,
+    "First Half": false,
+    "Corners": false,
+    "Cards": false,
+    "Handicaps": false,
+    "Result": false
   });
-
-  const sectionOrder = useMemo(() => {
-    const sections = ["Goals", "First Half", "Second Half", "Team Goals", "Result", "Handicaps", "Corners", "Cards"];
-    return sections.sort(() => Math.random() - 0.5);
-  }, [fixture?.id]);
 
   const toggleSection = (sec) => {
     setExpandedSections(prev => ({ ...prev, [sec]: !prev[sec] }));
@@ -238,8 +28,7 @@ const MatchDetail = ({ fixture, analysis, loading, error }) => {
     return (
       <div className="flex flex-col items-center justify-center h-full">
         <Loader2 className="w-10 h-10 animate-spin text-emerald-500 mb-4" />
-        <p className="text-emerald-400/60 text-xs tracking-[0.2em] uppercase animate-pulse">Computing Modular Analysis...</p>
-        <p className="text-slate-600 text-[10px] tracking-widest mt-2 uppercase">7 modules + score estimation + 10 tiers</p>
+        <p className="text-emerald-400/60 text-xs tracking-[0.2em] uppercase animate-pulse">Computing Match Probabilities...</p>
       </div>
     );
   }
@@ -257,55 +46,53 @@ const MatchDetail = ({ fixture, analysis, loading, error }) => {
 
   if (!analysis) return null;
 
-  const tiers = analysis.tiers || [];
-  const fullAnalysis = analysis.full_analysis || {};
+  const topPicks = analysis.top_picks || [];
+  const sections = analysis.sections || {};
   const poisson = analysis.poisson;
-  const scorePrediction = analysis.score_prediction;
-  const dominance = analysis.dominance;
-  const homeName = fixture.home_team.name;
-  const awayName = fixture.away_team.name;
 
-  const totalFullMarkets = Object.values(fullAnalysis).reduce((sum, items) => sum + items.length, 0);
+  // Reorder sections based on user prompt
+  const sectionOrder = ["Goals", "Team Goals", "First Half", "Corners", "Cards", "Handicaps", "Result"];
 
   return (
-    <div className="max-w-4xl mx-auto p-4 sm:p-6 animate-fade-in text-slate-200">
-
-      {/* ── Match Header ───────────────────────── */}
+    <div className="max-w-3xl mx-auto p-4 sm:p-6 animate-fade-in text-slate-200">
+      
+      {/* ── Match Header (Dashboard Style) ───────────────────────── */}
       <div className="bg-[#111318] border border-white/5 rounded-2xl p-6 mb-6 shadow-2xl relative overflow-hidden">
+        {/* Subtle background glow */}
         <div className="absolute top-0 left-1/2 -translate-x-1/2 w-full h-full bg-emerald-500/5 blur-[80px] pointer-events-none" />
+        
         <div className="flex flex-col sm:flex-row items-center justify-between gap-6 relative z-10">
           <div className="flex-1 text-center sm:text-right">
             <img src={fixture.home_team.logo} alt="" className="w-16 h-16 sm:ml-auto mx-auto mb-3 drop-shadow-2xl" />
-            <h2 className="text-lg font-bold text-white tracking-wide">{homeName}</h2>
+            <h2 className="text-lg font-bold text-white tracking-wide">{fixture.home_team.name}</h2>
             {poisson && <span className="text-[10px] text-emerald-400/80 font-mono">xG: {poisson.lambda_home.toFixed(2)}</span>}
           </div>
+          
           <div className="flex flex-col items-center justify-center px-4">
             <span className="text-[10px] text-emerald-400 uppercase tracking-[0.2em] font-bold mb-2">{fixture.status}</span>
-            <div className="bg-black/40 border border-white/10 px-4 py-1.5 rounded-full text-xs text-slate-400 font-mono tracking-wider">{fixture.time}</div>
+            <div className="bg-black/40 border border-white/10 px-4 py-1.5 rounded-full text-xs text-slate-400 font-mono tracking-wider">
+              {fixture.time}
+            </div>
             <span className="text-[9px] text-slate-500 mt-2 uppercase tracking-widest text-center max-w-[120px]">{fixture.league.name}</span>
           </div>
+
           <div className="flex-1 text-center sm:text-left">
             <img src={fixture.away_team.logo} alt="" className="w-16 h-16 sm:mr-auto mx-auto mb-3 drop-shadow-2xl" />
-            <h2 className="text-lg font-bold text-white tracking-wide">{awayName}</h2>
+            <h2 className="text-lg font-bold text-white tracking-wide">{fixture.away_team.name}</h2>
             {poisson && <span className="text-[10px] text-emerald-400/80 font-mono">xG: {poisson.lambda_away.toFixed(2)}</span>}
           </div>
         </div>
       </div>
 
       {/* ── Engine Stats Banner ──────────────────────── */}
-      <div className="flex flex-wrap items-center gap-3 sm:gap-4 mb-6 px-4 py-3 bg-[#111318] border border-white/5 rounded-xl shadow-lg">
+      <div className="flex items-center gap-4 mb-8 px-4 py-3 bg-[#111318] border border-white/5 rounded-xl shadow-lg">
         <div className="flex items-center gap-1.5">
           <Cpu className="w-4 h-4 text-slate-400" />
-          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Engine v6</span>
+          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Analysis Engine</span>
         </div>
         <div className="h-4 w-px bg-white/10" />
         <span className="text-[10px] text-slate-500 uppercase tracking-widest">
           <span className="text-white font-mono font-bold mr-1">{analysis.total_markets_scanned}</span> MARKETS
-        </span>
-        <div className="h-4 w-px bg-white/10" />
-        <span className="text-[10px] text-yellow-400 uppercase tracking-widest font-bold flex items-center gap-1">
-          <Shield className="w-3 h-3" />
-          10 TIERS × 6 PICKS
         </span>
         <div className="h-4 w-px bg-white/10" />
         <span className="text-[10px] text-emerald-400 uppercase tracking-widest font-bold flex items-center gap-1">
@@ -314,127 +101,104 @@ const MatchDetail = ({ fixture, analysis, loading, error }) => {
         </span>
       </div>
 
-      {/* ── Score Prediction + Dominance ──────────────── */}
-      <ScorePrediction scorePrediction={scorePrediction} dominance={dominance} homeName={homeName} awayName={awayName} poisson={poisson} />
+      {/* ── Top Picks Section (Highlighted Boxes) ─────── */}
+      <div className="mb-10">
+        <div className="flex items-center gap-2 mb-4">
+          <Zap className="w-5 h-5 text-yellow-400 fill-yellow-400/20" />
+          <h3 className="text-sm font-bold tracking-[0.15em] text-white uppercase mt-0.5">Top Picks</h3>
+          <span className="bg-yellow-400/10 text-yellow-400 text-[9px] font-bold px-2 py-0.5 rounded-sm uppercase tracking-wider ml-auto">
+            ≥ 80% Prob Only
+          </span>
+        </div>
 
-      {/* ── Layer Toggle ──────────────────────── */}
-      <div className="flex gap-2 mb-6">
-        <button
-          onClick={() => setActiveLayer('layer2')}
-          className={`flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-xl border transition-all duration-200 ${activeLayer === 'layer2'
-            ? 'bg-gradient-to-r from-yellow-500/10 to-emerald-500/10 border-yellow-500/40 shadow-[0_0_20px_rgba(234,179,8,0.08)]'
-            : 'bg-[#111318] border-white/5 hover:border-white/10'
-            }`}
-        >
-          <Shield className={`w-4 h-4 ${activeLayer === 'layer2' ? 'text-yellow-400' : 'text-slate-500'}`} />
-          <div className="text-left">
-            <span className={`text-xs font-bold uppercase tracking-wider block ${activeLayer === 'layer2' ? 'text-white' : 'text-slate-400'}`}>
-              Layer 2 — Tiered Picks
-            </span>
-            <span className={`text-[9px] ${activeLayer === 'layer2' ? 'text-yellow-400/70' : 'text-slate-600'}`}>
-              10 tiers shuffled • odds randomized
-            </span>
+        {topPicks.length > 0 ? (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+            {topPicks.map((pick, idx) => (
+              <div key={idx} className="bg-gradient-to-br from-[#1A1D24] to-[#14161C] border border-emerald-500/30 rounded-xl p-4 shadow-[0_0_15px_rgba(16,185,129,0.05)] hover:border-emerald-400/60 transition-colors group relative overflow-hidden">
+                <div className="absolute top-0 right-0 w-16 h-16 bg-emerald-500/10 rounded-bl-full blur-[20px] pointer-events-none group-hover:bg-emerald-500/20 transition-all" />
+                
+                <span className="text-[9px] text-emerald-400/70 font-bold uppercase tracking-wider mb-1 block">
+                  {pick.section}
+                </span>
+                <p className="text-sm font-semibold text-white mb-4 line-clamp-2 h-10">{pick.market}</p>
+                
+                <div className="flex items-end justify-between mt-auto">
+                  <div className="w-full">
+                    <div className="flex justify-between items-center mb-1.5">
+                      <span className="text-[10px] text-slate-500 uppercase font-mono">Win Prob</span>
+                      <span className="text-base font-bold font-mono text-emerald-400 leading-none">{pick.probability.toFixed(1)}%</span>
+                    </div>
+                    <div className="w-full h-1.5 bg-black/40 rounded-full overflow-hidden">
+                      <div className={`h-full ${getBarColor(pick.probability)} rounded-full`} style={{ width: `${Math.min(pick.probability, 100)}%` }} />
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ))}
           </div>
-          {activeLayer === 'layer2' && (
-            <span className="bg-yellow-500/20 text-yellow-400 text-[10px] font-bold px-2 py-0.5 rounded-md ml-auto">60</span>
-          )}
-        </button>
-
-        <button
-          onClick={() => setActiveLayer('layer1')}
-          className={`flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-xl border transition-all duration-200 ${activeLayer === 'layer1'
-            ? 'bg-gradient-to-r from-blue-500/15 to-violet-500/10 border-blue-500/40 shadow-[0_0_20px_rgba(59,130,246,0.1)]'
-            : 'bg-[#111318] border-white/5 hover:border-white/10'
-            }`}
-        >
-          <Layers className={`w-4 h-4 ${activeLayer === 'layer1' ? 'text-blue-400' : 'text-slate-500'}`} />
-          <div className="text-left">
-            <span className={`text-xs font-bold uppercase tracking-wider block ${activeLayer === 'layer1' ? 'text-white' : 'text-slate-400'}`}>
-              Layer 1 — Full Analysis
-            </span>
-            <span className={`text-[9px] ${activeLayer === 'layer1' ? 'text-blue-400/70' : 'text-slate-600'}`}>
-              all modules • all probabilities
-            </span>
+        ) : (
+          <div className="bg-[#111318] border border-white/5 rounded-xl p-8 text-center">
+            <ShieldAlert className="w-8 h-8 mx-auto mb-3 text-slate-600" />
+            <p className="text-sm text-slate-400 font-semibold uppercase tracking-wider">No Valid Top Picks</p>
+            <p className="text-xs text-slate-600 mt-2">Zero markets met the strict ≥80% safety criteria for this fixture.</p>
           </div>
-          {activeLayer === 'layer1' && (
-            <span className="bg-blue-500/20 text-blue-400 text-[10px] font-bold px-2 py-0.5 rounded-md ml-auto">{totalFullMarkets}</span>
-          )}
-        </button>
+        )}
       </div>
 
-      {/* ══════════════════════════════════════════ */}
-      {/* LAYER 2 — TIERED PICKS                    */}
-      {/* ══════════════════════════════════════════ */}
-      {activeLayer === 'layer2' && (
-        <div className="animate-fade-in space-y-4">
-          {tiers.map((tier) => (
-            <TierCard key={tier.tier} tier={tier} />
-          ))}
-        </div>
-      )}
+      {/* ── Categorized Sections ──────────────────────── */}
+      <div className="space-y-4">
+        <h3 className="text-xs font-bold tracking-[0.2em] text-slate-500 uppercase mb-4 px-1 pb-2 border-b border-white/5">Detailed Market Breakdown</h3>
+        
+        {sectionOrder.map((secName) => {
+          const items = sections[secName] || [];
+          if (items.length === 0) return null;
+          
+          const isExpanded = expandedSections[secName];
 
-      {/* ══════════════════════════════════════════ */}
-      {/* LAYER 1 — FULL STRUCTURED ANALYSIS        */}
-      {/* ══════════════════════════════════════════ */}
-      {activeLayer === 'layer1' && (
-        <div className="animate-fade-in">
-          <div className="flex items-center gap-2 mb-2">
-            <Layers className="w-5 h-5 text-blue-400" />
-            <h3 className="text-sm font-bold tracking-[0.15em] text-white uppercase mt-0.5">Full Structured Analysis</h3>
-          </div>
-          <p className="text-[10px] text-slate-500 uppercase tracking-widest mb-6">
-            Each module analyzed independently — no mixing between categories
-          </p>
-
-          <div className="space-y-4">
-            {sectionOrder.map((secName) => {
-              const items = fullAnalysis[secName] || [];
-              if (items.length === 0) return null;
-              const isExpanded = expandedSections[secName];
-              const qualifiedCount = items.filter(i => i.probability >= 80).length;
-
-              return (
-                <div key={secName} className="bg-[#111318] border border-white/5 rounded-xl overflow-hidden shadow-md relative">
-                  <div className={`absolute inset-0 bg-gradient-to-r ${getSectionGradient(secName)} pointer-events-none`} />
-                  <button onClick={() => toggleSection(secName)} className="w-full flex items-center justify-between p-4 hover:bg-white/[0.02] transition-colors relative z-10">
-                    <div className="flex items-center gap-3">
-                      <div className="bg-white/5 p-1.5 rounded-md">{getSectionIcon(secName)}</div>
-                      <span className="text-sm font-bold text-white uppercase tracking-wider">{secName}</span>
-                      <span className="bg-white/5 text-slate-400 text-[10px] font-mono px-2 py-0.5 rounded-lg">{items.length} markets</span>
-                      {qualifiedCount > 0 && (
-                        <span className="bg-emerald-500/10 text-emerald-400 text-[10px] font-mono px-2 py-0.5 rounded-lg">{qualifiedCount} ≥80%</span>
-                      )}
-                    </div>
-                    {isExpanded ? <ChevronDown className="w-5 h-5 text-slate-500" /> : <ChevronRight className="w-5 h-5 text-slate-500" />}
-                  </button>
-
-                  {isExpanded && (
-                    <div className="border-t border-white/5 bg-[#0D0F13] relative z-10">
-                      {items.map((item, idx) => {
-                        const isQualified = item.probability >= 80;
-                        return (
-                          <div key={idx} className={`flex items-center justify-between p-3.5 px-5 border-b border-white/[0.02] last:border-0 transition-colors ${isQualified ? 'bg-emerald-500/[0.03] hover:bg-emerald-500/[0.06]' : 'hover:bg-white/[0.01]'}`}>
-                            <div className="flex items-center gap-2">
-                              {isQualified && <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 shrink-0 animate-pulse" />}
-                              <span className={`text-[13px] font-medium ${isQualified ? 'text-white' : 'text-slate-400'}`}>{item.market}</span>
-                            </div>
-                            <div className="flex items-center gap-3">
-                              <div className="w-20 sm:w-28 h-1.5 bg-black/40 rounded-full overflow-hidden hidden sm:block">
-                                <div className={`h-full ${getBarColor(item.probability)} rounded-full animate-grow`} style={{ width: `${Math.min(item.probability, 100)}%` }} />
-                              </div>
-                              <span className={`text-[13px] font-mono font-bold min-w-[50px] text-right ${getTextColor(item.probability)}`}>{item.probability.toFixed(1)}%</span>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
+          return (
+            <div key={secName} className="bg-[#111318] border border-white/5 rounded-xl overflow-hidden shadow-md">
+              <button 
+                onClick={() => toggleSection(secName)}
+                className="w-full flex items-center justify-between p-4 hover:bg-white/[0.02] transition-colors"
+              >
+                <div className="flex items-center gap-3">
+                  <div className="bg-white/5 p-1.5 rounded-md">
+                    {/* Just simple dynamic icons based on name roughly */}
+                    {secName === "Goals" || secName === "Team Goals" ? <Target className="w-4 h-4 text-cyan-400" /> :
+                     secName === "First Half" ? <Activity className="w-4 h-4 text-violet-400" /> :
+                     secName === "Corners" ? <CornerUpRight className="w-4 h-4 text-blue-400" /> :
+                     secName === "Cards" ? <CreditCard className="w-4 h-4 text-amber-400" /> :
+                     secName === "Handicaps" ? <Activity className="w-4 h-4 text-rose-400" /> :
+                     <Trophy className="w-4 h-4 text-emerald-400" />}
+                  </div>
+                  <span className="text-sm font-bold text-white uppercase tracking-wider">{secName}</span>
+                  <span className="bg-white/5 text-slate-400 text-[10px] font-mono px-2 py-0.5 rounded-lg">{items.length}</span>
                 </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
+                {isExpanded ? <ChevronDown className="w-5 h-5 text-slate-500" /> : <ChevronRight className="w-5 h-5 text-slate-500" />}
+              </button>
+
+              {isExpanded && (
+                <div className="border-t border-white/5 bg-[#0D0F13]">
+                  {items.map((item, idx) => (
+                    <div key={idx} className="flex items-center justify-between p-3.5 px-5 border-b border-white/[0.02] last:border-0 hover:bg-white/[0.01]">
+                      <span className="text-[13px] font-medium text-slate-300">{item.market}</span>
+                      <div className="flex items-center gap-3">
+                        <div className="w-16 sm:w-24 h-1 bg-black/40 rounded-full overflow-hidden hidden sm:block">
+                          <div className={`h-full ${getBarColor(item.probability)}`} style={{ width: `${Math.min(item.probability, 100)}%` }} />
+                        </div>
+                        <span className="text-[13px] font-mono font-bold text-emerald-400 min-w-[50px] text-right">
+                          {item.probability.toFixed(1)}%
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
     </div>
   );
 };

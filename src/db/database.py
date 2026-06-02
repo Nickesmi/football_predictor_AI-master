@@ -6,34 +6,90 @@ SQLite database connection and schema initialization.
 import sqlite3
 import logging
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 logger = logging.getLogger("football_predictor")
 
-import sys
-
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
-
-if getattr(sys, 'frozen', False):
-    DB_PATH = Path.home() / ".football_predictor" / "engine.db"
-else:
-    DB_PATH = _PROJECT_ROOT / "data" / "engine.db"
+HOME_DB_PATH = Path.home() / ".football_predictor" / "engine.db"
+REPO_DB_PATH = _PROJECT_ROOT / "data" / "engine.db"
 
 _connection: Optional[sqlite3.Connection] = None
+
+
+def _resolve_db_path() -> tuple[Path, str]:
+    if HOME_DB_PATH.exists():
+        return HOME_DB_PATH, "home"
+    return REPO_DB_PATH, "repo"
+
+
+def get_db_path() -> Path:
+    return _resolve_db_path()[0]
+
+
+def get_db_source() -> str:
+    return _resolve_db_path()[1]
 
 
 def get_db() -> sqlite3.Connection:
     """Get or create a SQLite connection (singleton per process)."""
     global _connection
     if _connection is None:
-        DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-        _connection = sqlite3.connect(str(DB_PATH), check_same_thread=False)
+        db_path, db_source = _resolve_db_path()
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        _connection = sqlite3.connect(str(db_path), check_same_thread=False)
         _connection.row_factory = sqlite3.Row
         _connection.execute("PRAGMA journal_mode=WAL")
         _connection.execute("PRAGMA foreign_keys=ON")
         init_db(_connection)
-        logger.info(f"SQLite database initialized at {DB_PATH}")
+        logger.info(f"SQLite database initialized at {db_path} ({db_source})")
     return _connection
+
+
+def get_db_debug_info() -> dict[str, Any]:
+    conn = get_db()
+    matches_count = conn.execute("SELECT COUNT(*) FROM matches").fetchone()[0]
+    history_table = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='match_history'",
+    ).fetchone()
+    match_history_count = 0
+    if history_table:
+        match_history_count = conn.execute(
+            "SELECT COUNT(*) FROM match_history",
+        ).fetchone()[0]
+    return {
+        "db_path": str(get_db_path()),
+        "db_source": get_db_source(),
+        "matches_count": matches_count,
+        "match_history_count": match_history_count,
+        "fixture_source": "match_history" if match_history_count else ("matches" if matches_count else "none"),
+    }
+
+
+def get_match_history_date_coverage() -> dict[str, Any]:
+    conn = get_db()
+    history_table = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='match_history'",
+    ).fetchone()
+    if not history_table:
+        return {
+            "first_date": None,
+            "last_date": None,
+            "available_dates": [],
+            "total_match_history_rows": 0,
+        }
+
+    rows = conn.execute(
+        "SELECT match_date, COUNT(*) as total FROM match_history GROUP BY match_date ORDER BY match_date ASC",
+    ).fetchall()
+    available_dates = [row["match_date"] for row in rows if row["match_date"]]
+    total_rows = sum(row["total"] for row in rows)
+    return {
+        "first_date": available_dates[0] if available_dates else None,
+        "last_date": available_dates[-1] if available_dates else None,
+        "available_dates": available_dates,
+        "total_match_history_rows": total_rows,
+    }
 
 
 def init_db(conn: sqlite3.Connection) -> None:
@@ -62,7 +118,6 @@ def init_db(conn: sqlite3.Connection) -> None:
             selection       TEXT NOT NULL,
             odds            REAL NOT NULL,
             bookmaker       TEXT DEFAULT 'sofascore',
-            implied_probability REAL,
             timestamp       TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             is_opening      BOOLEAN DEFAULT 1
         );
@@ -76,9 +131,6 @@ def init_db(conn: sqlite3.Connection) -> None:
             implied_prob    REAL NOT NULL,
             edge            REAL NOT NULL,
             odds_at_pick    REAL NOT NULL,
-            opening_odds    REAL,
-            closing_odds    REAL,
-            clv_pct         REAL,
             confidence      REAL DEFAULT 0.5,
             league_reliability REAL DEFAULT 0.5,
             grade           TEXT NOT NULL,
@@ -106,146 +158,24 @@ def init_db(conn: sqlite3.Connection) -> None:
         CREATE INDEX IF NOT EXISTS idx_picks_match ON picks(match_id);
         CREATE INDEX IF NOT EXISTS idx_picks_date  ON picks(created_at);
         CREATE INDEX IF NOT EXISTS idx_matches_date ON matches(date);
-
-        -- ═══ PHASE 3: Prediction Logging ═══
-        -- Every prediction from the results evaluation flow is logged here.
-        -- This is the raw data source for calibration + backtesting.
-        CREATE TABLE IF NOT EXISTS prediction_log (
-            id              INTEGER PRIMARY KEY AUTOINCREMENT,
-            match_id        TEXT NOT NULL,
-            match_date      DATE NOT NULL,
-            home_team       TEXT NOT NULL,
-            away_team       TEXT NOT NULL,
-            league_name     TEXT NOT NULL,
-            market          TEXT NOT NULL,
-            market_type     TEXT NOT NULL,   -- goals, result, btts, cs, combo, handicap, corners, cards
-            predicted_prob  REAL NOT NULL,   -- model probability (0-100)
-            actual_outcome  INTEGER,         -- 1 = hit, 0 = miss, NULL = unsettled
-            tier            INTEGER,         -- which tier (1-6) this pick was in
-            created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        
+        CREATE TABLE IF NOT EXISTS daily_predictions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            match_id TEXT NOT NULL,
+            generated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            predictions_json TEXT,
+            UNIQUE(match_id, generated_at)
         );
 
-        CREATE INDEX IF NOT EXISTS idx_predlog_date ON prediction_log(match_date);
-        CREATE INDEX IF NOT EXISTS idx_predlog_type ON prediction_log(market_type);
-        CREATE INDEX IF NOT EXISTS idx_predlog_match ON prediction_log(match_id);
-
-        -- ═══ PHASE 3: Calibration Curves (Isotonic) ═══
-        -- Stores per-market-type calibration mappings.
-        -- Each row maps a predicted probability to a calibrated probability.
-        CREATE TABLE IF NOT EXISTS calibration_curves (
-            id              INTEGER PRIMARY KEY AUTOINCREMENT,
-            market_type     TEXT NOT NULL,
-            raw_prob        REAL NOT NULL,   -- predicted probability (0-1)
-            calibrated_prob REAL NOT NULL,   -- actual observed rate (0-1)
-            sample_count    INTEGER NOT NULL, -- how many samples in this bucket
-            updated_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        CREATE TABLE IF NOT EXISTS daily_results (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            match_id TEXT NOT NULL,
+            actual_home_goals INTEGER,
+            actual_away_goals INTEGER,
+            predictions_json TEXT,
+            hit BOOLEAN,
+            recorded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
-
-        CREATE INDEX IF NOT EXISTS idx_calcurve_type ON calibration_curves(market_type);
-
-        -- ═══ PHASE 3: Daily Performance Tracking ═══
-        -- Aggregated daily stats for ROI dashboard + CLV tracking.
-        CREATE TABLE IF NOT EXISTS daily_performance (
-            date            DATE PRIMARY KEY,
-            total_predictions INTEGER DEFAULT 0,
-            total_settled   INTEGER DEFAULT 0,
-            total_correct   INTEGER DEFAULT 0,
-            total_wrong     INTEGER DEFAULT 0,
-            accuracy_pct    REAL DEFAULT 0.0,
-            avg_predicted_prob REAL DEFAULT 0.0,
-            avg_actual_rate REAL DEFAULT 0.0,
-            calibration_gap REAL DEFAULT 0.0,  -- predicted - actual (positive = overconfident)
-            updated_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        );
-
-        -- ═══ PHASE 3: Isotonic Calibration Models ═══
-        -- Stores fitted isotonic regression models per market type.
-        -- fitted_json contains the piecewise-linear breakpoints.
-        CREATE TABLE IF NOT EXISTS calibration_models (
-            id              INTEGER PRIMARY KEY AUTOINCREMENT,
-            market_type     TEXT NOT NULL,
-            fitted_json     TEXT NOT NULL,
-            samples         INTEGER NOT NULL,
-            brier_score     REAL,
-            log_loss        REAL,
-            created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        );
-
-        -- ═══ PHASE 4: Live Adaptive Pipeline ═══
-        -- Persistent team state that evolves after every match.
-        -- This is THE core table that makes predictions dynamic.
-        CREATE TABLE IF NOT EXISTS team_state (
-            id              INTEGER PRIMARY KEY AUTOINCREMENT,
-            team_name       TEXT NOT NULL,
-            team_name_lower TEXT NOT NULL,
-            league          TEXT NOT NULL,
-            venue           TEXT NOT NULL,       -- 'home' | 'away' | 'overall'
-
-            -- ELO Rating (evolves after every match)
-            elo             REAL DEFAULT 1500.0,
-
-            -- Strength Ratings (attack/defense relative to league avg)
-            attack_rating   REAL DEFAULT 1.0,
-            defense_rating  REAL DEFAULT 1.0,
-
-            -- Rolling Averages (exponentially weighted, recent matches)
-            rolling_scored      REAL DEFAULT 1.2,
-            rolling_conceded    REAL DEFAULT 1.2,
-            rolling_xg          REAL DEFAULT 1.2,
-            rolling_xga         REAL DEFAULT 1.2,
-            rolling_corners     REAL DEFAULT 5.0,
-            rolling_cards       REAL DEFAULT 2.0,
-
-            -- Form Metrics
-            form_last5      REAL DEFAULT 0.5,    -- win% from last 5 matches
-            form_last10     REAL DEFAULT 0.5,    -- win% from last 10 matches
-            win_streak      INTEGER DEFAULT 0,
-            unbeaten_streak INTEGER DEFAULT 0,
-
-            -- Fatigue
-            matches_last_14d INTEGER DEFAULT 0,
-            rest_days        INTEGER DEFAULT 7,
-
-            -- Meta
-            matches_played  INTEGER DEFAULT 0,
-            last_match_date DATE,
-            last_match_id   TEXT,
-            updated_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-
-            UNIQUE(team_name_lower, league, venue)
-        );
-
-        CREATE INDEX IF NOT EXISTS idx_teamstate_name ON team_state(team_name_lower);
-        CREATE INDEX IF NOT EXISTS idx_teamstate_league ON team_state(league);
-
-        -- Match History — every finished match fed back into the system
-        CREATE TABLE IF NOT EXISTS match_history (
-            id              INTEGER PRIMARY KEY AUTOINCREMENT,
-            match_id        TEXT UNIQUE NOT NULL,
-            match_date      DATE NOT NULL,
-            league          TEXT NOT NULL,
-            home_team       TEXT NOT NULL,
-            away_team       TEXT NOT NULL,
-            home_goals      INTEGER NOT NULL,
-            away_goals      INTEGER NOT NULL,
-            home_xg         REAL,
-            away_xg         REAL,
-            home_corners    INTEGER,
-            away_corners    INTEGER,
-            home_cards      INTEGER,
-            away_cards      INTEGER,
-
-            -- ELO snapshots at time of ingestion
-            home_elo_before REAL,
-            away_elo_before REAL,
-            home_elo_after  REAL,
-            away_elo_after  REAL,
-
-            ingested_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        );
-
-        CREATE INDEX IF NOT EXISTS idx_matchhist_date ON match_history(match_date);
-        CREATE INDEX IF NOT EXISTS idx_matchhist_team ON match_history(home_team);
     """)
     conn.commit()
 

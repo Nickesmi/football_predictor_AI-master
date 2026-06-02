@@ -30,6 +30,14 @@ def get_matches_by_date(conn: sqlite3.Connection, date: str) -> list[dict]:
     return [dict(r) for r in rows]
 
 
+def get_match_history_by_date(conn: sqlite3.Connection, date: str) -> list[dict]:
+    """Fetch all historical matches for a given date."""
+    rows = conn.execute(
+        "SELECT * FROM match_history WHERE match_date = ? ORDER BY id", (date,)
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
 def get_match_by_id(conn: sqlite3.Connection, match_id: str) -> Optional[dict]:
     """Fetch a single match by ID."""
     row = conn.execute("SELECT * FROM matches WHERE id = ?", (match_id,)).fetchone()

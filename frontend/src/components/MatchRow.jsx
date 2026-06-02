@@ -6,19 +6,17 @@ const MatchRow = ({ match, isSelected, onClick }) => {
   return (
     <button
       onClick={onClick}
-      className={`w-full text-left px-4 py-3 border-b border-border transition-all duration-200 group relative ${
-        isSelected
+      className={`w-full text-left px-4 py-3 border-b border-border transition-all duration-200 group relative ${isSelected
           ? 'bg-gold-500/8 border-l-2 border-l-gold-500'
           : 'hover:bg-white/[0.03] border-l-2 border-l-transparent'
-      }`}
+        }`}
     >
       {/* Time column */}
       <div className="flex items-center gap-3">
-        <div className={`w-12 text-center shrink-0 ${
-          match.status === 'LIVE' || match.status === '1H' || match.status === '2H'
+        <div className={`w-12 text-center shrink-0 ${match.status === 'LIVE' || match.status === '1H' || match.status === '2H'
             ? 'text-red-500 font-bold text-xs'
             : isSelected ? 'text-gold-500 font-semibold text-xs' : 'text-slate-500 text-xs'
-        }`}>
+          }`}>
           {match.status === 'FT' ? 'FT' : match.time}
         </div>
 

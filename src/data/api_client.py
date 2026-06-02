@@ -44,8 +44,6 @@ class APIFootballClient:
         data = client.get("fixtures", season=2024, league=39, team=33)
     """
 
-    BASE_URL = "https://{host}/v3"
-
     def __init__(
         self,
         api_key: Optional[str] = None,
@@ -56,7 +54,7 @@ class APIFootballClient:
     ):
         self._api_key = api_key or APIFOOTBALL_API_KEY
         self._host = host or APIFOOTBALL_HOST
-        self._base_url = self.BASE_URL.format(host=self._host)
+        self._base_url = self._resolve_base_url(self._host)
         self._cache_dir = cache_dir or CACHE_DIR
         self._cache_ttl = cache_ttl
         self._min_interval = 60.0 / max(rate_limit, 1)
@@ -82,6 +80,13 @@ class APIFootballClient:
         adapter = HTTPAdapter(max_retries=retries)
         self._session.mount("https://", adapter)
         self._session.mount("http://", adapter)
+
+    @staticmethod
+    def _resolve_base_url(host: str) -> str:
+        """Build the API root URL for direct api-sports.io vs RapidAPI hosts."""
+        if "rapidapi" in host.lower():
+            return f"https://{host}/v3"
+        return f"https://{host}"
 
     # ------------------------------------------------------------------
     # Public API

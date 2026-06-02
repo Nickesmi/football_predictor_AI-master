@@ -355,56 +355,14 @@ ALL_AWAY = {**PL_AWAY, **LALIGA_AWAY, **SERIEA_AWAY, **BUNDES_AWAY, **LIGUE1_AWA
 
 def get_team_stats(team_name: str, venue: str, league: str = "") -> TeamVenueStats:
     """
-    Get team-specific stats — LIVE ADAPTIVE VERSION.
+    Get team-specific stats. Tries league-specific lookup first,
+    then falls back to all-leagues lookup, then generates from hash.
 
-    Priority order:
-        1. Live DB (team_state table) — if team has ≥1 match ingested
-        2. Hardcoded league-specific lookup — season baseline
-        3. Hardcoded all-leagues lookup — cross-league fallback
-        4. Hash-based generation — truly unknown teams
-
-    The live DB values are rolling exponentially-weighted averages
-    that update after every match via on_match_finished().
+    Returns (scored, conceded, corners, cards).
     """
-    # ── Priority 1: Live DB lookup (overall state — updates after EVERY match) ──
-    try:
-        from src.db.database import get_db
-        from src.db.team_state import get_team_state as get_live_state
-
-        conn = get_db()
-
-        # PRIMARY: overall row (written by on_match_finished regardless of venue)
-        overall = get_live_state(conn, team_name, league, "overall")
-        if overall is not None and overall.matches_played >= 1:
-            # Venue bias: home teams score ~12% more / concede ~12% less than overall
-            if venue == "home":
-                scored   = round(overall.rolling_scored   * 1.12, 2)
-                conceded = round(overall.rolling_conceded * 0.88, 2)
-            else:
-                scored   = round(overall.rolling_scored   * 0.88, 2)
-                conceded = round(overall.rolling_conceded * 1.12, 2)
-            return TeamVenueStats(
-                scored=scored,
-                conceded=conceded,
-                corners=round(overall.rolling_corners, 1),
-                cards=round(overall.rolling_cards, 1),
-            )
-
-        # SECONDARY: venue-specific row (team has only played at one venue so far)
-        live = get_live_state(conn, team_name, league, venue)
-        if live is not None and live.matches_played >= 1:
-            return TeamVenueStats(
-                scored=round(live.rolling_scored, 2),
-                conceded=round(live.rolling_conceded, 2),
-                corners=round(live.rolling_corners, 1),
-                cards=round(live.rolling_cards, 1),
-            )
-    except Exception:
-        pass  # DB not available or import error → fall through to static
-
-    # ── Priority 2: Hardcoded league-specific lookup ──
     name_lower = team_name.lower()
 
+    # Try league-specific lookup
     if league in LEAGUE_STATS:
         home_db, away_db = LEAGUE_STATS[league]
         db = home_db if venue == "home" else away_db
@@ -412,13 +370,13 @@ def get_team_stats(team_name: str, venue: str, league: str = "") -> TeamVenueSta
             if key in name_lower:
                 return stats
 
-    # ── Priority 3: All-leagues fallback ──
+    # Fallback to all-leagues lookup
     db = ALL_HOME if venue == "home" else ALL_AWAY
     for key, stats in db.items():
         if key in name_lower:
             return stats
 
-    # ── Priority 4: Unknown team → hash-based (deterministic) ──
+    # Unknown team → hash-based (deterministic but unique per team)
     h = int(hashlib.md5(f"{team_name}:{venue}".encode()).hexdigest(), 16)
 
     if venue == "home":
@@ -438,4 +396,3 @@ def get_team_stats(team_name: str, venue: str, league: str = "") -> TeamVenueSta
         corners=round(corners, 1),
         cards=round(cards, 1),
     )
-

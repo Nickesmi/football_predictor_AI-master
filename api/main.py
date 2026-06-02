@@ -10,15 +10,19 @@ from __future__ import annotations
 
 import json
 import math
-import ssl
 import urllib.request
 from datetime import date, datetime, timezone
 from typing import Optional, Union
-from fastapi import FastAPI, HTTPException, BackgroundTasks
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
 from src.config import logger, APIFOOTBALL_API_KEY
 from src.data.api_football_fetcher import APIFootballFetcher
+from src.data.fixtures_fetcher import fetch_fixtures_for_date
+from src.db.database import get_db, get_db_debug_info, get_match_history_date_coverage
+from src.db.daily_repo import insert_prediction, get_predictions_for_date, has_prediction, insert_result, get_performance_summary
+from src.db.odds_repo import get_latest_odds, get_odds_for_match
+from src.data.odds_fetcher import fetch_and_store_odds
 from src.processing.pattern_analyzer import PatternAnalyzer
 from src.processing.factor_analyzer import FactorAnalyzer
 from src.reporting.report_formatter import ReportFormatter
@@ -27,10 +31,8 @@ from src.ml.predictor import XGBoostPredictor
 from src.ml.poisson_model import PoissonGoalModel
 from src.ml.team_stats_db import get_team_stats
 from src.ml.feature_builder import TeamProfile
-from src.engine.odds_scanner import scan_live_odds
 
-# ── Instantiate App ──────────────────────────────────────────────────────────
-app = FastAPI(title="Football Predictor AI API", version="5.0")
+app = FastAPI(title="Football Predictor AI", version="5.0.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -39,20 +41,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-
-@app.get("/api/health")
-def health_check():
-    return {"status": "ok", "version": "5.0"}
-
-@app.get("/api/live/scan")
-def trigger_live_scan():
-    """Trigger a live odds scan to evaluate executable bets."""
-    try:
-        return scan_live_odds()
-    except Exception as e:
-        logger.error(f"Live scan failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
 
 # Pipeline components
 fetcher = APIFootballFetcher()
@@ -73,6 +61,138 @@ TOP_LEAGUES = {
     37: "Eredivisie",
     238: "Primeira Liga",
     238: "Primeira Liga",
+}
+
+# Per-date in-memory cache for daily matches
+_daily_matches_cache: dict[str, dict] = {}
+
+
+def _latest_date_with_matches(conn) -> Optional[str]:
+    row = conn.execute(
+        """SELECT date FROM matches GROUP BY date ORDER BY date DESC LIMIT 1"""
+    ).fetchone()
+    if row and row[0]:
+        return row[0]
+    history = conn.execute(
+        """SELECT name FROM sqlite_master WHERE type='table' AND name='match_history'"""
+    ).fetchone()
+    if not history:
+        return None
+    row = conn.execute(
+        """SELECT match_date FROM match_history
+           WHERE match_date IS NOT NULL AND match_date != ''
+           GROUP BY match_date ORDER BY match_date DESC LIMIT 1"""
+    ).fetchone()
+    return row[0] if row else None
+
+
+def _most_likely_score(lambda_home: float, lambda_away: float, max_goals: int = 8) -> str:
+    from src.ml.poisson_model import _poisson_pmf
+
+    best_h, best_a = 0, 0
+    best_p = -1.0
+    for h in range(max_goals + 1):
+        for a in range(max_goals + 1):
+            prob = _poisson_pmf(h, lambda_home) * _poisson_pmf(a, lambda_away)
+            if prob > best_p:
+                best_p = prob
+                best_h, best_a = h, a
+    return f"{best_h}-{best_a}"
+
+
+def _build_prediction_summary(analysis: dict) -> dict:
+    poisson = analysis.get("poisson") or {}
+    result = poisson.get("result") or {}
+    btts = poisson.get("btts") or {}
+    goals_markets = {
+        item.get("market"): item.get("probability")
+        for item in poisson.get("goals_markets", [])
+        if isinstance(item, dict)
+    }
+
+    hw = float(result.get("home_win") or poisson.get("home_win") or 0)
+    dr = float(result.get("draw") or poisson.get("draw") or 0)
+    aw = float(result.get("away_win") or poisson.get("away_win") or 0)
+    lh = float(poisson.get("lambda_home") or 0)
+    la = float(poisson.get("lambda_away") or 0)
+
+    outcome_probs = [("Home Win", hw), ("Draw", dr), ("Away Win", aw)]
+    predicted_result = max(outcome_probs, key=lambda item: item[1])[0]
+    confidence = max(hw, dr, aw)
+    predicted_score = _most_likely_score(lh, la) if (lh or la) else f"{round(lh)}-{round(la)}"
+
+    return {
+        "home_win": round(hw, 1),
+        "draw": round(dr, 1),
+        "away_win": round(aw, 1),
+        "home_win_pct": round(hw, 1),
+        "draw_pct": round(dr, 1),
+        "away_win_pct": round(aw, 1),
+        "predicted_result": predicted_result,
+        "predicted_score": predicted_score,
+        "confidence_pct": round(confidence, 1),
+        "btts": btts.get("yes") if isinstance(btts, dict) else poisson.get("btts_yes"),
+        "over_2_5": goals_markets.get("Over 2.5 Goals"),
+        "expected_goals": {
+            "home": round(lh, 2),
+            "away": round(la, 2),
+        },
+    }
+
+
+def _ensure_predictions_for_date(conn, target_date: str) -> int:
+    rows = conn.execute(
+        """SELECT id, home_team, away_team, league_name
+           FROM matches WHERE date = ? ORDER BY kickoff""",
+        (target_date,),
+    ).fetchall()
+    created = 0
+    for row in rows:
+        match_id = row[0]
+        if has_prediction(conn, match_id):
+            continue
+        home = row[1]
+        away = row[2]
+        league = row[3] or "Premier League"
+        try:
+            analysis = _compute_match_analysis(home, away, league)
+            insert_prediction(conn, match_id, _build_prediction_summary(analysis))
+            created += 1
+        except Exception as exc:
+            logger.error("Prediction failed for %s vs %s: %s", home, away, exc)
+    return created
+
+
+def _load_daily_matches(conn, target_date: str, ensure_predictions: bool = True) -> list[dict]:
+    if ensure_predictions:
+        _ensure_predictions_for_date(conn, target_date)
+
+    rows = conn.execute(
+        """SELECT id as match_id, league_name as league, home_team, away_team,
+                  kickoff, status, NULL as home_logo, NULL as away_logo, NULL as league_logo
+           FROM matches WHERE date = ? ORDER BY kickoff""",
+        (target_date,),
+    ).fetchall()
+    data = [dict(r) for r in rows]
+    try:
+        preds = get_predictions_for_date(conn, target_date)
+        pred_map: dict[str, dict] = {}
+        for pred in preds:
+            if pred["match_id"] not in pred_map:
+                pred_map[pred["match_id"]] = pred.get("predictions", {})
+        for item in data:
+            item["prediction"] = pred_map.get(item["match_id"], {})
+    except Exception:
+        for item in data:
+            item["prediction"] = {}
+    return data
+
+# Provider status tracking
+_provider_status = {
+    "provider": "api-football",
+    "connected": False,
+    "last_matches_refresh": None,
+    "last_odds_refresh": None,
 }
 
 # Map SofaScore league names → our profile keys
@@ -103,38 +223,16 @@ def _poisson_over(lam: float, threshold: int) -> float:
 
 
 def _categorize_market(market_name: str) -> str:
-    """Assign a market to one of the display sections."""
+    """Assign a market to one of 7 display sections."""
     m = market_name.lower()
+    if "handicap" in m or "ah " in m:
+        return "Handicaps"
     if "corner" in m:
         return "Corners"
     if "card" in m:
         return "Cards"
-    # Handicap markets (must check before FH/SH prefix)
-    if "handicap" in m or m.startswith("ah ") or m.startswith("eh "):
-        return "Handicaps"
-    if m.startswith("sh "):
-        return "Second Half"
     if m.startswith("fh "):
         return "First Half"
-    # Combo markets (Result+Goals, Result+BTTS, BTTS+Goals)
-    if " & " in m:
-        return "Result"
-    # Correct Score
-    if m.startswith("cs ") or "correct score" in m:
-        return "Goals"
-    # Winning Margin
-    if "win by" in m or "winning margin" in m or "exact draw" in m:
-        return "Result"
-    # Clean Sheet / Fail to Score
-    if "clean sheet" in m or "fails to score" in m:
-        return "Result"
-    # Exact Team Goals
-    if "exact" in m and "goals" in m and "total" not in m:
-        return "Team Goals"
-    # Score in Both Halves
-    if "score in both" in m:
-        return "Goals"
-    # Standard result markets
     if "1x " in m or "x2 " in m or "12 " in m:
         return "Result"
     if m in ("home win", "away win", "draw"):
@@ -147,92 +245,14 @@ def _categorize_market(market_name: str) -> str:
     return "Goals"
 
 
-# ══════════════════════════════════════════════════════
-# DIXON-COLES CORRECTION — Fix Poisson independence flaw
-# ══════════════════════════════════════════════════════
-#
-# Standard bivariate Poisson assumes home/away goals are independent.
-# This causes: overestimated BTTS, wrong draw probabilities,
-# unrealistic high-score tails.
-#
-# Dixon-Coles introduces correlation parameter ρ (rho) that adjusts
-# low-score cells (0-0, 1-0, 0-1, 1-1) where the independence
-# assumption is most violated.
-#
-# ρ typically ranges from -0.10 to -0.15 (negative = draws more
-# likely than independent Poisson suggests).
-
-# ρ values tuned per context (FH has less variance, needs smaller correction)
-DIXON_COLES_RHO_FT = -0.12   # Full-time: moderate correction
-DIXON_COLES_RHO_FH = -0.05   # First half: less variance, smaller correction
-DIXON_COLES_RHO_SH = -0.08   # Second half: between FT and FH
-
-
-def _dixon_coles_tau(h: int, a: int, lam_h: float, lam_a: float, rho: float) -> float:
-    """Dixon-Coles correction factor τ for score (h, a).
-
-    Only adjusts low-score cells where Poisson independence is most wrong.
-    The (1,1) cell uses a softened 0.5×ρ to avoid over-boosting BTTS.
-    Returns a multiplicative factor to apply to the raw Poisson probability.
+def _compute_match_analysis(home_name: str, away_name: str, league_name: str = "Premier League") -> dict:
     """
-    if h == 0 and a == 0:
-        return 1.0 - lam_h * lam_a * rho
-    elif h == 0 and a == 1:
-        return 1.0 + lam_h * rho
-    elif h == 1 and a == 0:
-        return 1.0 + lam_a * rho
-    elif h == 1 and a == 1:
-        return 1.0 - 0.35 * rho  # Dampened: boosts draws without inflating BTTS
-    return 1.0
-
-
-def _build_joint_matrix(lam_h: float, lam_a: float, max_goals: int,
-                        rho: float = None, apply_dc: bool = True) -> dict:
-    """Build a Dixon-Coles corrected bivariate Poisson joint probability matrix.
-
-    Args:
-        lam_h: Expected goals for home/team A
-        lam_a: Expected goals for away/team B
-        max_goals: Maximum goals to consider per side
-        rho: Dixon-Coles correlation parameter (default: DIXON_COLES_RHO)
-        apply_dc: Whether to apply Dixon-Coles correction (False for corners/cards)
-
-    Returns:
-        dict mapping (h, a) -> probability, normalized to sum=1.0
-    """
-    from src.ml.poisson_model import _poisson_pmf
-
-    if rho is None:
-        rho = DIXON_COLES_RHO_FT
-
-    matrix = {}
-    for h in range(max_goals + 1):
-        for a in range(max_goals + 1):
-            p = _poisson_pmf(h, lam_h) * _poisson_pmf(a, lam_a)
-            if apply_dc:
-                tau = _dixon_coles_tau(h, a, lam_h, lam_a, rho)
-                p *= max(0.0, tau)  # Safety: prevent negative probabilities
-            matrix[(h, a)] = p
-
-    # Renormalize so probabilities sum to exactly 1.0
-    total = sum(matrix.values())
-    if total > 0:
-        matrix = {k: v / total for k, v in matrix.items()}
-
-    return matrix
-
-
-def _compute_match_analysis(home_name: str, away_name: str, league_name: str = "Premier League", shuffle_tiers: bool = True) -> dict:
-    """
-    Per-match MODULAR analysis — 2-Layer Architecture:
-
-    LAYER 1 — Structured Analysis:
-      Compute ALL markets independently across 7 modules:
-        Goals | First Half | Team Goals | Result | Corners | Cards | Handicaps
-      Each module = separate probabilities — NO mixing.
-
-    LAYER 2 — Top Picks:
-      From ALL modules → filter ≥80% → combine → shuffle randomly.
+    Per-match analysis. Clean modular pipeline:
+      1. Team stats + Poisson + Corners + Cards + XGBoost
+      2. Generate ALL markets across 7 sections
+      3. Filter: probability >= 80% ONLY
+      4. Group by section for display
+      5. Top picks = ALL >=80%, shuffled randomly
     """
     import random
     from src.ml.poisson_model import _poisson_pmf
@@ -301,174 +321,75 @@ def _compute_match_analysis(home_name: str, away_name: str, league_name: str = "
         if lam <= 0: return 0.0
         return max(0, min(100, (1 - sum(_poisson_pmf(k, lam) for k in range(threshold + 1))) * 100))
 
-    # Dynamic MG based on lambdas to prevent tail truncation bias.
-    # Ensures negligible probability mass is lost at the edges.
-    MG = max(10, int(pred.lambda_home + pred.lambda_away + 6))
-
-    # ── Dixon-Coles corrected goal matrices ──
-    # FT, FH, SH each get context-specific ρ correction.
-    # Corners and Cards remain uncorrected (independent events).
-    ft = _build_joint_matrix(pred.lambda_home, pred.lambda_away, MG, rho=DIXON_COLES_RHO_FT)
+    MG = 8
+    ft = {(h, a): _poisson_pmf(h, pred.lambda_home) * _poisson_pmf(a, pred.lambda_away) for h in range(MG+1) for a in range(MG+1)}
     fh_lh, fh_la = pred.lambda_home * 0.45, pred.lambda_away * 0.45
-    fhm = _build_joint_matrix(fh_lh, fh_la, MG, rho=DIXON_COLES_RHO_FH)
-
-    # Corners & Cards — NO Dixon-Coles (independence assumption is fine here)
+    fhm = {(h, a): _poisson_pmf(h, fh_lh) * _poisson_pmf(a, fh_la) for h in range(MG+1) for a in range(MG+1)}
     MC = 24
-    cm = _build_joint_matrix(exp_h_corn, exp_a_corn, MC, apply_dc=False)
+    cm = {(h, a): _poisson_pmf(h, exp_h_corn) * _poisson_pmf(a, exp_a_corn) for h in range(MC+1) for a in range(MC+1)}
     MK = 14
-    km = _build_joint_matrix(exp_h_card, exp_a_card, MK, apply_dc=False)
+    km = {(h, a): _poisson_pmf(h, exp_h_card) * _poisson_pmf(a, exp_a_card) for h in range(MK+1) for a in range(MK+1)}
 
     def mx(matrix, mx_val, cond):
         return sum(matrix[(h, a)] for h in range(mx_val+1) for a in range(mx_val+1) if cond(h, a)) * 100
 
-    # ══════════════════════════════════════════════════════
-    # PROBABILITY CALIBRATION — Prevent overconfidence
-    # ══════════════════════════════════════════════════════
-    #
-    # Raw Poisson probabilities are systematically overconfident
-    # because the model can't account for real-world variance
-    # (injuries, weather, tactics, referee, luck).
-    #
-    # Formula: calibrated = 0.5 + (raw - 0.5) × SHRINK
-    #
-    # Properties:
-    #   - Symmetric: cal(x) + cal(1-x) = 1 (Over+Under = 100%)
-    #   - 50% stays 50% (uncertain stays uncertain)
-    #   - Extremes get compressed toward realistic ranges
-    #   - SHRINK=0.82 → max possible output = 91%, min = 9%
-    #
-    # Realistic target ranges after calibration:
-    #   Over 0.5: 85-91%  |  Over 1.5: 70-85%
-    #   Over 2.5: 55-75%  |  Match Winner: 55-80%
-
-    CALIBRATION_SHRINK = 0.82
-
-    def calibrate(prob_pct: float) -> float:
-        """Compress probability toward 50% to prevent overconfidence."""
-        p = prob_pct / 100.0
-        cal = 0.5 + (p - 0.5) * CALIBRATION_SHRINK
-        return round(max(5.0, min(92.0, cal * 100.0)), 1)
-
     raw = []
     def add(name, prob):
-        prob = calibrate(max(0, min(100, prob)))
-        if prob > 0:
-            raw.append({"market": name, "probability": prob})
-
-    def add_group(names_and_probs):
-        """Calibrate a group of mutually exclusive outcomes, then renormalize to 100%.
-
-        This preserves the simplex constraint: P(A) + P(B) + ... = 100%.
-        Critical for 1X2, correct score, and any multi-way market.
-        """
-        calibrated = [(name, calibrate(max(0, min(100, prob)))) for name, prob in names_and_probs]
-        total = sum(p for _, p in calibrated)
-        if total > 0:
-            for name, p in calibrated:
-                renorm_p = round(p / total * 100, 1)
-                if renorm_p > 0:
-                    raw.append({"market": name, "probability": renorm_p})
-        # Return renormalized values for downstream use (e.g., double chance)
-        if total > 0:
-            return {name: round(p / total * 100, 1) for name, p in calibrated}
-        return {name: 0.0 for name, _ in names_and_probs}
-
-    def add_raw(name, prob):
-        """Add a market with an already-calibrated probability (no double-calibration)."""
         prob = round(max(0, min(100, prob)), 1)
         if prob > 0:
             raw.append({"market": name, "probability": prob})
 
-    # ━━ RESULT (1X2 — renormalized) ━━
-    ft_1x2 = add_group([
-        ("Home Win", pred.home_win),
-        ("Draw", pred.draw),
-        ("Away Win", pred.away_win),
-    ])
-    # Double Chance derived from renormalized 1X2 (already calibrated — use add_raw)
-    add_raw(f"1X ({home_name} or Draw)", ft_1x2["Home Win"] + ft_1x2["Draw"])
-    add_raw(f"X2 ({away_name} or Draw)", ft_1x2["Away Win"] + ft_1x2["Draw"])
-    add_raw("12 (Any Team to Win)", ft_1x2["Home Win"] + ft_1x2["Away Win"])
+    # ━━ RESULT ━━
+    add("Home Win", pred.home_win)
+    add("Draw", pred.draw)
+    add("Away Win", pred.away_win)
+    add(f"1X ({home_name} or Draw)", pred.home_win + pred.draw)
+    add(f"X2 ({away_name} or Draw)", pred.away_win + pred.draw)
+    add("12 (Any Team to Win)", pred.home_win + pred.away_win)
 
     # ━━ GOALS ━━
-    # ALL goal markets computed from the SAME joint matrix (ft).
-    # Binary pairs use symmetric calibration (sum preserved automatically).
-    for t in [0, 1, 2, 3, 4]:
-        total_over = mx(ft, MG, lambda h, a, _t=t: h + a > _t)
-        add(f"Over {t}.5 Goals", total_over)
-        add(f"Under {t}.5 Goals", 100 - total_over)
-    btts_yes = mx(ft, MG, lambda h, a: h >= 1 and a >= 1)
-    btts_no = 100 - btts_yes
-    add("BTTS - Yes", btts_yes)
-    add("BTTS - No", btts_no)
+    for label, val in [("Over 0.5", pred.over_0_5), ("Under 0.5", pred.under_0_5),
+                       ("Over 1.5", pred.over_1_5), ("Under 1.5", pred.under_1_5),
+                       ("Over 2.5", pred.over_2_5), ("Under 2.5", pred.under_2_5),
+                       ("Over 3.5", pred.over_3_5), ("Under 3.5", pred.under_3_5),
+                       ("Over 4.5", pred.over_4_5), ("Under 4.5", 100 - pred.over_4_5)]:
+        add(f"{label} Goals", val)
+    add("BTTS - Yes", pred.btts_yes)
+    add("BTTS - No", pred.btts_no)
 
     # ━━ TEAM GOALS ━━
-    # Computed from the SAME joint matrix as total goals for consistency.
     for t in [0, 1, 2]:
-        add(f"{home_name} Over {t}.5 Goals", mx(ft, MG, lambda h, a, _t=t: h > _t))
-        add(f"{home_name} Under {t}.5 Goals", mx(ft, MG, lambda h, a, _t=t: h <= _t))
-        add(f"{away_name} Over {t}.5 Goals", mx(ft, MG, lambda h, a, _t=t: a > _t))
-        add(f"{away_name} Under {t}.5 Goals", mx(ft, MG, lambda h, a, _t=t: a <= _t))
+        add(f"{home_name} Over {t}.5 Goals", p_over(pred.lambda_home, t))
+        add(f"{home_name} Under {t}.5 Goals", 100 - p_over(pred.lambda_home, t))
+        add(f"{away_name} Over {t}.5 Goals", p_over(pred.lambda_away, t))
+        add(f"{away_name} Under {t}.5 Goals", 100 - p_over(pred.lambda_away, t))
 
     # ━━ FIRST HALF ━━
-    for t in [0, 1]:
-        fh_total_over = mx(fhm, MG, lambda h, a, _t=t: h + a > _t)
-        add(f"FH Over {t}.5 Goals", fh_total_over)
-        add(f"FH Under {t}.5 Goals", 100 - fh_total_over)
-    # FH 1X2 — renormalized
-    fh_1x2 = add_group([
-        ("FH Home Win", pred.fh_home_win),
-        ("FH Draw", pred.fh_draw),
-        ("FH Away Win", pred.fh_away_win),
-    ])
-    add_raw(f"FH 1X ({home_name} or Draw)", fh_1x2["FH Home Win"] + fh_1x2["FH Draw"])
-    add_raw(f"FH X2 ({away_name} or Draw)", fh_1x2["FH Away Win"] + fh_1x2["FH Draw"])
+    add("FH Over 0.5 Goals", pred.fh_over_0_5)
+    add("FH Under 0.5 Goals", 100 - pred.fh_over_0_5)
+    add("FH Over 1.5 Goals", pred.fh_over_1_5)
+    add("FH Under 1.5 Goals", 100 - pred.fh_over_1_5)
+    add("FH Home Win", pred.fh_home_win)
+    add("FH Draw", pred.fh_draw)
+    add("FH Away Win", pred.fh_away_win)
+    add(f"FH 1X ({home_name} or Draw)", pred.fh_home_win + pred.fh_draw)
+    add(f"FH X2 ({away_name} or Draw)", pred.fh_away_win + pred.fh_draw)
     add("FH BTTS - Yes", mx(fhm, MG, lambda h, a: h >= 1 and a >= 1))
     add("FH BTTS - No", mx(fhm, MG, lambda h, a: h == 0 or a == 0))
     add(f"FH {home_name} to Score", mx(fhm, MG, lambda h, a: h >= 1))
     add(f"FH {away_name} to Score", mx(fhm, MG, lambda h, a: a >= 1))
     add("FH No Goal", mx(fhm, MG, lambda h, a: h == 0 and a == 0))
     for t in [0, 1]:
-        add(f"FH {home_name} Over {t}.5 Goals", mx(fhm, MG, lambda h, a, _t=t: h > _t))
-        add(f"FH {home_name} Under {t}.5 Goals", mx(fhm, MG, lambda h, a, _t=t: h <= _t))
-        add(f"FH {away_name} Over {t}.5 Goals", mx(fhm, MG, lambda h, a, _t=t: a > _t))
-        add(f"FH {away_name} Under {t}.5 Goals", mx(fhm, MG, lambda h, a, _t=t: a <= _t))
-
-    # ━━ SECOND HALF ━━
-    sh_lh = pred.lambda_home * 0.55
-    sh_la = pred.lambda_away * 0.55
-    shm = _build_joint_matrix(sh_lh, sh_la, MG, rho=DIXON_COLES_RHO_SH)
-    for t in [0, 1]:
-        sh_total_over = mx(shm, MG, lambda h, a, _t=t: h + a > _t)
-        add(f"SH Over {t}.5 Goals", sh_total_over)
-        add(f"SH Under {t}.5 Goals", 100 - sh_total_over)
-    # SH 1X2 — renormalized
-    sh_hw = mx(shm, MG, lambda h, a: h > a)
-    sh_dr = mx(shm, MG, lambda h, a: h == a)
-    sh_aw = mx(shm, MG, lambda h, a: h < a)
-    sh_1x2 = add_group([
-        ("SH Home Win", sh_hw),
-        ("SH Draw", sh_dr),
-        ("SH Away Win", sh_aw),
-    ])
-    add_raw(f"SH 1X ({home_name} or Draw)", sh_1x2["SH Home Win"] + sh_1x2["SH Draw"])
-    add_raw(f"SH X2 ({away_name} or Draw)", sh_1x2["SH Away Win"] + sh_1x2["SH Draw"])
-    add("SH BTTS - Yes", mx(shm, MG, lambda h, a: h >= 1 and a >= 1))
-    add("SH BTTS - No", mx(shm, MG, lambda h, a: h == 0 or a == 0))
-    add(f"SH {home_name} to Score", mx(shm, MG, lambda h, a: h >= 1))
-    add(f"SH {away_name} to Score", mx(shm, MG, lambda h, a: a >= 1))
-    add("SH No Goal", mx(shm, MG, lambda h, a: h == 0 and a == 0))
-    for t in [0, 1]:
-        add(f"SH {home_name} Over {t}.5 Goals", mx(shm, MG, lambda h, a, _t=t: h > _t))
-        add(f"SH {home_name} Under {t}.5 Goals", mx(shm, MG, lambda h, a, _t=t: h <= _t))
-        add(f"SH {away_name} Over {t}.5 Goals", mx(shm, MG, lambda h, a, _t=t: a > _t))
-        add(f"SH {away_name} Under {t}.5 Goals", mx(shm, MG, lambda h, a, _t=t: a <= _t))
+        add(f"FH {home_name} Over {t}.5 Goals", p_over(fh_lh, t))
+        add(f"FH {home_name} Under {t}.5 Goals", 100 - p_over(fh_lh, t))
+        add(f"FH {away_name} Over {t}.5 Goals", p_over(fh_la, t))
+        add(f"FH {away_name} Under {t}.5 Goals", 100 - p_over(fh_la, t))
 
     # ━━ CORNERS ━━
     for t in [7, 8, 9, 10, 11]:
         add(f"Over {t}.5 Corners", _poisson_over(exp_total_corn, t))
         add(f"Under {t}.5 Corners", 100 - _poisson_over(exp_total_corn, t))
-    for t in [2, 3, 4, 5, 6, 7]:
+    for t in [3, 4, 5, 6]:
         add(f"{home_name} Over {t}.5 Corners", p_over(exp_h_corn, t))
         add(f"{home_name} Under {t}.5 Corners", 100 - p_over(exp_h_corn, t))
         add(f"{away_name} Over {t}.5 Corners", p_over(exp_a_corn, t))
@@ -477,6 +398,11 @@ def _compute_match_analysis(home_name: str, away_name: str, league_name: str = "
     add(f"More Corners: {home_name}", c_hw); add("Corners Draw", c_dr); add(f"More Corners: {away_name}", c_aw)
     add(f"1X Corners ({home_name} or Draw)", c_hw + c_dr)
     add(f"X2 Corners ({away_name} or Draw)", c_aw + c_dr)
+    for hc in [1, 2, 3]:
+        add(f"{home_name} Corner Handicap (+{hc}.5)", mx(cm, MC, lambda h, a: (h + hc) > a))
+        add(f"{away_name} Corner Handicap (+{hc}.5)", mx(cm, MC, lambda h, a: (a + hc) > h))
+        add(f"{home_name} Corner Handicap (-{hc}.5)", mx(cm, MC, lambda h, a: (h - hc) > a))
+        add(f"{away_name} Corner Handicap (-{hc}.5)", mx(cm, MC, lambda h, a: (a - hc) > h))
 
     # ━━ CARDS ━━
     for t in [2, 3, 4, 5, 6]:
@@ -491,490 +417,51 @@ def _compute_match_analysis(home_name: str, away_name: str, league_name: str = "
     add(f"More Cards: {home_name}", k_hw); add("Cards Draw", k_dr); add(f"More Cards: {away_name}", k_aw)
     add(f"1X Cards ({home_name} or Draw)", k_hw + k_dr)
     add(f"X2 Cards ({away_name} or Draw)", k_aw + k_dr)
+    for hc in [1, 2]:
+        add(f"{home_name} Card Handicap (+{hc}.5)", mx(km, MK, lambda h, a: (h + hc) > a))
+        add(f"{away_name} Card Handicap (+{hc}.5)", mx(km, MK, lambda h, a: (a + hc) > h))
 
-
-
-    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    # EXPANDED MARKET COVERAGE — New markets
-    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-    import math
-
-
-    # ━━ ADVANCED GOALS ━━
-    for g in range(7):
-        add(f"Exact Total Goals: {g}", mx(ft, MG, lambda h, a, _g=g: h + a == _g))
-    add("Goal Range 0-1", mx(ft, MG, lambda h, a: h + a <= 1))
-    add("Goal Range 2-3", mx(ft, MG, lambda h, a: 2 <= h + a <= 3))
-    add("Goal Range 4+", mx(ft, MG, lambda h, a: h + a >= 4))
-    add("Odd/Even Total Goals: Odd", mx(ft, MG, lambda h, a: (h + a) % 2 == 1))
-    add("Odd/Even Total Goals: Even", mx(ft, MG, lambda h, a: (h + a) % 2 == 0))
-
-    # ━━ TIME-BASED ━━
-    lam_15 = (pred.lambda_home + pred.lambda_away) * (15 / 90)
-    p_goal_15 = (1 - math.exp(-lam_15)) * 100
-    add("Goal in First 15 Min - Yes", p_goal_15)
-    add("Goal in First 15 Min - No", 100 - p_goal_15)
-    p_fh_any = mx(fhm, MG, lambda h, a: h + a >= 1)
-    p_sh_any = mx(shm, MG, lambda h, a: h + a >= 1)
-    add("Goal in Both Halves - Yes", (p_fh_any / 100) * p_sh_any)
-    add("Goal in Both Halves - No", 100 - (p_fh_any / 100) * p_sh_any)
-
-    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    # PHASE 5 — DERIVED MARKETS (all from Dixon-Coles ft matrix)
-    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-    # ━━ TIER A: CORRECT SCORE (FT) ━━
-    # Explicit scorelines 0-0 through 4-4, "Other" is the remainder
-    for h_cs in range(5):
-        for a_cs in range(5):
-            p_cs = ft[(h_cs, a_cs)] * 100
-            add(f"CS {h_cs}-{a_cs}", p_cs)
-    # "Other" = all scorelines NOT in the 0-4 grid (explicit from matrix)
-    p_cs_other = sum(ft[(h, a)] for h in range(MG+1) for a in range(MG+1)
-                     if not (h <= 4 and a <= 4)) * 100
-    add("CS Other", p_cs_other)
-
-    # ━━ TIER A: WINNING MARGIN ━━
-    add(f"{home_name} Win by 1", mx(ft, MG, lambda h, a: h - a == 1))
-    add(f"{home_name} Win by 2", mx(ft, MG, lambda h, a: h - a == 2))
-    add(f"{home_name} Win by 3+", mx(ft, MG, lambda h, a: h - a >= 3))
-    add(f"{away_name} Win by 1", mx(ft, MG, lambda h, a: a - h == 1))
-    add(f"{away_name} Win by 2", mx(ft, MG, lambda h, a: a - h == 2))
-    add(f"{away_name} Win by 3+", mx(ft, MG, lambda h, a: a - h >= 3))
-    add("Exact Draw 0-0", ft[(0, 0)] * 100)
-
-    # ━━ TIER A: CLEAN SHEET & FAIL TO SCORE ━━
-    add(f"{home_name} Clean Sheet", mx(ft, MG, lambda h, a: a == 0))
-    add(f"{away_name} Clean Sheet", mx(ft, MG, lambda h, a: h == 0))
-    add(f"{home_name} Fails to Score", mx(ft, MG, lambda h, a: h == 0))
-    add(f"{away_name} Fails to Score", mx(ft, MG, lambda h, a: a == 0))
-
-    # ━━ TIER A: EXACT TEAM GOALS ━━
-    for n in range(4):
-        add(f"{home_name} Exact {n} Goals", mx(ft, MG, lambda h, a, _n=n: h == _n))
-        add(f"{away_name} Exact {n} Goals", mx(ft, MG, lambda h, a, _n=n: a == _n))
-    add(f"{home_name} Exact 3+ Goals", mx(ft, MG, lambda h, a: h >= 3))
-    add(f"{away_name} Exact 3+ Goals", mx(ft, MG, lambda h, a: a >= 3))
-
-    # ━━ TIER B: RESULT + GOALS COMBOS ━━
-    # All computed from the SAME joint matrix — guaranteed consistency
-    add(f"Home Win & Over 1.5", mx(ft, MG, lambda h, a: h > a and h + a > 1))
-    add(f"Home Win & Over 2.5", mx(ft, MG, lambda h, a: h > a and h + a > 2))
-    add(f"Home Win & Under 2.5", mx(ft, MG, lambda h, a: h > a and h + a <= 2))
-    add(f"Away Win & Over 1.5", mx(ft, MG, lambda h, a: a > h and h + a > 1))
-    add(f"Away Win & Over 2.5", mx(ft, MG, lambda h, a: a > h and h + a > 2))
-    add(f"Away Win & Under 2.5", mx(ft, MG, lambda h, a: a > h and h + a <= 2))
-    add(f"Draw & Over 2.5", mx(ft, MG, lambda h, a: h == a and h + a > 2))
-    add(f"Draw & Under 2.5", mx(ft, MG, lambda h, a: h == a and h + a <= 2))
-
-    # ━━ TIER B: RESULT + BTTS COMBOS ━━
-    add(f"Home Win & BTTS", mx(ft, MG, lambda h, a: h > a and h >= 1 and a >= 1))
-    add(f"Away Win & BTTS", mx(ft, MG, lambda h, a: a > h and h >= 1 and a >= 1))
-    add(f"Draw & BTTS", mx(ft, MG, lambda h, a: h == a and h >= 1 and a >= 1))
-
-    # ━━ TIER B: BTTS + GOALS COMBOS ━━
-    add(f"BTTS & Over 2.5", mx(ft, MG, lambda h, a: h >= 1 and a >= 1 and h + a > 2))
-    add(f"BTTS & Under 2.5", mx(ft, MG, lambda h, a: h >= 1 and a >= 1 and h + a <= 2))
-
-    # ━━ TIER B: SCORING IN BOTH HALVES ━━
-    # Bounded approximation: min(P(team≥2 goals), P(FH_scores) × P(SH_scores) × 1.1)
-    # to account for game-state dependency (scoring early changes SH intensity)
-    p_fh_home_scores = mx(fhm, MG, lambda h, a: h >= 1) / 100
-    p_sh_home_scores = mx(shm, MG, lambda h, a: h >= 1) / 100
-    p_fh_away_scores = mx(fhm, MG, lambda h, a: a >= 1) / 100
-    p_sh_away_scores = mx(shm, MG, lambda h, a: a >= 1) / 100
-    p_home_2plus = mx(ft, MG, lambda h, a: h >= 2) / 100  # needs 2+ for both halves
-    p_away_2plus = mx(ft, MG, lambda h, a: a >= 2) / 100
-    add(f"{home_name} Score in Both Halves",
-        min(p_home_2plus, p_fh_home_scores * p_sh_home_scores * 1.1) * 100)
-    add(f"{away_name} Score in Both Halves",
-        min(p_away_2plus, p_fh_away_scores * p_sh_away_scores * 1.1) * 100)
-
-    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    # HANDICAP MARKETS (all from Dixon-Coles ft matrix)
-    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-    # ━━ ASIAN HANDICAP (2-way: no draw possible) ━━
-    # AH -0.5 Home = Home must win outright (same as Home Win)
-    # AH -1.5 Home = Home must win by 2+
-    # AH -2.5 Home = Home must win by 3+
-    for spread in [0.5, 1.5, 2.5]:
-        # Home giving handicap (favorite scenario)
-        ah_home = mx(ft, MG, lambda h, a, _s=spread: (h - a) > _s)
-        add(f"AH {home_name} -{spread}", ah_home)
-        add(f"AH {away_name} +{spread}", 100 - ah_home)
-        # Away giving handicap
-        ah_away = mx(ft, MG, lambda h, a, _s=spread: (a - h) > _s)
-        add(f"AH {away_name} -{spread}", ah_away)
-        add(f"AH {home_name} +{spread}", 100 - ah_away)
-
-    # ━━ EUROPEAN HANDICAP (3-way: includes draw — renormalized) ━━
-    # EH -1 Home: After applying -1 to home, check win/draw/loss
-    for spread in [1, 2]:
-        # Home -spread
-        eh_hw = mx(ft, MG, lambda h, a, _s=spread: (h - _s) > a)
-        eh_dr = mx(ft, MG, lambda h, a, _s=spread: (h - _s) == a)
-        eh_aw = mx(ft, MG, lambda h, a, _s=spread: (h - _s) < a)
-        add_group([
-            (f"EH {home_name} -{spread} (Win)", eh_hw),
-            (f"EH {home_name} -{spread} (Draw)", eh_dr),
-            (f"EH {home_name} -{spread} (Lose)", eh_aw),
-        ])
-        # Away -spread
-        eh_aw2 = mx(ft, MG, lambda h, a, _s=spread: (a - _s) > h)
-        eh_dr2 = mx(ft, MG, lambda h, a, _s=spread: (a - _s) == h)
-        eh_hw2 = mx(ft, MG, lambda h, a, _s=spread: (a - _s) < h)
-        add_group([
-            (f"EH {away_name} -{spread} (Win)", eh_aw2),
-            (f"EH {away_name} -{spread} (Draw)", eh_dr2),
-            (f"EH {away_name} -{spread} (Lose)", eh_hw2),
-        ])
-
-    # ━━ CORNERS — HALF-BASED (First Half only) ━━
-    fh_h_corn = exp_h_corn * 0.48; fh_a_corn = exp_a_corn * 0.48
-    sh_h_corn = exp_h_corn * 0.52; sh_a_corn = exp_a_corn * 0.52
-    fh_total_corn = fh_h_corn + fh_a_corn; sh_total_corn = sh_h_corn + sh_a_corn
-    for t in [3, 4, 5]:
-        add(f"FH Over {t}.5 Corners", _poisson_over(fh_total_corn, t))
-        add(f"FH Under {t}.5 Corners", 100 - _poisson_over(fh_total_corn, t))
-    for t in [0, 1, 2, 3, 4]:
-        add(f"FH {home_name} Over {t}.5 Corners", p_over(fh_h_corn, t))
-        add(f"FH {home_name} Under {t}.5 Corners", 100 - p_over(fh_h_corn, t))
-        add(f"FH {away_name} Over {t}.5 Corners", p_over(fh_a_corn, t))
-        add(f"FH {away_name} Under {t}.5 Corners", 100 - p_over(fh_a_corn, t))
-
-    # ━━ CARDS — HALF-BASED (First Half only) ━━
-    fh_h_card = exp_h_card * 0.45; fh_a_card = exp_a_card * 0.45
-    sh_h_card = exp_h_card * 0.55; sh_a_card = exp_a_card * 0.55
-    fh_total_card = fh_h_card + fh_a_card; sh_total_card = sh_h_card + sh_a_card
-    for t in [0, 1, 2, 3]:
-        add(f"FH Over {t}.5 Cards", _poisson_over(fh_total_card, t))
-        add(f"FH Under {t}.5 Cards", 100 - _poisson_over(fh_total_card, t))
-    for t in [0, 1]:
-        add(f"FH {home_name} Over {t}.5 Cards", p_over(fh_h_card, t))
-        add(f"FH {home_name} Under {t}.5 Cards", 100 - p_over(fh_h_card, t))
-        add(f"FH {away_name} Over {t}.5 Cards", p_over(fh_a_card, t))
-        add(f"FH {away_name} Under {t}.5 Cards", 100 - p_over(fh_a_card, t))
-
-    # ━━ HALF WITH MOST ACTIVITY ━━
-    if fh_total_corn + sh_total_corn > 0:
-        add("Half with Most Corners: 1st Half", fh_total_corn / (fh_total_corn + sh_total_corn) * 100)
-        add("Half with Most Corners: 2nd Half", sh_total_corn / (fh_total_corn + sh_total_corn) * 100)
-    if fh_total_card + sh_total_card > 0:
-        add("Half with Most Cards: 1st Half", fh_total_card / (fh_total_card + sh_total_card) * 100)
-        add("Half with Most Cards: 2nd Half", sh_total_card / (fh_total_card + sh_total_card) * 100)
+    # ━━ HANDICAPS ━━
+    for hc in [1, 2, 3]:
+        add(f"{home_name} Handicap (-{hc}.5)", mx(ft, MG, lambda h, a: (h - a) > hc))
+        add(f"{home_name} Handicap (+{hc}.5)", mx(ft, MG, lambda h, a: (h - a) > -hc - 1))
+        add(f"{away_name} Handicap (-{hc}.5)", mx(ft, MG, lambda h, a: (a - h) > hc))
+        add(f"{away_name} Handicap (+{hc}.5)", mx(ft, MG, lambda h, a: (a - h) > -hc - 1))
+    add(f"{home_name} AH -0.5", pred.home_win)
+    add(f"{away_name} AH -0.5", pred.away_win)
+    add(f"{home_name} AH +0.5", pred.home_win + pred.draw)
+    add(f"{away_name} AH +0.5", pred.away_win + pred.draw)
 
     # ══════════════════════════════════════════════════════
-    # SCORE ESTIMATION — Top probable scorelines
+    # Step 6: CATEGORIZE → FILTER ≥80% → GROUP → SHUFFLE
     # ══════════════════════════════════════════════════════
-    #
-    # Extract the most probable exact scores from Poisson
-    # joint probability matrices (already computed above).
-
-    # Full-time scores (from ft matrix)
-    ft_scores = []
-    for h in range(MG + 1):
-        for a in range(MG + 1):
-            prob = ft[(h, a)] * 100
-            if prob >= 1.0:  # Only include scores with >= 1% probability
-                ft_scores.append({"home": h, "away": a, "probability": round(prob, 1)})
-    ft_scores.sort(key=lambda x: x["probability"], reverse=True)
-    ft_top_scores = ft_scores[:5]
-
-    # First-half scores (from fhm matrix)
-    fh_scores = []
-    for h in range(MG + 1):
-        for a in range(MG + 1):
-            prob = fhm[(h, a)] * 100
-            if prob >= 1.0:
-                fh_scores.append({"home": h, "away": a, "probability": round(prob, 1)})
-    fh_scores.sort(key=lambda x: x["probability"], reverse=True)
-    fh_top_scores = fh_scores[:5]
-
-    score_prediction = {
-        "full_time": ft_top_scores,
-        "first_half": fh_top_scores,
-        "expected_goals": {
-            "home": round(pred.lambda_home, 2),
-            "away": round(pred.lambda_away, 2),
-            "total": round(pred.lambda_home + pred.lambda_away, 2),
-        },
-    }
-
-    # ══════════════════════════════════════════════════════
-    # DOMINANCE INSIGHTS — Who controls corners/cards
-    # ══════════════════════════════════════════════════════
-
-    c_home_more = mx(cm, MC, lambda h, a: h > a)
-    c_away_more = mx(cm, MC, lambda h, a: h < a)
-    k_home_more = mx(km, MK, lambda h, a: h > a)
-    k_away_more = mx(km, MK, lambda h, a: h < a)
-
-    dominance = {
-        "corners": {
-            "home_pct": round(c_home_more, 1),
-            "away_pct": round(c_away_more, 1),
-            "dominant": home_name if c_home_more > c_away_more else away_name,
-            "expected_home": round(exp_h_corn, 1),
-            "expected_away": round(exp_a_corn, 1),
-            "expected_total": round(exp_total_corn, 1),
-        },
-        "cards": {
-            "home_pct": round(k_home_more, 1),
-            "away_pct": round(k_away_more, 1),
-            "dominant": home_name if k_home_more > k_away_more else away_name,
-            "expected_home": round(exp_h_card, 1),
-            "expected_away": round(exp_a_card, 1),
-            "expected_total": round(exp_total_card, 1),
-        },
-    }
-
-    # ══════════════════════════════════════════════════════
-    # LAYER 1 — STRUCTURED ANALYSIS (all markets, grouped)
-    # ══════════════════════════════════════════════════════
-    #
-    # Each module is analyzed INDEPENDENTLY — no mixing.
-    # ALL probabilities are returned so the UI can show
-    # the complete picture before filtering.
 
     for m in raw:
         m["section"] = _categorize_market(m["market"])
 
-    # ══════════════════════════════════════════════════════
-    # ISOTONIC CALIBRATION — Per-market-type learned transform
-    # ══════════════════════════════════════════════════════
-    #
-    # Pipeline order:
-    #   Raw Poisson → Shrinkage calibration → Isotonic calibration
-    #
-    # The shrinkage (CALIBRATION_SHRINK=0.82) is a symmetric pre-filter.
-    # Isotonic regression is a learned monotonic correction fitted from
-    # actual outcome data per market type.
-    #
-    # After this step:
-    #   raw_probability  = pre-isotonic value (for diagnostics/retraining)
-    #   probability      = post-isotonic value (for ranking, display, EV)
-    #
-    try:
-        from src.engine.isotonic_calibrator import get_isotonic_calibrator
-        from src.db.prediction_logger import _classify_market_type
-        from src.db.database import get_db
-        _iso_conn = get_db()
-        _iso_cal = get_isotonic_calibrator(_iso_conn)
-
-        for m in raw:
-            m["raw_probability"] = m["probability"]  # preserve pre-isotonic
-            m["market_type"] = _classify_market_type(m["market"])
-            
-            # Bypassing isotonic calibration for pure Poisson distributions to prevent
-            # double-calibration squashing (which makes Over 0.5 identical to Over 1.5).
-            if m["market_type"] not in ["corners", "cards", "goals", "team_goals", "half"]:
-                m["probability"] = _iso_cal.calibrate(m["raw_probability"], m["market_type"])
-    except Exception as iso_err:
-        # Fallback: if isotonic fails, raw_probability == probability
-        logger.warning(f"Isotonic calibration failed, using raw: {iso_err}")
-        for m in raw:
-            m["raw_probability"] = m["probability"]
-            m["market_type"] = "unknown"
-
-    # ══════════════════════════════════════════════════════
-    # POST-CALIBRATION COHERENCE — Enforce logical constraints
-    # ══════════════════════════════════════════════════════
-    #
-    # Independent isotonic models per market type can violate:
-    #   P(FH Over X) ≤ P(FT Over X)    (half is subset of full)
-    #   P(SH Over X) ≤ P(FT Over X)
-    #   P(Over X+1) ≤ P(Over X)         (monotone in threshold)
-    #
-    # Fix: build an index, find pairs, clamp the subset to ≤ superset.
-    #
-    market_index = {m["market"]: m for m in raw}
-
-    def _clamp_subset(subset_name: str, superset_name: str):
-        """Ensure P(subset) ≤ P(superset). If violated, pull subset down."""
-        sub = market_index.get(subset_name)
-        sup = market_index.get(superset_name)
-        if sub and sup and sub["probability"] > sup["probability"]:
-            sub["probability"] = sup["probability"]
-
-    def _clamp_half_scoring(half_name: str, ft_name: str, max_ratio: float):
-        """Ensure half-period 'to score' is strictly below FT team scoring.
-
-        Unlike _clamp_subset which sets them equal when violated, this
-        caps the half value to max_ratio × FT value, preventing the
-        display bug where half scoring == full-time scoring.
-        """
-        sub = market_index.get(half_name)
-        sup = market_index.get(ft_name)
-        if sub and sup:
-            ceiling = round(sup["probability"] * max_ratio, 1)
-            if sub["probability"] > ceiling:
-                sub["probability"] = ceiling
-
-    # ── Rule 1: FH/SH team goals ≤ FT team goals ──
-    for team in [home_name, away_name]:
-        for t in [0, 1, 2]:
-            if t == 0:
-                # Over 0.5 = "team to score" — use proportional cap to avoid
-                # FH/SH showing identical value to FT
-                _clamp_half_scoring(f"FH {team} Over {t}.5 Goals", f"{team} Over {t}.5 Goals", 0.85)
-                _clamp_half_scoring(f"SH {team} Over {t}.5 Goals", f"{team} Over {t}.5 Goals", 0.90)
-            else:
-                _clamp_subset(f"FH {team} Over {t}.5 Goals", f"{team} Over {t}.5 Goals")
-                _clamp_subset(f"SH {team} Over {t}.5 Goals", f"{team} Over {t}.5 Goals")
-            # Under: FH Under ≥ FT Under  →  equivalently FT Under ≤ FH Under
-            _clamp_subset(f"{team} Under {t}.5 Goals", f"FH {team} Under {t}.5 Goals")
-            _clamp_subset(f"{team} Under {t}.5 Goals", f"SH {team} Under {t}.5 Goals")
-
-    # ── Rule 2: FH/SH total goals ≤ FT total goals ──
-    for t in [0, 1, 2, 3, 4]:
-        _clamp_subset(f"FH Over {t}.5 Goals", f"Over {t}.5 Goals")
-        _clamp_subset(f"SH Over {t}.5 Goals", f"Over {t}.5 Goals")
-        _clamp_subset(f"Under {t}.5 Goals", f"FH Under {t}.5 Goals")
-        _clamp_subset(f"Under {t}.5 Goals", f"SH Under {t}.5 Goals")
-
-    # ── Rule 3: FH/SH "to score" < FT "Over 0.5 Goals" for same team ──
-    # Use proportional caps instead of exact clamping to prevent
-    # half-period scoring from displaying the same value as FT scoring.
-    # FH ≤ 85% of FT (first half has fewer goals), SH ≤ 90% of FT.
-    for team in [home_name, away_name]:
-        _clamp_half_scoring(f"FH {team} to Score", f"{team} Over 0.5 Goals", 0.85)
-        _clamp_half_scoring(f"SH {team} to Score", f"{team} Over 0.5 Goals", 0.90)
-
-    # ── Rule 4: FH BTTS ≤ FT BTTS ──
-    _clamp_subset("FH BTTS - Yes", "BTTS - Yes")
-    _clamp_subset("SH BTTS - Yes", "BTTS - Yes")
-
-    # ── Rule 5: Over X+1 ≤ Over X (monotone in threshold) ──
-    for prefix in ["", "FH ", "SH "]:
-        for t in range(4):
-            _clamp_subset(f"{prefix}Over {t+1}.5 Goals", f"{prefix}Over {t}.5 Goals")
-    for t in range(10):
-        _clamp_subset(f"Over {t+1}.5 Corners", f"Over {t}.5 Corners")
-    for t in range(5):
-        _clamp_subset(f"Over {t+1}.5 Cards", f"Over {t}.5 Cards")
-
-    section_order = ["Goals", "First Half", "Second Half", "Team Goals", "Result", "Handicaps", "Corners", "Cards"]
-
-    # Full analysis: every market, sorted by probability (descending)
-    full_analysis = {}
-    for sec in section_order:
-        items = [m for m in raw if m["section"] == sec]
-        items.sort(key=lambda x: x["probability"], reverse=True)
-        full_analysis[sec] = items
-
-    # ══════════════════════════════════════════════════════
-    # LAYER 2 — TIERED PICKS (6 tiers × 10 picks = 60)
-    # ══════════════════════════════════════════════════════
-    #
-    # 1. Sort ALL raw markets by probability (descending)
-    # 2. Take top 60
-    # 3. Split into 6 tiers of 10 picks each
-    # 4. Shuffle WITHIN each tier (no visible ranking inside a tier)
-    #
-    # Tier 1 = ranks 1-10 (highest confidence)
-    # Tier 2 = ranks 7-12
-    # ...
-    # Tier 6 = ranks 31-36 (lowest of the 36)
-
-    PICKS_PER_TIER = 6
-    NUM_TIERS = 10
-    TOTAL_PICKS = PICKS_PER_TIER * NUM_TIERS  # 60
-
-    all_sorted = sorted(raw, key=lambda x: x["probability"], reverse=True)
-
-    # ── Correlation dedup: limit correlated markets in top picks ──
-    # Prevents combos/CS/redundant signals from flooding tiers.
-    CLUSTER_LIMITS = {
-        "combo": 2,       # Result+Goals, Result+BTTS, BTTS+Goals
-        "cs": 3,          # Correct Score
-        "goals_ou": 3,    # Over/Under goals (total)
-        "result": 2,      # 1X2, Double Chance
-        "btts": 1,        # BTTS Yes/No
-        "margin": 2,      # Winning margin
-    }
-
-    def _get_cluster(market_name):
-        m = market_name.lower()
-        if " & " in m: return "combo"
-        if m.startswith("cs "): return "cs"
-        if m.startswith("over") or m.startswith("under"): return "goals_ou"
-        if m in ("home win", "draw", "away win") or "1x " in m or "x2 " in m or "12 " in m: return "result"
-        if "btts" in m: return "btts"
-        if "win by" in m or "exact draw" in m: return "margin"
-        return None  # no limit
-
-    cluster_counts = {}
-    deduped = []
-    for m in all_sorted:
-        cluster = _get_cluster(m["market"])
-        if cluster:
-            count = cluster_counts.get(cluster, 0)
-            if count >= CLUSTER_LIMITS[cluster]:
-                continue  # skip — cluster full
-            cluster_counts[cluster] = count + 1
-        deduped.append(m)
-
-    top_36 = deduped[:TOTAL_PICKS]
-
-    tiers = []
-    for t in range(NUM_TIERS):
-        start = t * PICKS_PER_TIER
-        end = start + PICKS_PER_TIER
-        tier_picks = list(top_36[start:end])
-        
-        # Randomize odds inside the tier
-        import random
-        random.shuffle(tier_picks)
-
-        # Calculate tier stats
-        probs = [p["probability"] for p in tier_picks] if tier_picks else [0]
-        tiers.append({
-            "tier": t + 1,
-            "label": f"Tier {t + 1}",
-            "rank_range": f"{start + 1}-{end}",
-            "picks": tier_picks,
-            "avg_probability": round(sum(probs) / len(probs), 1),
-            "min_probability": round(min(probs), 1),
-            "max_probability": round(max(probs), 1),
-        })
-
-    # Shuffle the tiers themselves so they appear in random order on the page
-    import random
-    random.shuffle(tiers)
-
-    # Legacy: flat top_picks for backward compat (sorted)
-    top_picks = list(top_36)
-
-    # Also build per-section qualified view (≥80%)
     qualified = [m for m in raw if m["probability"] >= 80.0]
-    qualified_sections = {}
+
+    section_order = ["Goals", "Team Goals", "First Half", "Corners", "Cards", "Handicaps", "Result"]
+    sections = {}
     for sec in section_order:
         items = [m for m in qualified if m["section"] == sec]
         items.sort(key=lambda x: x["probability"], reverse=True)
-        qualified_sections[sec] = items
+        sections[sec] = items
+
+    top_picks = list(qualified)
+    random.shuffle(top_picks)
 
     # ══════════════════════════════════════════════════════
-    # RETURN — Both layers exposed
+    # RETURN
     # ══════════════════════════════════════════════════════
 
     return {
-        "disclaimer": f"Poisson (λ={pred.lambda_home:.2f}+{pred.lambda_away:.2f}) + XGBoost | {league_key} | isotonic-calibrated",
+        "disclaimer": f"Poisson (λ={pred.lambda_home:.2f}+{pred.lambda_away:.2f}) + XGBoost | {league_key}",
         "total_markets_scanned": len(raw),
         "total_qualified": len(qualified),
-        "total_tiered_picks": len(top_36),
-        # Layer 2 — tiered picks (6 tiers × 6 picks)
-        "tiers": tiers,
-        # Legacy flat list
         "top_picks": top_picks,
-        # Layer 1 — FULL structured analysis (all markets, all probs)
-        "full_analysis": full_analysis,
-        # Qualified per section (≥80%)
-        "sections": qualified_sections,
+        "sections": sections,
         "poisson": pred.to_dict(),
-        "score_prediction": score_prediction,
-        "dominance": dominance,
         "xgboost_predictions": xgb_pred.to_dict().get("predictions", []),
         "averages": {
             "home": {"avg_goals_scored": home_stats.scored, "avg_goals_conceded": home_stats.conceded, "avg_corners": home_stats.corners, "avg_cards": home_stats.cards},
@@ -984,36 +471,19 @@ def _compute_match_analysis(home_name: str, away_name: str, league_name: str = "
 
 
 def _fetch_sofascore_events(date_str: str) -> list[dict]:
-    """Fetch scheduled events from SofaScore for the given date.
-    
-    Also fetches the previous day's events since SofaScore uses UTC dates
-    and late-night matches in UTC+3 may appear under the previous UTC day.
-    """
-    from datetime import timedelta
-
-    all_events = []
-    # Fetch the requested date + the previous day (to catch timezone-shifted matches)
-    target = datetime.strptime(date_str, "%Y-%m-%d").date()
-    dates_to_fetch = [
-        (target - timedelta(days=1)).isoformat(),
-        date_str,
-    ]
-
-    for d in dates_to_fetch:
-        url = f"https://api.sofascore.com/api/v1/sport/football/scheduled-events/{d}"
-        req = urllib.request.Request(url, headers={
-            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15",
-            "Accept": "*/*",
-        })
-        try:
-            ctx = ssl.create_default_context()
-            resp = urllib.request.urlopen(req, timeout=15, context=ctx)
-            data = json.loads(resp.read())
-            all_events.extend(data.get("events", []))
-        except Exception as e:
-            logger.error(f"SofaScore fetch failed for {d}: {e}")
-
-    return all_events
+    url = f"https://api.sofascore.com/api/v1/sport/football/scheduled-events/{date_str}"
+    req = urllib.request.Request(url, headers={
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
+        "Accept": "application/json",
+        "Referer": "https://www.sofascore.com/",
+    })
+    try:
+        resp = urllib.request.urlopen(req, timeout=15)
+        data = json.loads(resp.read())
+        return data.get("events", [])
+    except Exception as e:
+        logger.error(f"SofaScore fetch failed: {e}")
+        return []
 
 
 def _sofascore_to_fixture(event: dict) -> dict:
@@ -1058,53 +528,30 @@ def _sofascore_to_fixture(event: dict) -> dict:
             "id": str(ut_id),
             "name": unique_tournament.get("name", tournament.get("name", "")),
             "country": category.get("name", ""),
-            "logo": f"/api/image/tournament/{ut_id}",
+            "logo": f"https://api.sofascore.com/api/v1/unique-tournament/{ut_id}/image",
         },
         "home_team": {
             "id": str(home.get("id", "")),
             "name": home.get("name", ""),
-            "logo": f"/api/image/team/{home.get('id', 0)}",
+            "logo": f"https://api.sofascore.com/api/v1/team/{home.get('id', 0)}/image",
         },
         "away_team": {
             "id": str(away.get("id", "")),
             "name": away.get("name", ""),
-            "logo": f"/api/image/team/{away.get('id', 0)}",
+            "logo": f"https://api.sofascore.com/api/v1/team/{away.get('id', 0)}/image",
         },
     }
 
+
 # ── Endpoints ──────────────────────────
-
-from fastapi.responses import Response
-
-@app.get("/api/image/team/{team_id}")
-def get_team_image(team_id: str):
-    url = f"https://api.sofascore.com/api/v1/team/{team_id}/image"
-    return _proxy_image(url)
-
-@app.get("/api/image/tournament/{tour_id}")
-def get_tournament_image(tour_id: str):
-    url = f"https://api.sofascore.com/api/v1/unique-tournament/{tour_id}/image"
-    return _proxy_image(url)
-
-def _proxy_image(url: str):
-    try:
-        req = urllib.request.Request(url, headers={
-            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15",
-            "Accept": "image/webp,image/apng,image/*,*/*;q=0.8",
-        })
-        ctx = ssl.create_default_context()
-        ctx.check_hostname = False
-        ctx.verify_mode = ssl.CERT_NONE
-        resp = urllib.request.urlopen(req, timeout=5, context=ctx)
-        return Response(content=resp.read(), media_type="image/png")
-    except Exception as e:
-        return Response(status_code=404)
 
 @app.get("/api/health")
 def health_check():
     return {
         "status": "ok",
-        "data_source": "sofascore",
+        "version": "5.0.0",
+        "fixture_loader": "local-first-v2",
+        "data_source": "local-first",
         "analysis_mode": "live" if APIFOOTBALL_API_KEY else "per_match_poisson",
         "engine": "Hybrid Poisson Goals + Corners + Cards v5.0",
         "leagues": list(TOP_LEAGUES.values()),
@@ -1117,35 +564,392 @@ def get_supported_leagues():
 
 
 @app.get("/api/fixtures/{date_str}")
-def get_fixtures_by_date(date_str: str):
-    events = _fetch_sofascore_events(date_str)
-    if not events:
-        logger.warning(f"No events from SofaScore for {date_str}")
-        return []
-    
-    fixtures = []
-    seen_ids = set()
-    seen_teams = set()
-    for ev in events:
-        f = _sofascore_to_fixture(ev)
-        # Unique key for the two teams playing (independent of home/away order)
-        team_key = tuple(sorted([f["home_team"]["name"], f["away_team"]["name"]]))
-        
-        # Match date filter (after timezone conversion) + dedup by ID and Team names
-        if f["date"] == date_str and f["id"] not in seen_ids and team_key not in seen_teams:
-            seen_ids.add(f["id"])
-            seen_teams.add(team_key)
-            fixtures.append(f)
-    
-    fixtures.sort(key=lambda f: f["time"])
-    
+def get_fixtures_by_date(date_str: str, force_refresh: bool = False):
+    fixtures = fetch_fixtures_for_date(date_str, force_refresh=force_refresh)
     logger.info(f"Returning {len(fixtures)} fixtures for {date_str}")
     return fixtures
+
+
+@app.get("/api/debug/db")
+def get_db_debug():
+    return get_db_debug_info()
+
+
+@app.get("/api/debug/date-coverage")
+def get_date_coverage():
+    return get_match_history_date_coverage()
+
+
+@app.post("/api/data/import-csv")
+async def import_csv_data(file: UploadFile = File(...), league: str = Form(None)):
+    # Historical CSV import endpoint removed in minimal mode.
+    raise HTTPException(status_code=404, detail="CSV import disabled in minimal deployment")
 
 
 @app.get("/api/fixtures/today")
 def get_today_fixtures():
     return get_fixtures_by_date(date.today().isoformat())
+
+
+@app.get("/api/daily/matches")
+def api_daily_matches(refresh: bool = False, match_date: Optional[str] = None):
+    """Return matches for a date, fetching providers when the DB is empty."""
+    target_date = match_date or date.today().isoformat()
+    now = datetime.utcnow()
+    cache = _daily_matches_cache.setdefault(target_date, {"ts": None, "data": None})
+
+    stale = (
+        refresh
+        or not cache["ts"]
+        or (now - cache["ts"]).total_seconds() > 1800
+    )
+    if stale:
+        conn = get_db()
+        data = _load_daily_matches(conn, target_date)
+        if refresh or not data:
+            fetch_fixtures_for_date(target_date, force_refresh=refresh)
+            data = _load_daily_matches(conn, target_date)
+        cache["data"] = data
+        cache["ts"] = now
+
+    fallback_date = None
+    if not cache["data"] and target_date == date.today().isoformat():
+        conn = get_db()
+        fallback_date = _latest_date_with_matches(conn)
+        if fallback_date and fallback_date != target_date:
+            fb_cache = _daily_matches_cache.setdefault(fallback_date, {"ts": None, "data": None})
+            if refresh or not fb_cache["data"]:
+                fetch_fixtures_for_date(fallback_date, force_refresh=False)
+                fb_cache["data"] = _load_daily_matches(conn, fallback_date)
+                fb_cache["ts"] = now
+            cache["data"] = fb_cache["data"]
+            cache["ts"] = fb_cache["ts"]
+
+    return {
+        "date": target_date,
+        "fallback_date": fallback_date if fallback_date and fallback_date != target_date else None,
+        "cached_at": cache["ts"].isoformat() if cache["ts"] else None,
+        "matches": cache["data"] or [],
+    }
+
+
+@app.get("/api/daily/odds")
+def api_daily_odds(refresh: bool = False):
+    """Return latest odds snapshots for today's matches. If refresh=True, fetch odds from providers once and store."""
+    conn = get_db()
+    if refresh:
+        # Attempt to fetch and store odds for tracked leagues
+        try:
+            fetch_and_store_odds(conn)
+            from datetime import datetime
+            _provider_status["last_odds_refresh"] = datetime.utcnow().isoformat()
+        except Exception as e:
+            logger.error("Odds fetch failed: %s", e)
+
+    # Build a map of match_id -> markets
+    rows = conn.execute("SELECT id FROM matches WHERE date = ?", (date.today().isoformat(),)).fetchall()
+    result = {}
+    for r in rows:
+        match_id = r[0]
+        # markets: 1X2 and O/U 2.5
+        home = get_latest_odds(conn, match_id, "1X2", "home")
+        draw = get_latest_odds(conn, match_id, "1X2", "draw")
+        away = get_latest_odds(conn, match_id, "1X2", "away")
+        over = get_latest_odds(conn, match_id, "O/U 2.5", "over")
+        under = get_latest_odds(conn, match_id, "O/U 2.5", "under")
+        result[match_id] = {
+            "home": home["odds"] if home else None,
+            "draw": draw["odds"] if draw else None,
+            "away": away["odds"] if away else None,
+            "over": over["odds"] if over else None,
+            "under": under["odds"] if under else None,
+        }
+    return {"date": date.today().isoformat(), "odds": result}
+
+
+@app.get("/api/debug/provider-status")
+def api_provider_status(refresh: int = 0):
+    """Return provider connectivity and cache status.
+
+    If `refresh=1` perform a lightweight connectivity test against
+    API-Football using the API key present in the process environment.
+    This does NOT trigger any full fixtures/odds refreshes.
+    """
+    import os
+    from datetime import datetime
+
+    conn = get_db()
+    # cached matches for today
+    try:
+        matches_count = conn.execute("SELECT COUNT(*) FROM matches WHERE date = ?", (date.today().isoformat(),)).fetchone()[0]
+    except Exception:
+        matches_count = 0
+    try:
+        odds_count = conn.execute("SELECT COUNT(*) FROM odds_snapshots WHERE date(recorded_at) = ?", (date.today().isoformat(),)).fetchone()[0]
+    except Exception:
+        odds_count = 0
+
+    status = dict(_provider_status)
+    status.update({"cached_matches": matches_count, "cached_odds": odds_count})
+
+    # If no refresh requested, return cached status quickly
+    if not refresh:
+        # include last_check if present
+        if "last_check" not in status:
+            status["last_check"] = None
+        # map last_refresh to last_matches_refresh for compatibility
+        status["last_refresh"] = status.get("last_matches_refresh")
+        return status
+
+    # Perform a quick connectivity re-check using any API key present in the environment
+    api_key = os.environ.get("API_FOOTBALL_KEY") or os.environ.get("APIFOOTBALL_API_KEY")
+    checked_at = datetime.utcnow().isoformat()
+    status["last_check"] = checked_at
+
+    if not api_key:
+        status.update({"connected": False, "error": "no API key found in environment (API_FOOTBALL_KEY or APIFOOTBALL_API_KEY)", "last_refresh": status.get("last_matches_refresh")})
+        # update provider cache
+        _provider_status["connected"] = False
+        _provider_status["last_check"] = checked_at
+        return status
+
+    # Use the lightweight client to call /status. Do not touch cache or stored data.
+    from src.data.api_client import APIFootballClient
+
+    try:
+        client = APIFootballClient(api_key=api_key)
+        # call status endpoint directly via session to avoid cache reads/writes
+        url = f"{client._base_url}/status"
+        resp = client._session.get(url, headers=client._build_headers(), timeout=10)
+        body = None
+        try:
+            body = resp.json()
+        except Exception:
+            body = resp.text[:1024]
+
+        if resp.status_code == 200:
+            errors = None
+            try:
+                probe = client._session.get(
+                    f"{client._base_url}/fixtures",
+                    headers=client._build_headers(),
+                    params={"date": date.today().isoformat()},
+                    timeout=10,
+                )
+                probe_body = probe.json()
+                errors = probe_body.get("errors")
+            except Exception as exc:
+                errors = {"probe": str(exc)}
+
+            if errors:
+                err = json.dumps(errors) if not isinstance(errors, str) else errors
+                status.update({
+                    "connected": False,
+                    "error": f"API key rejected for fixtures: {err}",
+                    "last_refresh": status.get("last_matches_refresh"),
+                })
+                _provider_status["connected"] = False
+                _provider_status["last_check"] = checked_at
+            else:
+                status.update({"connected": True, "error": None, "last_refresh": status.get("last_matches_refresh")})
+                _provider_status["connected"] = True
+                _provider_status["last_check"] = checked_at
+        else:
+            # API returned non-200; capture provider error details if available
+            err = None
+            if isinstance(body, dict) and body.get("errors"):
+                err = json.dumps(body.get("errors"))
+            else:
+                err = f"HTTP {resp.status_code}: {str(body)[:400]}"
+            status.update({"connected": False, "error": err, "last_refresh": status.get("last_matches_refresh")})
+            _provider_status["connected"] = False
+            _provider_status["last_check"] = checked_at
+    except Exception as exc:
+        status.update({"connected": False, "error": str(exc), "last_refresh": status.get("last_matches_refresh")})
+        _provider_status["connected"] = False
+        _provider_status["last_check"] = checked_at
+
+    return status
+
+
+@app.on_event("startup")
+def startup_check_providers():
+    """Validate API-Football connectivity at startup and start background refresher."""
+    from threading import Thread
+    from datetime import datetime
+
+    client_connected = False
+    if APIFOOTBALL_API_KEY:
+        try:
+            ac = APIFootballFetcher()
+            client = getattr(ac, '_client', None)
+            session = getattr(client, '_session', None)
+            base = getattr(client, '_base_url', None)
+            if session and base:
+                url = f"{base}/status"
+                resp = session.get(url, headers=client._build_headers(), timeout=10)
+                client_connected = resp.status_code == 200
+                logger.info("API-Football startup status=%s", resp.status_code)
+                remaining = resp.headers.get("x-ratelimit-remaining") or resp.headers.get("x-request-count") or resp.headers.get("x-ratelimit-limit")
+                logger.info("API-Football quota headers: remaining=%s", remaining)
+        except Exception as exc:
+            logger.warning("API-Football startup connectivity check failed: %s", exc)
+
+    _provider_status["connected"] = bool(client_connected)
+
+    def _refresher_loop():
+        import time
+        from datetime import date
+        conn = get_db()
+        while True:
+            try:
+                today = date.today().isoformat()
+                logger.info("Background refresher: fetching fixtures and odds for %s", today)
+                try:
+                    fetch_fixtures_for_date(today, force_refresh=True)
+                    _provider_status["last_matches_refresh"] = datetime.utcnow().isoformat()
+                except Exception as e:
+                    logger.warning("Background fixtures refresh failed: %s", e)
+                try:
+                    fetch_and_store_odds(conn)
+                    _provider_status["last_odds_refresh"] = datetime.utcnow().isoformat()
+                except Exception as e:
+                    logger.warning("Background odds refresh failed: %s", e)
+            except Exception as e:
+                logger.warning("Background refresher loop error: %s", e)
+            # Sleep 30 minutes
+            time.sleep(60 * 30)
+
+    # Start background thread as daemon
+    try:
+        t = Thread(target=_refresher_loop, daemon=True)
+        t.start()
+        logger.info("Background refresher thread started")
+    except Exception as e:
+        logger.warning("Could not start background refresher: %s", e)
+
+
+@app.post("/api/daily/predict")
+def api_daily_predict(match_date: Optional[str] = None):
+    """Generate missing predictions for all matches on a date."""
+    target_date = match_date or date.today().isoformat()
+    conn = get_db()
+    created = _ensure_predictions_for_date(conn, target_date)
+    return {"date": target_date, "predictions_created": created}
+
+
+@app.get("/api/daily/predictions")
+def api_daily_get_predictions():
+    """Return stored predictions for today."""
+    conn = get_db()
+    preds = get_predictions_for_date(conn, date.today().isoformat())
+    return {"date": date.today().isoformat(), "predictions": preds}
+
+
+@app.get("/api/daily/results")
+def api_daily_get_results():
+    """Return today's recorded results from `daily_results`."""
+    conn = get_db()
+    rows = conn.execute("SELECT match_id, actual_home_goals, actual_away_goals, predictions_json, hit, recorded_at FROM daily_results WHERE DATE(recorded_at) = ? ORDER BY recorded_at DESC", (date.today().isoformat(),)).fetchall()
+    out = []
+    for r in rows:
+        preds = {}
+        try:
+            preds = json.loads(r[3]) if r[3] else {}
+        except Exception:
+            preds = {}
+        out.append({"match_id": r[0], "home_goals": r[1], "away_goals": r[2], "predictions": preds, "hit": bool(r[4]), "recorded_at": r[5]})
+
+    # Summary: total predictions recorded today and accuracy
+    perf = get_performance_summary(conn, date.today().isoformat())
+    summary = {"total_recorded": perf.get('total', 0), "correct": perf.get('hits', 0), "accuracy_pct": perf.get('accuracy', 0.0)}
+    return {"date": date.today().isoformat(), "results": out, "summary": summary}
+
+
+@app.get("/api/daily/opportunities")
+def api_daily_opportunities(edge_threshold: float = 0.05, ev_threshold: float = 0.0, min_odds: float = 1.2, max_odds: float = 10.0):
+    """Return simple opportunities based on latest predictions and odds."""
+    conn = get_db()
+    # Load today's predictions (latest per match)
+    preds = get_predictions_for_date(conn, date.today().isoformat())
+    opps = []
+    for p in preds:
+        match_id = p["match_id"]
+        predictions = p["predictions"]
+        # get odds
+        odds = {
+            "home": get_latest_odds(conn, match_id, "1X2", "home")
+        }
+        home_od = odds["home"]["odds"] if odds["home"] else None
+        # For each market of interest compute edge
+        markets = []
+        if predictions.get("home_win") and home_od:
+            implied = 1.0 / home_od if home_od and home_od > 0 else None
+            edge = (predictions["home_win"]/100.0 - implied) if implied is not None else None
+            ev = edge * home_od if edge is not None else None
+            if edge is not None and edge >= edge_threshold and home_od >= min_odds and home_od <= max_odds:
+                markets.append({"market": "Home Win", "edge": round(edge,3), "ev": round(ev,3) if ev is not None else None, "odds": home_od})
+        if markets:
+            opps.append({"match_id": match_id, "markets": markets})
+    return {"date": date.today().isoformat(), "opportunities": opps}
+
+
+@app.post("/api/daily/finalize-match")
+def api_daily_finalize(match_id: str, home_goals: int, away_goals: int):
+    """Record final score for a match and compute hit/miss against stored predictions."""
+    conn = get_db()
+    # find latest prediction for match
+    preds = conn.execute("SELECT predictions_json FROM daily_predictions WHERE match_id = ? ORDER BY generated_at DESC LIMIT 1", (match_id,)).fetchone()
+    predictions = {}
+    if preds and preds[0]:
+        try:
+            predictions = json.loads(preds[0])
+        except Exception:
+            predictions = {}
+
+    # simple hit: check if predicted winner matches actual
+    actual = 'draw' if home_goals == away_goals else ('home' if home_goals > away_goals else 'away')
+    predicted_winner = None
+    if predictions:
+        hw = predictions.get('home_win')
+        dw = predictions.get('draw')
+        aw = predictions.get('away_win')
+        if hw is not None and dw is not None and aw is not None:
+            # choose max
+            maxv = max(hw, dw, aw)
+            if maxv == hw:
+                predicted_winner = 'home'
+            elif maxv == aw:
+                predicted_winner = 'away'
+            else:
+                predicted_winner = 'draw'
+
+    hit = (predicted_winner == actual)
+    insert_result(conn, match_id, home_goals, away_goals, predictions, hit)
+    # update matches table
+    conn.execute("UPDATE matches SET status = 'FT', home_goals = ?, away_goals = ? WHERE id = ?", (home_goals, away_goals, match_id))
+    conn.commit()
+
+    perf = get_performance_summary(conn, date.today().isoformat())
+    return {"match_id": match_id, "hit": bool(hit), "performance": perf}
+
+
+@app.get("/api/daily/performance")
+def api_daily_performance(days: int = 30):
+    """Return performance summary for recent days and overall."""
+    from datetime import timedelta
+
+    conn = get_db()
+    today = date.today()
+    series = []
+    for i in range(days):
+        d = (today - timedelta(days=i)).isoformat()
+        perf = get_performance_summary(conn, d)
+        perf["date"] = d
+        series.append(perf)
+
+    overall = get_performance_summary(conn, None)
+    return {"overall": overall, "series": series}
 
 
 @app.get("/api/analysis/match/{fixture_id}")
@@ -1187,12 +991,12 @@ def _fetch_event_statistics(event_id: str) -> dict:
     """Fetch match statistics (corners, cards) from SofaScore for a finished event."""
     url = f"https://api.sofascore.com/api/v1/event/{event_id}/statistics"
     req = urllib.request.Request(url, headers={
-        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15",
-        "Accept": "*/*",
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
+        "Accept": "application/json",
+        "Referer": "https://www.sofascore.com/",
     })
     try:
-        ctx = ssl.create_default_context()
-        resp = urllib.request.urlopen(req, timeout=15, context=ctx)
+        resp = urllib.request.urlopen(req, timeout=15)
         data = json.loads(resp.read())
         statistics = data.get("statistics", [])
 
@@ -1280,27 +1084,20 @@ def _evaluate_prediction(pick: dict, home_name: str, away_name: str, home_goals:
     elif market == "Under 3.5 Goals": result = total_goals < 3.5
     elif market == "Over 4.5 Goals": result = total_goals > 4.5
     elif market == "Under 4.5 Goals": result = total_goals < 4.5
-    elif market == "BTTS - Yes": result = home_goals > 0 and away_goals > 0
-    elif market == "BTTS - No": result = not (home_goals > 0 and away_goals > 0)
 
-    # ── Advanced Goals ──
-    for g in range(7):
-        if market == f"Exact Total Goals: {g}": result = total_goals == g
-    if market == "Goal Range 0-1": result = total_goals <= 1
-    elif market == "Goal Range 2-3": result = 2 <= total_goals <= 3
-    elif market == "Goal Range 4+": result = total_goals >= 4
-    elif market == "Odd/Even Total Goals: Odd": result = total_goals % 2 == 1
-    elif market == "Odd/Even Total Goals: Even": result = total_goals % 2 == 0
+    # ── BTTS ──
+    elif market == "BTTS - Yes" and "FH" not in market: result = home_goals > 0 and away_goals > 0
+    elif market == "BTTS - No" and "FH" not in market: result = not (home_goals > 0 and away_goals > 0)
 
     # ── Result & Double Chance ──
-    if market == "Home Win": result = home_goals > away_goals
-    elif market == "Draw" and "FH" not in market and "SH" not in market: result = home_goals == away_goals
-    elif market == "Away Win": result = away_goals > home_goals
-    elif "1X" in market and "FH" not in market and "SH" not in market and "Corner" not in market and "Card" not in market:
+    elif market == "Home Win" and "FH" not in market: result = home_goals > away_goals
+    elif market == "Draw" and "FH" not in market: result = home_goals == away_goals
+    elif market == "Away Win" and "FH" not in market: result = away_goals > home_goals
+    elif "1X" in market and "FH" not in market and "Corner" not in market and "Card" not in market:
         result = home_goals >= away_goals
-    elif "X2" in market and "FH" not in market and "SH" not in market and "Corner" not in market and "Card" not in market:
+    elif "X2" in market and "FH" not in market and "Corner" not in market and "Card" not in market:
         result = away_goals >= home_goals
-    elif "12 " in market and "FH" not in market and "SH" not in market and "Corner" not in market and "Card" not in market:
+    elif "12 " in market and "FH" not in market and "Corner" not in market and "Card" not in market:
         result = home_goals != away_goals
 
     # ── First Half Markets ──
@@ -1315,49 +1112,33 @@ def _evaluate_prediction(pick: dict, home_name: str, away_name: str, home_goals:
         elif market == "FH Home Win": result = fh_home_goals > fh_away_goals
         elif market == "FH Draw": result = fh_home_goals == fh_away_goals
         elif market == "FH Away Win": result = fh_away_goals > fh_home_goals
+        elif market == "FH 1X (Home or Draw)": result = fh_home_goals >= fh_away_goals
+        elif market == "FH X2 (Away or Draw)": result = fh_away_goals >= fh_home_goals
         elif "FH 1X" in market: result = fh_home_goals >= fh_away_goals
         elif "FH X2" in market: result = fh_away_goals >= fh_home_goals
-        for t in [0, 1]:
-            if market == f"FH {home_name} Over {t}.5 Goals": result = fh_home_goals > t
-            elif market == f"FH {home_name} Under {t}.5 Goals": result = fh_home_goals <= t
-            elif market == f"FH {away_name} Over {t}.5 Goals": result = fh_away_goals > t
-            elif market == f"FH {away_name} Under {t}.5 Goals": result = fh_away_goals <= t
-
-    # ── Second Half Markets ──
-    if fh_home_goals is not None and fh_away_goals is not None:
-        sh_home = home_goals - fh_home_goals
-        sh_away = away_goals - fh_away_goals
-        sh_total = sh_home + sh_away
-        fh_total_eval = fh_home_goals + fh_away_goals
-        if market == "SH Home Win": result = sh_home > sh_away
-        elif market == "SH Draw": result = sh_home == sh_away
-        elif market == "SH Away Win": result = sh_away > sh_home
-        elif "SH 1X" in market: result = sh_home >= sh_away
-        elif "SH X2" in market: result = sh_away >= sh_home
-        elif "SH 12" in market: result = sh_home != sh_away
-        elif market == "SH BTTS - Yes": result = sh_home > 0 and sh_away > 0
-        elif market == "SH BTTS - No": result = not (sh_home > 0 and sh_away > 0)
-        for t in [0, 1, 2]:
-            if market == f"SH Over {t}.5 Goals": result = sh_total > t
-            elif market == f"SH Under {t}.5 Goals": result = sh_total <= t
-        for t in [0, 1]:
-            if market == f"SH {home_name} Over {t}.5 Goals": result = sh_home > t
-            elif market == f"SH {home_name} Under {t}.5 Goals": result = sh_home <= t
-            elif market == f"SH {away_name} Over {t}.5 Goals": result = sh_away > t
-            elif market == f"SH {away_name} Under {t}.5 Goals": result = sh_away <= t
-        if market == f"SH {home_name} to Score": result = sh_home >= 1
-        elif market == f"SH {away_name} to Score": result = sh_away >= 1
-        elif market == "SH No Goal": result = sh_total == 0
-        # Half comparisons & cross-half markets
-        if market == "Half with Most Goals: 1st Half": result = fh_total_eval > sh_total
-        elif market == "Half with Most Goals: 2nd Half": result = sh_total > fh_total_eval
-        elif market == "Half with Most Goals: Equal": result = fh_total_eval == sh_total
-        if market == "Goal in Both Halves - Yes": result = fh_total_eval >= 1 and sh_total >= 1
-        elif market == "Goal in Both Halves - No": result = fh_total_eval == 0 or sh_total == 0
+        elif f"FH {home_name} Over" in market:
+            for t in [0, 1]:
+                if f"Over {t}.5" in market: result = fh_home_goals > t
+        elif f"FH {home_name} Under" in market:
+            for t in [0, 1, 2]:
+                if f"Under {t}.5" in market: result = fh_home_goals <= t
+        elif f"FH {away_name} Over" in market:
+            for t in [0, 1]:
+                if f"Over {t}.5" in market: result = fh_away_goals > t
+        elif f"FH {away_name} Under" in market:
+            for t in [0, 1, 2]:
+                if f"Under {t}.5" in market: result = fh_away_goals <= t
 
     # ── Corners ──
-    if "Corner" in market and "FH" not in market and "SH" not in market and "Half" not in market:
-        if "Over" in market or "Under" in market:
+    if "Corner" in market and "FH" not in market:
+        if "Handicap" in market:
+            if home_corners is not None and away_corners is not None:
+                for hcap in [1, 2, 3, 4]:
+                    if market == f"{home_name} Corner Handicap (-{hcap}.5)": result = (home_corners - away_corners) > hcap
+                    elif market == f"{home_name} Corner Handicap (+{hcap}.5)": result = (home_corners - away_corners) > -hcap - 1
+                    elif market == f"{away_name} Corner Handicap (-{hcap}.5)": result = (away_corners - home_corners) > hcap
+                    elif market == f"{away_name} Corner Handicap (+{hcap}.5)": result = (away_corners - home_corners) > -hcap - 1
+        elif "Over" in market or "Under" in market:
             if home_name in market and home_corners is not None:
                 for c in range(2, 10):
                     if market == f"{home_name} Over {c}.5 Corners": result = home_corners > c
@@ -1379,8 +1160,15 @@ def _evaluate_prediction(pick: dict, home_name: str, away_name: str, home_goals:
                 result = away_corners >= home_corners
 
     # ── Cards ──
-    if "Card" in market and "FH" not in market and "SH" not in market and "Half" not in market:
-        if "Over" in market or "Under" in market:
+    if "Card" in market and "FH" not in market:
+        if "Handicap" in market:
+            if home_cards is not None and away_cards is not None:
+                for hcap in [1, 2, 3]:
+                    if market == f"{home_name} Card Handicap (-{hcap}.5)": result = (home_cards - away_cards) > hcap
+                    elif market == f"{home_name} Card Handicap (+{hcap}.5)": result = (home_cards - away_cards) > -hcap - 1
+                    elif market == f"{away_name} Card Handicap (-{hcap}.5)": result = (away_cards - home_cards) > hcap
+                    elif market == f"{away_name} Card Handicap (+{hcap}.5)": result = (away_cards - home_cards) > -hcap - 1
+        elif "Over" in market or "Under" in market:
             if home_name in market and home_cards is not None:
                 for c in range(0, 6):
                     if market == f"{home_name} Over {c}.5 Cards": result = home_cards > c
@@ -1401,118 +1189,28 @@ def _evaluate_prediction(pick: dict, home_name: str, away_name: str, home_goals:
                 result = away_cards >= home_cards
 
     # ── Team Goals ──
-    if "Over" in market and "Goals" in market and "FH" not in market and "SH" not in market:
+    if "Over" in market and "Goals" in market and "FH" not in market:
         for t in [0, 1, 2, 3]:
             if market == f"{home_name} Over {t}.5 Goals": result = home_goals > t
             elif market == f"{away_name} Over {t}.5 Goals": result = away_goals > t
-    elif "Under" in market and "Goals" in market and "FH" not in market and "SH" not in market:
+    elif "Under" in market and "Goals" in market and "FH" not in market:
         for t in [0, 1, 2, 3]:
             if market == f"{home_name} Under {t}.5 Goals": result = home_goals <= t
             elif market == f"{away_name} Under {t}.5 Goals": result = away_goals <= t
 
-    # ── Correct Score ──
-    if market.startswith("CS ") and market != "CS Other":
-        parts = market[3:].split("-")
-        if len(parts) == 2:
-            try:
-                cs_h, cs_a = int(parts[0]), int(parts[1])
-                result = home_goals == cs_h and away_goals == cs_a
-            except ValueError:
-                pass
-    elif market == "CS Other":
-        result = home_goals >= 5 or away_goals >= 5
-
-    # ── Winning Margin ──
-    if market == f"{home_name} Win by 1": result = home_goals - away_goals == 1
-    elif market == f"{home_name} Win by 2": result = home_goals - away_goals == 2
-    elif market == f"{home_name} Win by 3+": result = home_goals - away_goals >= 3
-    elif market == f"{away_name} Win by 1": result = away_goals - home_goals == 1
-    elif market == f"{away_name} Win by 2": result = away_goals - home_goals == 2
-    elif market == f"{away_name} Win by 3+": result = away_goals - home_goals >= 3
-    elif market == "Exact Draw 0-0": result = home_goals == 0 and away_goals == 0
-
-    # ── Clean Sheet & Fail to Score ──
-    if market == f"{home_name} Clean Sheet": result = away_goals == 0
-    elif market == f"{away_name} Clean Sheet": result = home_goals == 0
-    elif market == f"{home_name} Fails to Score": result = home_goals == 0
-    elif market == f"{away_name} Fails to Score": result = away_goals == 0
-
-    # ── Exact Team Goals ──
-    for n in range(4):
-        if market == f"{home_name} Exact {n} Goals": result = home_goals == n
-        elif market == f"{away_name} Exact {n} Goals": result = away_goals == n
-    if market == f"{home_name} Exact 3+ Goals": result = home_goals >= 3
-    elif market == f"{away_name} Exact 3+ Goals": result = away_goals >= 3
-
-    # ── Result + Goals Combos ──
-    if market == "Home Win & Over 1.5": result = home_goals > away_goals and total_goals > 1
-    elif market == "Home Win & Over 2.5": result = home_goals > away_goals and total_goals > 2
-    elif market == "Home Win & Under 2.5": result = home_goals > away_goals and total_goals <= 2
-    elif market == "Away Win & Over 1.5": result = away_goals > home_goals and total_goals > 1
-    elif market == "Away Win & Over 2.5": result = away_goals > home_goals and total_goals > 2
-    elif market == "Away Win & Under 2.5": result = away_goals > home_goals and total_goals <= 2
-    elif market == "Draw & Over 2.5": result = home_goals == away_goals and total_goals > 2
-    elif market == "Draw & Under 2.5": result = home_goals == away_goals and total_goals <= 2
-
-    # ── Result + BTTS Combos ──
-    btts_actual = home_goals >= 1 and away_goals >= 1
-    if market == "Home Win & BTTS": result = home_goals > away_goals and btts_actual
-    elif market == "Away Win & BTTS": result = away_goals > home_goals and btts_actual
-    elif market == "Draw & BTTS": result = home_goals == away_goals and btts_actual
-
-    # ── BTTS + Goals Combos ──
-    if market == "BTTS & Over 2.5": result = btts_actual and total_goals > 2
-    elif market == "BTTS & Under 2.5": result = btts_actual and total_goals <= 2
-
-    # ── Score in Both Halves ──
-    if fh_home_goals is not None and fh_away_goals is not None:
-        sh_home_eval = home_goals - fh_home_goals
-        sh_away_eval = away_goals - fh_away_goals
-        if market == f"{home_name} Score in Both Halves":
-            result = fh_home_goals >= 1 and sh_home_eval >= 1
-        elif market == f"{away_name} Score in Both Halves":
-            result = fh_away_goals >= 1 and sh_away_eval >= 1
-
-    # ── Asian Handicap ──
-    import re
-    ah_match = re.match(r'AH (.+?) ([+-]\d+\.5)', market)
-    if ah_match:
-        team_name = ah_match.group(1)
-        spread = float(ah_match.group(2))
-        if team_name == home_name:
-            adjusted_diff = home_goals + spread - away_goals
-        elif team_name == away_name:
-            adjusted_diff = away_goals + spread - home_goals
-        else:
-            adjusted_diff = None
-        if adjusted_diff is not None:
-            # Positive spread (+X): team gets advantage
-            # Negative spread (-X): team gives advantage
-            result = adjusted_diff > 0
-
-    # ── European Handicap ──
-    eh_match = re.match(r'EH (.+?) (-\d+) \((Win|Draw|Lose)\)', market)
-    if eh_match:
-        team_name = eh_match.group(1)
-        spread = int(eh_match.group(2))
-        outcome = eh_match.group(3)
-        if team_name == home_name:
-            adj_home = home_goals + spread
-            adj_away = away_goals
-        elif team_name == away_name:
-            adj_home = home_goals
-            adj_away = away_goals + spread
-        else:
-            adj_home = adj_away = None
-        if adj_home is not None:
-            if team_name == home_name:
-                if outcome == 'Win': result = adj_home > adj_away
-                elif outcome == 'Draw': result = adj_home == adj_away
-                elif outcome == 'Lose': result = adj_home < adj_away
-            else:
-                if outcome == 'Win': result = adj_away > adj_home
-                elif outcome == 'Draw': result = adj_away == adj_home
-                elif outcome == 'Lose': result = adj_away < adj_home
+    # ── Goal Handicaps ──
+    if "Handicap" in market and "Corner" not in market and "Card" not in market:
+        for hcap in [1, 2, 3, 4]:
+            if market == f"{home_name} Handicap (-{hcap}.5)": result = (home_goals - away_goals) > hcap
+            elif market == f"{home_name} Handicap (+{hcap}.5)": result = (home_goals - away_goals) > -hcap - 1
+            elif market == f"{away_name} Handicap (-{hcap}.5)": result = (away_goals - home_goals) > hcap
+            elif market == f"{away_name} Handicap (+{hcap}.5)": result = (away_goals - home_goals) > -hcap - 1
+    elif "AH " in market:
+        for hcap in [0.5, 1.5, 2.5]:
+            if market == f"{home_name} AH -{hcap}": result = home_goals - away_goals > hcap
+            elif market == f"{home_name} AH +{hcap}": result = home_goals - away_goals > -hcap
+            elif market == f"{away_name} AH -{hcap}": result = away_goals - home_goals > hcap
+            elif market == f"{away_name} AH +{hcap}": result = away_goals - home_goals > -hcap
 
     return {
         **pick,
@@ -1537,7 +1235,6 @@ def get_results_verification(date_str: str):
 
     # ── Phase 1: Build raw results per match ────────────────────
     raw_results = []
-    seen_ids = set()
 
     for ev in events:
         status = ev.get("status", {})
@@ -1545,16 +1242,6 @@ def get_results_verification(date_str: str):
             continue
 
         fixture = _sofascore_to_fixture(ev)
-
-        if fixture["date"] != date_str or fixture["id"] in seen_ids:
-            continue
-
-        seen_ids.add(fixture["id"])
-
-        # Skip extra-time / penalty matches
-        if fixture.get("is_extra_time", False):
-            continue
-
         home_goals = fixture.get("home_goals")
         away_goals = fixture.get("away_goals")
 
@@ -1566,49 +1253,30 @@ def get_results_verification(date_str: str):
         league_name = fixture["league"]["name"]
         event_id = fixture["id"]
 
+        # Fetch actual match statistics (corners, cards)
+        # Extract newly added FH goals
         fh_home_goals = fixture.get("fh_home_goals")
         fh_away_goals = fixture.get("fh_away_goals")
+
+        # Fetch actual match statistics (corners, cards)
         stats = _fetch_event_statistics(event_id)
         
         # Regenerate predictions for this match
         try:
-            analysis = _compute_match_analysis(home_name, away_name, league_name, shuffle_tiers=False)
-            tiers = analysis.get("tiers", [])
+            analysis = _compute_match_analysis(home_name, away_name, league_name)
+            top_picks = analysis.get("top_picks", [])
         except Exception as e:
             logger.warning(f"Could not compute analysis for {home_name} vs {away_name}: {e}")
             continue
 
-        # Evaluate each pick within its tier
-        evaluated_tiers = []
-        all_evaluated_picks = []
-
-        for tier in tiers:
-            tier_picks_evaluated = []
-            for pick in tier.get("picks", []):
-                evaluated = _evaluate_prediction(pick, home_name, away_name, home_goals, away_goals, fh_home_goals, fh_away_goals, stats)
-                evaluated["isSettled"] = evaluated["result"] is not None
-                evaluated["isValidForEvaluation"] = evaluated["result"] is not None
-                evaluated["tier"] = tier["tier"]
-                tier_picks_evaluated.append(evaluated)
-                all_evaluated_picks.append(evaluated)
-
-            settled = [p for p in tier_picks_evaluated if p["isSettled"]]
-            correct = sum(1 for p in settled if p["result"] is True)
-            wrong = sum(1 for p in settled if p["result"] is False)
-
-            evaluated_tiers.append({
-                "tier": tier["tier"],
-                "label": tier["label"],
-                "rank_range": tier["rank_range"],
-                "picks": tier_picks_evaluated,
-                "summary": {
-                    "correct": correct,
-                    "wrong": wrong,
-                    "settled": len(settled),
-                    "unsettled": len(tier_picks_evaluated) - len(settled),
-                    "accuracy": round(correct / len(settled) * 100, 1) if len(settled) > 0 else 0,
-                },
-            })
+        # Evaluate each pick and tag settlement status
+        evaluated_picks = []
+        for pick in top_picks:
+            evaluated = _evaluate_prediction(pick, home_name, away_name, home_goals, away_goals, fh_home_goals, fh_away_goals, stats)
+            # Add settlement fields
+            evaluated["isSettled"] = evaluated["result"] is not None
+            evaluated["isValidForEvaluation"] = evaluated["result"] is not None
+            evaluated_picks.append(evaluated)
 
         raw_results.append({
             "fixture": fixture,
@@ -1624,67 +1292,8 @@ def get_results_verification(date_str: str):
                 "yellow_cards": stats.get("yellow_cards"),
                 "red_cards": stats.get("red_cards"),
             },
-            "tiers": evaluated_tiers,
-            "picks": all_evaluated_picks,
+            "picks": evaluated_picks,
         })
-
-        # ── Log ALL markets (not just tiered picks) for unbiased calibration ──
-        # This is critical: calibration quality depends on the full probability
-        # distribution, not just the top-36 filtered picks.
-        try:
-            from src.db.prediction_logger import log_predictions
-            from src.db.database import get_db
-            db = get_db()
-
-            # Evaluate ALL markets from full_analysis
-            full_analysis = analysis.get("full_analysis", {})
-            all_markets_evaluated = []
-            for section_name, section_markets in full_analysis.items():
-                for market_item in section_markets:
-                    evaluated_full = _evaluate_prediction(
-                        market_item, home_name, away_name,
-                        home_goals, away_goals, fh_home_goals, fh_away_goals, stats
-                    )
-                    # Check if this market was in a tier
-                    tier_num = None
-                    for ep in all_evaluated_picks:
-                        if ep.get("market") == market_item.get("market"):
-                            tier_num = ep.get("tier")
-                            break
-                    evaluated_full["tier"] = tier_num
-                    all_markets_evaluated.append(evaluated_full)
-
-            log_predictions(
-                db, event_id, date_str, home_name, away_name, league_name,
-                all_markets_evaluated,
-            )
-        except Exception as log_err:
-            logger.warning(f"Prediction logging failed for {event_id}: {log_err}")
-
-        # ── Phase 1.5: LIVE PIPELINE — Feed result back into team state ──
-        # This is what makes the system adaptive: each finished match
-        # updates ELO, rolling averages, and form metrics.
-        try:
-            from src.engine.live_updater import on_match_finished
-            from src.db.database import get_db
-            db = get_db()
-
-            on_match_finished(
-                conn=db,
-                match_id=str(event_id),
-                match_date=date_str,
-                league=league_name,
-                home_team=home_name,
-                away_team=away_name,
-                home_goals=home_goals,
-                away_goals=away_goals,
-                home_corners=stats.get("home_corners"),
-                away_corners=stats.get("away_corners"),
-                home_cards=stats.get("home_cards"),
-                away_cards=stats.get("away_cards"),
-            )
-        except Exception as live_err:
-            logger.warning(f"Live ingestion failed for {event_id}: {live_err}")
 
     # ── Phase 2: League-level quality filter ────────────────────
     # Group by league, exclude leagues with >25% NA matches
@@ -1722,19 +1331,17 @@ def get_results_verification(date_str: str):
     total_settled_picks = 0
     total_na_excluded = 0
 
-    # Per-tier global accumulators
-    tier_global = {t: {"correct": 0, "wrong": 0, "settled": 0} for t in range(1, 11)}
-
     for match in raw_results:
         league = match["league_name"]
         league_excluded = league in excluded_leagues
 
+        # Filter picks: only settled picks count
         settled_picks = [p for p in match["picks"] if p["isSettled"]]
         na_picks = [p for p in match["picks"] if not p["isSettled"]]
 
         if league_excluded:
             total_na_excluded += len(match["picks"])
-            continue
+            continue  # Skip entire league
 
         match_correct = sum(1 for p in settled_picks if p["result"] is True)
         match_wrong = sum(1 for p in settled_picks if p["result"] is False)
@@ -1744,55 +1351,24 @@ def get_results_verification(date_str: str):
         total_settled_picks += len(settled_picks)
         total_na_excluded += len(na_picks)
 
-        # Accumulate per-tier global stats
-        for tier_data in match.get("tiers", []):
-            t = tier_data["tier"]
-            if t in tier_global:
-                tier_global[t]["correct"] += tier_data["summary"]["correct"]
-                tier_global[t]["wrong"] += tier_data["summary"]["wrong"]
-                tier_global[t]["settled"] += tier_data["summary"]["settled"]
-
+        # Match summary uses ONLY settled picks
         clean_results.append({
             "fixture": match["fixture"],
             "actual": match["actual"],
-            "tiers": match.get("tiers", []),
-            "picks": match["picks"],
+            "picks": match["picks"],  # Keep all for display, but tag them
             "summary": {
                 "correct": match_correct,
                 "wrong": match_wrong,
                 "unknown": len(na_picks),
-                "total": len(settled_picks),
+                "total": len(settled_picks),  # Only settled count
             },
         })
 
-    # ── Phase 4: overall summary + per-tier summary ─────────────
+    # ── Phase 4: overall summary using ONLY settled picks ───────
+    # INVARIANT: correct + wrong == total_settled_picks
     accuracy = round(
         (total_correct / total_settled_picks * 100), 1
     ) if total_settled_picks > 0 else 0.0
-
-    tier_summary = []
-    for t in range(1, 11):
-        ts = tier_global[t]
-        tier_acc = round(ts["correct"] / ts["settled"] * 100, 1) if ts["settled"] > 0 else 0
-        tier_summary.append({
-            "tier": t,
-            "label": f"Tier {t}",
-            "correct": ts["correct"],
-            "wrong": ts["wrong"],
-            "settled": ts["settled"],
-            "accuracy": tier_acc,
-        })
-
-    # Tiers remain in sequential order (1 to 6)
-
-    # ── Update daily performance stats ──
-    try:
-        from src.db.prediction_logger import update_daily_performance
-        from src.db.database import get_db
-        db = get_db()
-        update_daily_performance(db, date_str)
-    except Exception as perf_err:
-        logger.warning(f"Daily performance update failed: {perf_err}")
 
     return {
         "date": date_str,
@@ -1802,12 +1378,11 @@ def get_results_verification(date_str: str):
             "total_picks": total_settled_picks,
             "total_correct": total_correct,
             "total_wrong": total_wrong,
-            "total_unknown": 0,
+            "total_unknown": 0,  # Always 0 — NAs are excluded
             "accuracy_pct": accuracy,
             "na_excluded": total_na_excluded,
             "leagues_excluded": len(excluded_leagues),
         },
-        "tier_summary": tier_summary,
         "league_quality": league_quality,
     }
 
@@ -1884,70 +1459,6 @@ def auto_settle_picks():
     return {"settled": settled_count, "remaining": len(unsettled) - settled_count}
 
 
-from pydantic import BaseModel
-class PickCreate(BaseModel):
-    match_id: str
-    market: str
-    selection: str
-    model_prob: float
-    implied_prob: float
-    edge: float
-    odds_at_pick: float
-    confidence: float
-    league_reliability: float
-    grade: str
-    stake_units: float
-
-
-@app.post("/api/picks/place")
-def place_pick(pick: PickCreate):
-    """Place a pick into the tracking portfolio."""
-    conn = get_db()
-    from src.db.picks_repo import insert_pick
-    try:
-        pick_id = insert_pick(conn, pick.dict())
-        return {"status": "ok", "pick_id": pick_id}
-    except Exception as e:
-        logger.error(f"Failed to insert pick: {e}")
-        return {"status": "error", "message": str(e)}
-
-
-class ClvUpdate(BaseModel):
-    pick_id: int
-    closing_odds: float
-
-
-@app.post("/api/picks/update_clv")
-def update_pick_clv(payload: ClvUpdate):
-    """Update a pick with closing odds and calculate CLV."""
-    conn = get_db()
-    from src.db.picks_repo import update_closing_odds
-
-    pick = conn.execute("SELECT odds_at_pick FROM picks WHERE id = ?", (payload.pick_id,)).fetchone()
-    if not pick:
-        return {"status": "error", "message": "Pick not found"}
-
-    entry_odds = pick["odds_at_pick"]
-    closing_odds = payload.closing_odds
-    
-    if closing_odds <= 1.0:
-        return {"status": "error", "message": "Invalid closing odds"}
-
-    entry_implied = 100.0 / entry_odds
-    closing_implied = 100.0 / closing_odds
-    clv_pct = closing_implied - entry_implied
-
-    update_closing_odds(conn, payload.pick_id, closing_odds, round(clv_pct, 2))
-    
-    return {
-        "status": "ok",
-        "pick_id": payload.pick_id,
-        "clv_pct": round(clv_pct, 2),
-        "beat_closing_line": clv_pct > 0
-    }
-
-
-
 @app.get("/api/leagues/profiles")
 def get_league_profiles():
     """Get all league reliability profiles."""
@@ -2000,7 +1511,8 @@ def _evaluate_pick_result(
 # ═══════════════════════════════════════════════════════════════════════
 
 from src.engine.calibration import ProbabilityCalibrator, ConfidenceBucketer
-from src.data.odds_fetcher import TheOddsAPIProvider, get_api_key as get_odds_key, LEAGUE_TO_SPORT
+from src.data.odds_fetcher import fetch_and_store_odds, get_api_key as get_odds_key
+
 
 @app.get("/api/analytics/calibration")
 def get_calibration_report():
@@ -2022,7 +1534,6 @@ def get_confidence_buckets():
     return {"buckets": bucketer.analyze(conn)}
 
 
-
 @app.post("/api/odds/fetch")
 def trigger_odds_fetch():
     """Manually trigger odds fetch from The Odds API."""
@@ -2030,513 +1541,10 @@ def trigger_odds_fetch():
         return {"error": "ODDS_API_KEY not set in .env", "status": "failed"}
 
     conn = get_db()
-    provider = TheOddsAPIProvider(conn)
-    fetched = 0
-    for sport_key in LEAGUE_TO_SPORT.keys():
-        events = provider.fetch_events(sport_key)
-        if events:
-            fetched += 1
-            
+    result = fetch_and_store_odds(conn)
     count = conn.execute("SELECT COUNT(*) FROM odds_snapshots").fetchone()[0]
     return {
         "status": "ok",
-        "leagues_fetched": fetched,
+        "leagues_fetched": result,
         "total_odds_in_db": count,
     }
-
-
-# ═══════════════════════════════════════════════════════════════════════
-# Phase 3 — Calibration, Backtesting & Performance Dashboard
-# ═══════════════════════════════════════════════════════════════════════
-
-from src.db.prediction_logger import (
-    get_calibration_data,
-    get_all_market_types,
-    get_performance_history,
-    get_backtest_summary,
-)
-
-
-@app.get("/api/calibration/status")
-def get_calibration_status():
-    """Overview of calibration readiness per market type.
-
-    Shows how many samples exist and whether isotonic calibration
-    can be reliably applied for each market type.
-    """
-    conn = get_db()
-    return {"market_types": get_all_market_types(conn)}
-
-
-@app.get("/api/calibration/{market_type}")
-def get_market_calibration(market_type: str):
-    """Get per-market-type calibration curve.
-
-    Shows predicted vs actual rates in 5% buckets.
-    This answers: 'When we predict 75%, does it actually hit 75%?'
-    """
-    conn = get_db()
-    return get_calibration_data(conn, market_type)
-
-
-@app.get("/api/backtest/summary")
-def get_backtest(market_type: str = None):
-    """Backtesting summary: accuracy, calibration gap, per-tier breakdown.
-
-    Optional filter by market_type (goals, result, btts, cs, combo, etc.)
-    """
-    conn = get_db()
-    return get_backtest_summary(conn, market_type)
-
-
-@app.get("/api/performance/daily")
-def get_daily_performance(days: int = 30):
-    """Daily performance history for ROI dashboard.
-
-    Shows accuracy, calibration gap, and volume per day.
-    """
-    conn = get_db()
-    history = get_performance_history(conn, days)
-    return {"days": days, "history": history}
-
-
-@app.get("/api/performance/overview")
-def get_performance_overview():
-    """High-level performance overview across all logged predictions.
-
-    Returns overall stats + per-market-type breakdown + trend.
-    """
-    conn = get_db()
-
-    # Overall stats
-    overall = get_backtest_summary(conn)
-
-    # Per market type
-    market_types = get_all_market_types(conn)
-
-    # Per-type calibration gaps
-    type_gaps = []
-    for mt in market_types:
-        cal = get_calibration_data(conn, mt["market_type"], min_samples=20)
-        type_gaps.append({
-            "market_type": mt["market_type"],
-            "samples": mt["total"],
-            "settled": mt["settled"],
-            "hit_rate": mt["hit_rate"],
-            "avg_predicted": mt["avg_predicted"],
-            "calibration_ready": mt["calibration_ready"],
-            "buckets": cal["buckets"],
-        })
-
-    # Recent trend (last 7 days)
-    trend = get_performance_history(conn, 7)
-
-    return {
-        "overall": overall,
-        "market_types": type_gaps,
-        "recent_trend": trend,
-    }
-
-
-# ═══════════════════════════════════════════════════════════════════════
-# Isotonic Calibration Endpoints
-# ═══════════════════════════════════════════════════════════════════════
-
-from src.engine.isotonic_calibrator import get_isotonic_calibrator
-
-
-@app.post("/api/calibration/fit")
-def fit_isotonic_calibration():
-    """Fit (or refit) isotonic calibration models from prediction_log.
-
-    This reads all settled predictions, groups by market type, and fits
-    a monotonic transform that corrects the systematic overconfidence.
-
-    Call this after accumulating enough results (200+ per market type).
-    """
-    conn = get_db()
-    cal = get_isotonic_calibrator(conn)
-    summary = cal.fit_all(conn)
-    return {
-        "status": "ok",
-        "models_fitted": sum(1 for v in summary.values() if v.get("fitted")),
-        "details": summary,
-    }
-
-
-@app.get("/api/calibration/isotonic/status")
-def get_isotonic_status():
-    """Get status of all fitted isotonic calibration models."""
-    conn = get_db()
-    cal = get_isotonic_calibrator(conn)
-    return {"models": cal.get_status()}
-
-
-@app.get("/api/calibration/isotonic/curve/{market_type}")
-def get_isotonic_curve(market_type: str):
-    """Get the calibration transform curve for a market type.
-
-    Shows raw → calibrated mapping at 5% intervals.
-    Use this to visualize how the model's overconfidence is corrected.
-    """
-    conn = get_db()
-    cal = get_isotonic_calibrator(conn)
-    curve = cal.get_calibration_curve(market_type)
-    return {
-        "market_type": market_type,
-        "curve": curve,
-        "has_model": market_type in cal._models,
-    }
-
-
-@app.get("/api/calibration/isotonic/test")
-def test_isotonic_calibration(raw_prob: float = 82.0, market_type: str = "goals"):
-    """Test the isotonic calibrator on a single value.
-
-    Example: /api/calibration/isotonic/test?raw_prob=85&market_type=goals
-    """
-    conn = get_db()
-    cal = get_isotonic_calibrator(conn)
-    calibrated = cal.calibrate(raw_prob, market_type)
-    return {
-        "raw_prob": raw_prob,
-        "calibrated_prob": calibrated,
-        "market_type": market_type,
-        "has_fitted_model": market_type in cal._models,
-        "correction": round(calibrated - raw_prob, 1),
-    }
-
-
-# ═══════════════════════════════════════════════════════════════════════
-# Execution Engine — Market-Constrained Betting Agent
-# ═══════════════════════════════════════════════════════════════════════
-
-from src.engine.execution_engine import (
-    find_executable_bets,
-    generate_simulated_odds,
-    compute_ev,
-    compute_edge,
-    compute_kelly,
-    MIN_ODDS, MAX_ODDS, MIN_CALIBRATED_PROB, MIN_EDGE, MIN_EV,
-    MAX_BETS_PER_MATCH, MAX_BETS_PER_DAY,
-    KELLY_FRACTION, MAX_STAKE_PCT,
-    TRADABLE_MARKETS,
-)
-
-
-@app.get("/api/execution/opportunities/{home}/{away}/{league}")
-def get_execution_opportunities(home: str, away: str, league: str, use_live_odds: bool = False):
-    """Find executable, positive-EV betting opportunities for a match.
-
-    This is the core execution endpoint. It:
-    1. Generates calibrated probabilities for ALL markets
-    2. Fetches real bookmaker odds (or simulates them)
-    3. Computes EV, edge, and Kelly sizing
-    4. Filters down to only tradable, positive-EV opportunities
-    5. Returns ONLY executable bets
-
-    Query params:
-        use_live_odds: if True, fetches from TheOddsAPI (requires ODDS_API_KEY)
-                      if False, uses simulated odds with 5% vig
-    """
-    try:
-        analysis = _compute_match_analysis(home, away, league, shuffle_tiers=False)
-    except Exception as e:
-        return {"error": f"Analysis failed: {str(e)}", "opportunities": []}
-
-    # Get odds
-    if use_live_odds:
-        from src.data.odds_fetcher import fetch_normalized_odds_for_match, SPORT_KEYS, get_api_key
-        if not get_api_key():
-            return {"error": "ODDS_API_KEY not set. Use use_live_odds=false for simulation.", "opportunities": []}
-
-        # Try to find the sport key for this league
-        sport_key = None
-        for sk, lid in SPORT_KEYS.items():
-            if league.lower() in sk.lower():
-                sport_key = sk
-                break
-        if not sport_key:
-            sport_key = "soccer_epl"  # default
-
-        bookmaker_odds = fetch_normalized_odds_for_match(sport_key, home, away)
-    else:
-        bookmaker_odds = generate_simulated_odds(analysis, home, away)
-
-    # Find executable bets
-    opportunities = find_executable_bets(
-        analysis=analysis,
-        bookmaker_odds=bookmaker_odds,
-        home_name=home,
-        away_name=away,
-        league_name=league,
-        match_id=f"{home}_vs_{away}",
-    )
-
-    # Build summary
-    total_markets_scanned = len(bookmaker_odds)
-    total_tradable = sum(1 for o in bookmaker_odds if any(
-        m["market"] == o["market"]
-        for sec in analysis.get("full_analysis", {}).values()
-        for m in sec
-    ))
-
-    return {
-        "match": f"{home} vs {away}",
-        "league": league,
-        "odds_source": "live" if use_live_odds else "simulated",
-        "total_bookmaker_markets": total_markets_scanned,
-        "total_matched_to_model": total_tradable,
-        "opportunities_found": len(opportunities),
-        "opportunities": [bet.to_dict() for bet in opportunities],
-        "filter_summary": {
-            "min_odds": MIN_ODDS,
-            "max_odds": MAX_ODDS,
-            "min_calibrated_prob": MIN_CALIBRATED_PROB,
-            "min_edge": MIN_EDGE,
-            "min_ev": MIN_EV,
-            "max_bets_per_match": MAX_BETS_PER_MATCH,
-            "kelly_fraction": KELLY_FRACTION,
-            "max_stake_pct": MAX_STAKE_PCT,
-        },
-    }
-
-
-@app.get("/api/execution/rules")
-def get_execution_rules():
-    """Return current execution rules and tradable market whitelist."""
-    return {
-        "rules": {
-            "min_odds": MIN_ODDS,
-            "max_odds": MAX_ODDS,
-            "min_calibrated_probability": MIN_CALIBRATED_PROB,
-            "min_edge_pct": MIN_EDGE,
-            "min_ev": MIN_EV,
-            "max_bets_per_match": MAX_BETS_PER_MATCH,
-            "max_bets_per_day": MAX_BETS_PER_DAY,
-            "kelly_fraction": KELLY_FRACTION,
-            "max_stake_pct": MAX_STAKE_PCT,
-        },
-        "tradable_markets": sorted(TRADABLE_MARKETS),
-        "excluded_market_types": ["cs", "cards", "corners", "combo"],
-        "focus_market_types": ["goals", "btts", "result", "handicap", "half"],
-    }
-
-
-@app.get("/api/execution/simulate")
-def simulate_execution(
-    calibrated_prob: float = 75.0,
-    odds: float = 1.55,
-):
-    """Test EV/Edge/Kelly computation on a single hypothetical bet.
-
-    Example: /api/execution/simulate?calibrated_prob=75&odds=1.55
-    """
-    implied = 100.0 / odds
-    edge = compute_edge(calibrated_prob, odds)
-    ev = compute_ev(calibrated_prob, odds)
-    kelly = compute_kelly(calibrated_prob, odds)
-
-    passes_filters = (
-        MIN_ODDS <= odds <= MAX_ODDS
-        and calibrated_prob >= MIN_CALIBRATED_PROB
-        and edge >= MIN_EDGE
-        and ev >= MIN_EV
-    )
-
-    return {
-        "calibrated_prob": calibrated_prob,
-        "odds": odds,
-        "implied_prob": round(implied, 1),
-        "edge": round(edge, 1),
-        "ev": round(ev, 3),
-        "ev_pct": round(ev * 100, 1),
-        "kelly_stake_pct": round(kelly, 2),
-        "passes_all_filters": passes_filters,
-        "verdict": "✅ EXECUTABLE" if passes_filters else "❌ REJECTED",
-        "rejection_reasons": [
-            r for r in [
-                f"odds {odds} outside [{MIN_ODDS}, {MAX_ODDS}]" if not (MIN_ODDS <= odds <= MAX_ODDS) else None,
-                f"prob {calibrated_prob}% < min {MIN_CALIBRATED_PROB}%" if calibrated_prob < MIN_CALIBRATED_PROB else None,
-                f"edge {edge:.1f}% < min {MIN_EDGE}%" if edge < MIN_EDGE else None,
-                f"EV {ev:.3f} < min {MIN_EV}" if ev < MIN_EV else None,
-            ] if r
-        ],
-    }
-
-
-# ═══════════════════════════════════════════════════════════════════════
-# PHASE 4: LIVE ADAPTIVE PIPELINE — API Endpoints
-# ═══════════════════════════════════════════════════════════════════════
-
-@app.get("/api/live/status")
-def get_live_system_status():
-    """Get the status of the live adaptive pipeline."""
-    try:
-        from src.engine.live_updater import get_ingestion_stats
-        from src.db.database import get_db
-        conn = get_db()
-        stats = get_ingestion_stats(conn)
-        return {
-            "status": "active" if stats["total_matches"] > 0 else "cold_start",
-            "engine": "Live Adaptive Pipeline v1.0",
-            **stats,
-        }
-    except Exception as e:
-        return {"status": "error", "error": str(e)}
-
-
-@app.get("/api/live/teams")
-def get_tracked_teams(league: str = None):
-    """Get all tracked team states with current ELO and form."""
-    try:
-        from src.db.team_state import get_all_team_states
-        from src.db.database import get_db
-        conn = get_db()
-        states = get_all_team_states(conn, league)
-        return {
-            "count": len(states),
-            "teams": [{
-                "team": s.team_name,
-                "league": s.league,
-                "venue": s.venue,
-                "elo": s.elo,
-                "attack_rating": s.attack_rating,
-                "defense_rating": s.defense_rating,
-                "rolling_scored": s.rolling_scored,
-                "rolling_conceded": s.rolling_conceded,
-                "form_last5": s.form_last5,
-                "win_streak": s.win_streak,
-                "matches_played": s.matches_played,
-                "rest_days": s.rest_days,
-                "last_match": s.last_match_date,
-            } for s in states],
-        }
-    except Exception as e:
-        return {"error": str(e)}
-
-
-@app.get("/api/live/team/{team_name}")
-def get_team_live_state(team_name: str, league: str = ""):
-    """Get detailed live state for a specific team."""
-    try:
-        from src.db.team_state import get_team_state as get_live_state
-        from src.db.database import get_db
-        conn = get_db()
-
-        results = {}
-        for venue in ["home", "away"]:
-            state = get_live_state(conn, team_name, league, venue)
-            if state:
-                results[venue] = {
-                    "elo": state.elo,
-                    "attack_rating": state.attack_rating,
-                    "defense_rating": state.defense_rating,
-                    "rolling_scored": state.rolling_scored,
-                    "rolling_conceded": state.rolling_conceded,
-                    "rolling_xg": state.rolling_xg,
-                    "rolling_xga": state.rolling_xga,
-                    "rolling_corners": state.rolling_corners,
-                    "rolling_cards": state.rolling_cards,
-                    "form_last5": state.form_last5,
-                    "form_last10": state.form_last10,
-                    "win_streak": state.win_streak,
-                    "unbeaten_streak": state.unbeaten_streak,
-                    "matches_last_14d": state.matches_last_14d,
-                    "rest_days": state.rest_days,
-                    "matches_played": state.matches_played,
-                    "last_match_date": state.last_match_date,
-                }
-
-        if not results:
-            return {"error": f"No live state found for '{team_name}'",
-                    "suggestion": "Visit Results page to ingest match data"}
-
-        return {"team": team_name, "league": league, "states": results}
-    except Exception as e:
-        return {"error": str(e)}
-
-
-@app.post("/api/live/ingest")
-def manual_ingest_match(
-    match_id: str, match_date: str, league: str,
-    home_team: str, away_team: str,
-    home_goals: int, away_goals: int,
-    home_xg: float = None, away_xg: float = None,
-    home_corners: int = None, away_corners: int = None,
-    home_cards: int = None, away_cards: int = None,
-):
-    """Manually ingest a match result into the live pipeline."""
-    try:
-        from src.engine.live_updater import on_match_finished
-        from src.db.database import get_db
-        conn = get_db()
-        return on_match_finished(
-            conn=conn, match_id=match_id, match_date=match_date,
-            league=league, home_team=home_team, away_team=away_team,
-            home_goals=home_goals, away_goals=away_goals,
-            home_xg=home_xg, away_xg=away_xg,
-            home_corners=home_corners, away_corners=away_corners,
-            home_cards=home_cards, away_cards=away_cards,
-        )
-    except Exception as e:
-        return {"error": str(e)}
-
-
-@app.get("/api/live/elo-rankings")
-def get_elo_rankings(league: str = None):
-    """Get ELO rankings sorted by rating descending."""
-    try:
-        from src.db.database import get_db
-        conn = get_db()
-        query = """SELECT team_name, league, elo, rolling_scored, rolling_conceded,
-                          form_last5, win_streak, matches_played
-                   FROM team_state WHERE venue = 'home'"""
-        params = []
-        if league:
-            query += " AND league = ?"
-            params.append(league)
-        query += " ORDER BY elo DESC"
-        rows = conn.execute(query, params).fetchall()
-        return {
-            "count": len(rows),
-            "rankings": [{
-                "rank": i + 1, "team": r["team_name"], "league": r["league"],
-                "elo": r["elo"], "form_last5": r["form_last5"],
-                "matches_played": r["matches_played"],
-            } for i, r in enumerate(rows)],
-        }
-    except Exception as e:
-        return {"error": str(e)}
-
-
-@app.get("/api/live/match-history")
-def get_match_history_api(team: str = None, league: str = None, limit: int = 20):
-    """Get recent match history from the ingested database."""
-    try:
-        from src.db.database import get_db
-        conn = get_db()
-        query = "SELECT * FROM match_history WHERE 1=1"
-        params = []
-        if team:
-            query += " AND (home_team LIKE ? OR away_team LIKE ?)"
-            params.extend([f"%{team}%", f"%{team}%"])
-        if league:
-            query += " AND league = ?"
-            params.append(league)
-        query += " ORDER BY match_date DESC, id DESC LIMIT ?"
-        params.append(limit)
-        rows = conn.execute(query, params).fetchall()
-        return {
-            "count": len(rows),
-            "matches": [{
-                "match_id": r["match_id"], "date": r["match_date"],
-                "league": r["league"],
-                "home": r["home_team"], "away": r["away_team"],
-                "score": f"{r['home_goals']}-{r['away_goals']}",
-                "home_elo_change": round(r["home_elo_after"] - r["home_elo_before"], 1) if r["home_elo_after"] else None,
-                "away_elo_change": round(r["away_elo_after"] - r["away_elo_before"], 1) if r["away_elo_after"] else None,
-            } for r in rows],
-        }
-    except Exception as e:
-        return {"error": str(e)}

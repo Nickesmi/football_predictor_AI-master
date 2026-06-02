@@ -1,172 +1,244 @@
+"""
+The Odds API integration — fetches real bookmaker odds.
+
+Free tier: 500 requests/month
+Docs: https://the-odds-api.com/liveapi/guides/v4/
+
+Maps our SofaScore league IDs to The Odds API sport keys.
+"""
+
 import json
 import os
 import logging
 import urllib.request
 import sqlite3
-from datetime import datetime, timezone
-from typing import Optional, List, Dict
+from datetime import datetime
+from typing import Optional
 from src.db.odds_repo import insert_odds
-from src.data.odds_provider import OddsProvider
 
 logger = logging.getLogger("football_predictor")
 
+# The Odds API sport keys for football leagues
 SPORT_KEYS = {
-    "soccer_epl":              17,
-    "soccer_spain_la_liga":    8,
-    "soccer_italy_serie_a":   23,
-    "soccer_germany_bundesliga": 35,
-    "soccer_france_ligue_one": 34,
-    "soccer_efl_champ":       18,
-    "soccer_netherlands_eredivisie": 37,
-    "soccer_portugal_primeira_liga": 238,
-    "soccer_belgium_first_div": 38,
-    "soccer_turkey_super_league": 52,
-    "soccer_uefa_champs_league": 7,
-    "soccer_uefa_europa_league": 679,
-    "soccer_uefa_europa_conference_league": 17015,
+    "soccer_epl":              17,   # Premier League
+    "soccer_spain_la_liga":    8,    # LaLiga
+    "soccer_italy_serie_a":   23,   # Serie A
+    "soccer_germany_bundesliga": 35, # Bundesliga
+    "soccer_france_ligue_one": 34,   # Ligue 1
+    "soccer_efl_champ":       18,   # Championship
+    "soccer_netherlands_eredivisie": 37,  # Eredivisie
+    "soccer_portugal_primeira_liga": 238, # Primeira Liga
+    "soccer_belgium_first_div": 38,  # Belgian Pro League
+    "soccer_turkey_super_league": 52, # Süper Lig
+    "soccer_uefa_champs_league": 7,  # Champions League
+    "soccer_uefa_europa_league": 679, # Europa League
+    "soccer_uefa_europa_conference_league": 17015,  # Conference League
 }
 
+# Reverse: league_id → sport_key
 LEAGUE_TO_SPORT = {v: k for k, v in SPORT_KEYS.items()}
+
 API_BASE = "https://api.the-odds-api.com/v4"
-REQUESTED_MARKETS = "h2h,totals,spreads,btts,double_chance,totals_h1,draw_no_bet"
+
 
 def get_api_key() -> str:
+    """Get the Odds API key from environment."""
     return os.getenv("ODDS_API_KEY", "")
 
-def _fuzzy_match(s1: str, s2: str) -> bool:
-    """Helper for basic team matching."""
-    if not s1 or not s2: return False
-    s1, s2 = s1.lower(), s2.lower()
-    return s1 in s2 or s2 in s1 or s1.replace(" ", "") == s2.replace(" ", "")
 
-class TheOddsAPIProvider(OddsProvider):
-    def __init__(self, db_conn: sqlite3.Connection):
-        self.db_conn = db_conn
-        self.last_update = None
+def fetch_odds_for_sport(
+    sport_key: str,
+    regions: str = "eu",
+    markets: str = "h2h,totals",
+    odds_format: str = "decimal",
+) -> list[dict]:
+    """
+    Fetch odds from The Odds API for a given sport.
 
-    def fetch_events(self, sport_key: str) -> List[Dict]:
-        return self._fetch_from_api(sport_key)
+    Args:
+        sport_key: e.g. "soccer_epl"
+        regions: "eu", "uk", "us"
+        markets: "h2h" (1X2), "totals" (O/U), "spreads" (handicap)
+        odds_format: "decimal" or "american"
 
-    def fetch_odds(self, event_id: str, markets: str = None) -> List[Dict]:
-        """TheOddsAPI fetches odds per sport efficiently in free tier."""
-        pass 
+    Returns list of event dicts with bookmaker odds.
+    """
+    api_key = get_api_key()
+    if not api_key:
+        logger.warning("ODDS_API_KEY not set — cannot fetch real odds")
+        return []
 
-    def normalize_market(self, raw_market: str) -> Optional[str]:
-        from src.engine.execution_engine import normalize_bookmaker_market
-        return normalize_bookmaker_market(raw_market, "theoddsapi")
+    url = (
+        f"{API_BASE}/sports/{sport_key}/odds"
+        f"?apiKey={api_key}"
+        f"&regions={regions}"
+        f"&markets={markets}"
+        f"&oddsFormat={odds_format}"
+    )
 
-    def get_last_update(self) -> Optional[datetime]:
-        return self.last_update
+    try:
+        req = urllib.request.Request(url, headers={"Accept": "application/json"})
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            data = json.loads(resp.read().decode())
+            remaining = resp.headers.get("x-requests-remaining", "?")
+            logger.info(
+                f"Odds API: {len(data)} events for {sport_key} "
+                f"(requests remaining: {remaining})"
+            )
+            return data
+    except Exception as e:
+        logger.error(f"Odds API error for {sport_key}: {e}")
+        return []
 
-    def _fetch_from_api(self, sport_key: str, regions: str = "eu", markets: str = None, odds_format: str = "decimal") -> List[Dict]:
-        if markets is None:
-            markets = REQUESTED_MARKETS
 
-        api_key = get_api_key()
-        if not api_key:
-            logger.warning("ODDS_API_KEY not set — cannot fetch real odds")
-            return []
+def fetch_and_store_odds(
+    conn: sqlite3.Connection,
+    league_ids: Optional[list[int]] = None,
+) -> dict:
+    """
+    Fetch odds for all tracked leagues and store in DB.
+    Matches events to our matches table by team name fuzzy matching.
 
-        url = f"{API_BASE}/sports/{sport_key}/odds?apiKey={api_key}&regions={regions}&markets={markets}&oddsFormat={odds_format}"
+    Returns {league: events_matched}
+    """
+    if league_ids is None:
+        league_ids = list(LEAGUE_TO_SPORT.keys())
 
-        try:
-            req = urllib.request.Request(url, headers={"Accept": "application/json"})
-            with urllib.request.urlopen(req, timeout=15) as resp:
-                data = json.loads(resp.read().decode())
-                self.last_update = datetime.now(timezone.utc)
-                remaining = resp.headers.get("x-requests-remaining", "?")
-                logger.info(f"Odds API: {len(data)} events for {sport_key} (requests remaining: {remaining})")
-                
-                self._store_snapshots(data)
-                return data
-        except Exception as e:
-            logger.error(f"Odds API error for {sport_key}: {e}")
-            return []
+    results = {}
+    total_stored = 0
 
-    def _store_snapshots(self, events: List[Dict]):
-        """Parse raw events and store in odds_snapshots table."""
-        for event in events:
-            match_id = event.get("id")
-            for bookmaker in event.get("bookmakers", []):
-                bm_key = bookmaker.get("key")
-                timestamp_str = bookmaker.get("last_update")
-                try:
-                    ts = datetime.strptime(timestamp_str, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc).isoformat()
-                except:
-                    ts = datetime.now(timezone.utc).isoformat()
-                    
-                for market in bookmaker.get("markets", []):
-                    market_key = market.get("key")
-                    for outcome in market.get("outcomes", []):
-                        selection = outcome.get("name")
-                        odds = outcome.get("price")
-                        if odds and odds > 1.0:
-                            implied_prob = 1.0 / odds
-                            
-                            snapshot = {
-                                "match_id": match_id,
-                                "market": market_key,
-                                "selection": selection,
-                                "odds": odds,
-                                "bookmaker": bm_key,
-                                "is_opening": 0,
-                                "implied_probability": implied_prob,
-                                "timestamp": ts
-                            }
-                            insert_odds(self.db_conn, snapshot)
+    for league_id in league_ids:
+        sport_key = LEAGUE_TO_SPORT.get(league_id)
+        if not sport_key:
+            continue
 
-    def get_normalized_odds_for_match(self, sport_key: str, home_team: str, away_team: str, preferred_bookmakers: list[str] = None) -> list[dict]:
-        if preferred_bookmakers is None:
-            preferred_bookmakers = ["pinnacle", "bet365", "unibet", "betfair"]
-
-        events = self._fetch_from_api(sport_key)
+        events = fetch_odds_for_sport(sport_key)
         if not events:
-            return []
+            continue
 
-        target_event = None
+        matched = 0
         for event in events:
-            if (_fuzzy_match(home_team.lower(), event.get("home_team", "").lower()) and
-                _fuzzy_match(away_team.lower(), event.get("away_team", "").lower())):
-                target_event = event
-                break
+            home_team = event.get("home_team", "")
+            away_team = event.get("away_team", "")
 
-        if not target_event:
-            logger.info(f"Match {home_team} vs {away_team} not found in Odds API")
-            return []
+            # Find matching match in our DB
+            match_id = _find_match(conn, home_team, away_team, league_id)
+            if not match_id:
+                continue
 
-        best_odds: dict[str, dict] = {}
-        bookmakers = sorted(
-            target_event.get("bookmakers", []),
-            key=lambda b: preferred_bookmakers.index(b["key"]) if b["key"] in preferred_bookmakers else 999
-        )
+            # Extract and store odds from each bookmaker
+            for bookmaker in event.get("bookmakers", []):
+                bk_name = bookmaker.get("key", "unknown")
+                for market in bookmaker.get("markets", []):
+                    market_key = _map_market(market.get("key", ""))
+                    if not market_key:
+                        continue
 
-        api_home = target_event.get("home_team", "")
-        api_away = target_event.get("away_team", "")
+                    for outcome in market.get("outcomes", []):
+                        selection = _map_selection(
+                            market_key, outcome.get("name", ""), home_team
+                        )
+                        if not selection:
+                            continue
 
-        for bm in bookmakers:
-            bm_key = bm.get("key")
-            for market in bm.get("markets", []):
-                mk = market.get("key")
-                for outcome in market.get("outcomes", []):
-                    name = outcome.get("name")
-                    price = outcome.get("price")
+                        odds_val = outcome.get("price", 0)
+                        if odds_val <= 1.0:
+                            continue
 
-                    norm_market = None
-                    if mk == "h2h":
-                        if name == api_home: norm_market = "Home Win"
-                        elif name == api_away: norm_market = "Away Win"
-                        elif name == "Draw": norm_market = "Draw"
-                    elif mk == "btts":
-                        if name == "Yes": norm_market = "BTTS - Yes"
-                        elif name == "No": norm_market = "BTTS - No"
-                    elif mk == "totals":
-                        point = outcome.get("point")
-                        if point == 2.5:
-                            norm_market = f"{name} 2.5 Goals"
+                        insert_odds(conn, {
+                            "match_id": match_id,
+                            "market": market_key,
+                            "selection": selection,
+                            "odds": round(odds_val, 3),
+                            "bookmaker": bk_name,
+                            "is_opening": False,
+                        })
+                        total_stored += 1
 
-                    if norm_market:
-                        if norm_market not in best_odds or bm_key in preferred_bookmakers:
-                            if norm_market not in best_odds or price > best_odds[norm_market]["odds"]:
-                                best_odds[norm_market] = {"odds": price, "bookmaker": bm_key}
+            matched += 1
 
-        return [{"market": k, "odds": v["odds"], "bookmaker": v["bookmaker"]} for k, v in best_odds.items()]
+        results[sport_key] = matched
+        logger.info(f"Odds: {sport_key} → {matched} matches linked, odds stored")
+
+    logger.info(f"Total odds snapshots stored: {total_stored}")
+    return results
+
+
+def _find_match(
+    conn: sqlite3.Connection, home_team: str, away_team: str, league_id: int
+) -> Optional[str]:
+    """Find a match in our DB by fuzzy team name matching."""
+    # Try exact-ish match first
+    home_lower = home_team.lower()
+    away_lower = away_team.lower()
+
+    rows = conn.execute(
+        """SELECT id, home_team, away_team FROM matches
+           WHERE league_id = ? AND status = 'NS'""",
+        (league_id,),
+    ).fetchall()
+
+    for row in rows:
+        db_home = row["home_team"].lower()
+        db_away = row["away_team"].lower()
+
+        # Check if names overlap significantly
+        if (_fuzzy_match(home_lower, db_home) and
+                _fuzzy_match(away_lower, db_away)):
+            return row["id"]
+
+    return None
+
+
+def _fuzzy_match(name1: str, name2: str) -> bool:
+    """Simple fuzzy match: one name contains the other, or significant word overlap."""
+    if name1 in name2 or name2 in name1:
+        return True
+
+    words1 = set(name1.split())
+    words2 = set(name2.split())
+    # Remove common words
+    stop = {"fc", "sc", "cf", "ac", "afc", "as", "ss", "us", "1.", "de", "cd"}
+    words1 -= stop
+    words2 -= stop
+
+    if not words1 or not words2:
+        return name1[:4] == name2[:4]
+
+    overlap = words1 & words2
+    return len(overlap) >= 1
+
+
+def _map_market(api_market: str) -> str:
+    """Map The Odds API market key to our internal market names."""
+    return {
+        "h2h": "1X2",
+        "totals": "O/U 2.5",
+        "spreads": "AH",
+    }.get(api_market, "")
+
+
+def _map_selection(
+    market: str, outcome_name: str, home_team: str
+) -> str:
+    """Map The Odds API outcome name to our selection keys."""
+    name = outcome_name.lower()
+
+    if market == "1X2":
+        if name == home_team.lower() or "home" in name:
+            return "home"
+        elif name == "draw":
+            return "draw"
+        else:
+            return "away"
+
+    elif market == "O/U 2.5":
+        if "over" in name:
+            return "over"
+        elif "under" in name:
+            return "under"
+
+    elif market == "AH":
+        return name
+
+    return ""
