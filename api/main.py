@@ -222,7 +222,7 @@ def _build_joint_matrix(lam_h: float, lam_a: float, max_goals: int,
     return matrix
 
 
-def _compute_match_analysis(home_name: str, away_name: str, league_name: str = "Premier League", shuffle_tiers: bool = True) -> dict:
+def _compute_match_analysis(home_name: str, away_name: str, league_name: str = "Premier League", shuffle_tiers: bool = True, feature_flags: dict = None) -> dict:
     """
     Per-match MODULAR analysis — 2-Layer Architecture:
 
@@ -237,6 +237,15 @@ def _compute_match_analysis(home_name: str, away_name: str, league_name: str = "
     import random
     from src.ml.poisson_model import _poisson_pmf
 
+    if feature_flags is None:
+        feature_flags = {
+            "USE_TEAM_RATINGS": True,
+            "USE_MOMENTUM": True,
+            "USE_HOME_ADVANTAGE": True,
+            "USE_VOLATILITY": True,
+            "USE_LEAGUE_RELIABILITY": True
+        }
+
     league_key = LEAGUE_NAME_MAP.get(league_name, league_name)
 
     # ── Step 1: Team stats ──
@@ -250,11 +259,52 @@ def _compute_match_analysis(home_name: str, away_name: str, league_name: str = "
         league_key,
     )
 
+    # ── Step 1.5: Dynamic Team Learning Adjustment ──
+    from src.db.database import get_db
+    from src.db.team_intelligence import get_team_rating, get_home_advantage
+    h_vol = 0.0
+    a_vol = 0.0
+    try:
+        db = get_db()
+        h_rating, h_mom, h_vol, _ = get_team_rating(db, home_name, league_key)
+        a_rating, a_mom, a_vol, _ = get_team_rating(db, away_name, league_key)
+        
+        # Scale expected goals by rating differential and momentum
+        rating_diff = h_rating - a_rating
+        rating_scale = (rating_diff / 1500.0) if feature_flags.get("USE_TEAM_RATINGS", True) else 0.0
+        
+        h_mom_scale = (h_mom / 1000.0) if feature_flags.get("USE_MOMENTUM", True) else 0.0 
+        a_mom_scale = (a_mom / 1000.0) if feature_flags.get("USE_MOMENTUM", True) else 0.0
+        
+        h_adv = get_home_advantage(db, home_name)
+        a_adv = get_home_advantage(db, away_name)
+        
+        h_adv_scale = (h_adv / 1000.0) if feature_flags.get("USE_HOME_ADVANTAGE", True) else 0.0
+        a_adv_scale = (-a_adv / 1000.0) if feature_flags.get("USE_HOME_ADVANTAGE", True) else 0.0
+        
+        h_total_scale = 1.0 + rating_scale + h_mom_scale + h_adv_scale
+        a_total_scale = 1.0 - rating_scale + a_mom_scale + a_adv_scale
+        
+        # Clamp bounds
+        h_total_scale = max(0.6, min(1.8, h_total_scale))
+        a_total_scale = max(0.6, min(1.8, a_total_scale))
+        
+        h_scored_adj = home_stats.scored * h_total_scale
+        h_conceded_adj = home_stats.conceded / h_total_scale
+        a_scored_adj = away_stats.scored * a_total_scale
+        a_conceded_adj = away_stats.conceded / a_total_scale
+    except Exception as e:
+        logger.warning(f"Failed to apply team intelligence: {e}")
+        h_scored_adj = home_stats.scored
+        h_conceded_adj = home_stats.conceded
+        a_scored_adj = away_stats.scored
+        a_conceded_adj = away_stats.conceded
+
     # ── Step 2: Poisson ──
     poisson_model = PoissonGoalModel(league_key)
     pred = poisson_model.predict(
-        home_scored=home_stats.scored, home_conceded=home_stats.conceded,
-        away_scored=away_stats.scored, away_conceded=away_stats.conceded,
+        home_scored=h_scored_adj, home_conceded=h_conceded_adj,
+        away_scored=a_scored_adj, away_conceded=a_conceded_adj,
         home_team=home_name, away_team=away_name,
     )
 
@@ -379,11 +429,44 @@ def _compute_match_analysis(home_name: str, away_name: str, league_name: str = "
         if prob > 0:
             raw.append({"market": name, "probability": prob})
 
+    # ── League Learning Adjustment ──
+    try:
+        from src.db.database import get_db
+        from src.db.error_intelligence import get_league_adjustment, apply_league_adjustment
+        db_conn = get_db()
+        if feature_flags.get("USE_LEAGUE_RELIABILITY", True):
+            league_adj = get_league_adjustment(db_conn, league_key)
+            adj_hw, adj_d, adj_aw = apply_league_adjustment(
+                league_adj, pred.home_win, pred.draw, pred.away_win
+            )
+        else:
+            league_adj = {"active": False, "shrink_factor": 1.0, "description": "Disabled"}
+            adj_hw, adj_d, adj_aw = pred.home_win, pred.draw, pred.away_win
+    except Exception as e:
+        logger.debug(f"Failed to fetch league adjustment: {e}")
+        league_adj = {"active": False, "shrink_factor": 1.0, "description": "Unavailable"}
+        adj_hw, adj_d, adj_aw = pred.home_win, pred.draw, pred.away_win
+
+    # ── Team Volatility Confidence Penalty ──
+    try:
+        if feature_flags.get("USE_VOLATILITY", True):
+            max_vol = max(h_vol, a_vol) if 'h_vol' in locals() else 0.0
+            if max_vol > 60:
+                # Volatile teams (61-100) receive up to -6.0% penalty (shrink towards 33.3)
+                penalty = ((max_vol - 60) / 40.0) * 6.0
+                penalty_factor = penalty / 100.0
+                
+                adj_hw = adj_hw - (adj_hw - 33.3) * penalty_factor
+                adj_d = adj_d - (adj_d - 33.3) * penalty_factor
+                adj_aw = adj_aw - (adj_aw - 33.3) * penalty_factor
+    except Exception as e:
+        logger.debug(f"Failed to apply volatility penalty: {e}")
+
     # ━━ RESULT (1X2 — renormalized) ━━
     ft_1x2 = add_group([
-        ("Home Win", pred.home_win),
-        ("Draw", pred.draw),
-        ("Away Win", pred.away_win),
+        ("Home Win", adj_hw),
+        ("Draw", adj_d),
+        ("Away Win", adj_aw),
     ])
     # Double Chance derived from renormalized 1X2 (already calibrated — use add_raw)
     add_raw(f"1X ({home_name} or Draw)", ft_1x2["Home Win"] + ft_1x2["Draw"])
@@ -1686,6 +1769,41 @@ def get_results_verification(date_str: str):
         except Exception as live_err:
             logger.warning(f"Live ingestion failed for {event_id}: {live_err}")
 
+        # ── Phase 1.6: ERROR INTELLIGENCE — settle 1X2 prediction ──
+        try:
+            from src.db.error_intelligence import store_prediction_record, settle_prediction
+            from src.db.database import get_db
+            db = get_db()
+            result_mkt = analysis.get("poisson", {}).get("result", {})
+            h_pct = float(result_mkt.get("home_win", 33.0))
+            d_pct = float(result_mkt.get("draw", 33.0))
+            a_pct = float(result_mkt.get("away_win", 33.0))
+            country = fixture.get("league", {}).get("country", "")
+            store_prediction_record(
+                conn=db,
+                fixture_id=str(event_id),
+                match_date=date_str,
+                league_name=league_name,
+                country=country,
+                home_team=home_name,
+                away_team=away_name,
+                home_win_pct=h_pct,
+                draw_pct=d_pct,
+                away_win_pct=a_pct,
+            )
+            pred_h = analysis.get("score_prediction", {}).get("expected_goals", {}).get("home")
+            pred_a = analysis.get("score_prediction", {}).get("expected_goals", {}).get("away")
+            settle_prediction(
+                conn=db,
+                fixture_id=str(event_id),
+                home_goals=home_goals,
+                away_goals=away_goals,
+                predicted_home_goals=float(pred_h) if pred_h is not None else None,
+                predicted_away_goals=float(pred_a) if pred_a is not None else None,
+            )
+        except Exception as ei_err:
+            logger.debug(f"Error intelligence settlement skipped for {event_id}: {ei_err}")
+
     # ── Phase 2: League-level quality filter ────────────────────
     # Group by league, exclude leagues with >25% NA matches
     league_stats = {}
@@ -2538,5 +2656,129 @@ def get_match_history_api(team: str = None, league: str = None, limit: int = 20)
                 "away_elo_change": round(r["away_elo_after"] - r["away_elo_before"], 1) if r["away_elo_after"] else None,
             } for r in rows],
         }
+    except Exception as e:
+        return {"error": str(e)}
+
+@app.get("/api/debug/backtest-features")
+def run_feature_backtest(limit: int = 50):
+    """
+    Feature Contribution Backtesting Framework.
+    Evaluates configurations progressively to measure feature impact.
+    """
+    from src.db.database import get_db
+    conn = get_db()
+    
+    # Fetch last N matches from match_history
+    matches = conn.execute(
+        "SELECT home_team, away_team, league, home_goals, away_goals FROM match_history ORDER BY match_date DESC, id DESC LIMIT ?",
+        (limit,)
+    ).fetchall()
+    
+    if not matches:
+        return {"error": "No matches in history."}
+        
+    configs = [
+        {"name": "Baseline", "flags": {"USE_TEAM_RATINGS": False, "USE_MOMENTUM": False, "USE_HOME_ADVANTAGE": False, "USE_VOLATILITY": False, "USE_LEAGUE_RELIABILITY": False}},
+        {"name": "+ Team Ratings", "flags": {"USE_TEAM_RATINGS": True, "USE_MOMENTUM": False, "USE_HOME_ADVANTAGE": False, "USE_VOLATILITY": False, "USE_LEAGUE_RELIABILITY": False}},
+        {"name": "+ Momentum", "flags": {"USE_TEAM_RATINGS": True, "USE_MOMENTUM": True, "USE_HOME_ADVANTAGE": False, "USE_VOLATILITY": False, "USE_LEAGUE_RELIABILITY": False}},
+        {"name": "+ Home Advantage", "flags": {"USE_TEAM_RATINGS": True, "USE_MOMENTUM": True, "USE_HOME_ADVANTAGE": True, "USE_VOLATILITY": False, "USE_LEAGUE_RELIABILITY": False}},
+        {"name": "+ Volatility", "flags": {"USE_TEAM_RATINGS": True, "USE_MOMENTUM": True, "USE_HOME_ADVANTAGE": True, "USE_VOLATILITY": True, "USE_LEAGUE_RELIABILITY": False}},
+        {"name": "All Features", "flags": {"USE_TEAM_RATINGS": True, "USE_MOMENTUM": True, "USE_HOME_ADVANTAGE": True, "USE_VOLATILITY": True, "USE_LEAGUE_RELIABILITY": True}}
+    ]
+    
+    results = []
+    
+    for cfg in configs:
+        correct = 0
+        brier_sum = 0.0
+        conf_sum = 0.0
+        
+        for m in matches:
+            home_team, away_team, league, h_goals, a_goals = m
+            
+            # Actual result
+            if h_goals > a_goals: act_h, act_d, act_a = 1.0, 0.0, 0.0
+            elif h_goals == a_goals: act_h, act_d, act_a = 0.0, 1.0, 0.0
+            else: act_h, act_d, act_a = 0.0, 0.0, 1.0
+                
+            try:
+                pred = _compute_match_analysis(home_team, away_team, league, feature_flags=cfg["flags"])
+                # Extract 1X2 probabilities
+                h_pct = pred["poisson"]["result"]["home_win"] / 100.0
+                d_pct = pred["poisson"]["result"]["draw"] / 100.0
+                a_pct = pred["poisson"]["result"]["away_win"] / 100.0
+            except Exception:
+                h_pct, d_pct, a_pct = 0.33, 0.33, 0.33
+                
+            # Highest prob outcome
+            best_p = max(h_pct, d_pct, a_pct)
+            conf_sum += best_p
+            
+            if best_p == h_pct and act_h == 1.0: correct += 1
+            elif best_p == d_pct and act_d == 1.0: correct += 1
+            elif best_p == a_pct and act_a == 1.0: correct += 1
+                
+            brier_sum += ((h_pct - act_h)**2 + (d_pct - act_d)**2 + (a_pct - act_a)**2)
+            
+        N = len(matches)
+        acc = correct / N
+        avg_conf = conf_sum / N
+        cal_gap = abs(avg_conf - acc)
+        brier = brier_sum / N
+        
+        results.append({
+            "configuration": cfg["name"],
+            "accuracy": round(acc * 100, 2),
+            "brier_score": round(brier, 4),
+            "calibration_gap": round(cal_gap * 100, 2)
+        })
+        
+    deltas = {}
+    for i in range(1, len(results)):
+        prev = results[i-1]
+        curr = results[i]
+        diff = round(curr["accuracy"] - prev["accuracy"], 2)
+        
+        # Mapping config name to feature name
+        feature_name = curr["configuration"].replace("+ ", "")
+        if feature_name == "All Features": feature_name = "League Reliability"
+        
+        deltas[feature_name] = diff
+        
+    # Sort leaderboard by brier score ascending
+    leaderboard = sorted(results, key=lambda x: x["brier_score"])
+    
+    return {
+        "matches_tested": len(matches),
+        "leaderboard": leaderboard,
+        "feature_deltas_accuracy": deltas
+    }
+@app.get("/api/debug/team-rating")
+def get_team_rating_endpoint(team: str, league: str = "Premier League"):
+    from src.db.database import get_db
+    from src.db.team_intelligence import get_team_rating, get_home_advantage
+    try:
+        conn = get_db()
+        rating, momentum, volatility, history = get_team_rating(conn, team, league)
+        home_adv = get_home_advantage(conn, team)
+        return {
+            "team": team,
+            "league": league,
+            "rating": rating,
+            "momentum_score": momentum,
+            "volatility_score": volatility,
+            "home_advantage_score": home_adv,
+            "recent_history": history[:10] if history else []
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+@app.get("/api/debug/model-health")
+def get_model_health_endpoint():
+    from src.db.database import get_db
+    from src.db.error_intelligence import get_model_health
+    try:
+        conn = get_db()
+        return get_model_health(conn)
     except Exception as e:
         return {"error": str(e)}
