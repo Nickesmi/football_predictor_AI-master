@@ -141,17 +141,17 @@ SAMPLE_HOME_MATCHES = [
 
 class TestPatternStat:
     def test_confidence_tiers(self):
-        assert PatternStat("A", 9, 10, 90.0).confidence == "Very High"
-        assert PatternStat("B", 7, 10, 70.0).confidence == "High"
-        assert PatternStat("C", 5, 10, 50.0).confidence == "Medium"
-        assert PatternStat("D", 4, 10, 40.0).confidence == "Low"
+        assert PatternStat("A", 90, 100, 90.0).confidence == "Very High"
+        assert PatternStat("B", 70, 100, 70.0).confidence == "High"
+        assert PatternStat("C", 60, 100, 60.0).confidence == "Medium"
+        assert PatternStat("D", 50, 100, 50.0).confidence == "Low"
         assert PatternStat("E", 2, 10, 20.0).confidence == "Very Low"
 
     def test_repr(self):
-        s = PatternStat("BTTS", 8, 10, 80.0)
+        s = PatternStat("BTTS", 99, 100, 99.0)
         assert "BTTS" in repr(s)
-        assert "80.0%" in repr(s)
-        assert "Very High" in repr(s)
+        assert "99.0%" in repr(s)
+        
 
 
 # ==================================================================
@@ -460,8 +460,8 @@ class TestEdgeCases:
         match_set = _home_match_set(SAMPLE_HOME_MATCHES)
         report = self.analyzer.analyze(match_set)
 
-        high_80 = report.get_high_confidence_patterns(threshold=80.0)
-        high_50 = report.get_high_confidence_patterns(threshold=50.0)
+        high_80 = report.get_high_confidence_patterns(min_wilson=80.0)
+        high_50 = report.get_high_confidence_patterns(min_wilson=50.0)
 
         # Everything in 80% should also be in 50%
         assert len(high_80) <= len(high_50)

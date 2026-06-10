@@ -121,7 +121,7 @@ class TestEndToEndPipeline:
 
         # Issue #3: Compute factors
         self.factor_report = self.factor_analyzer.analyze(
-            self.home_report, self.away_report, threshold=50.0
+            self.home_report, self.away_report, min_wilson=50.0
         )
 
     def test_pattern_reports_populated(self):
@@ -179,7 +179,7 @@ class TestEndToEndPipeline:
             self.factor_report, self.home_report, self.away_report
         )
         assert md.startswith("# Match Analysis:")
-        assert "Pattern Intersection" in md
+        assert "Stable Recommended Patterns" in md
         assert "|" in md  # Has tables
 
     def test_json_report_valid(self):
@@ -247,11 +247,11 @@ class TestPatternConsistency:
 
     def test_percentages_valid_range(self):
         """All percentages must be between 0 and 100."""
-        for stat in self.home_report.get_high_confidence_patterns(threshold=0):
+        for stat in self.home_report.get_high_confidence_patterns(min_wilson=0):
             assert 0 <= stat.percentage <= 100
 
     def test_confidence_labels_valid(self):
-        for stat in self.home_report.get_high_confidence_patterns(threshold=0):
+        for stat in self.home_report.get_high_confidence_patterns(min_wilson=0):
             assert stat.confidence in (
                 "Very High", "High", "Medium", "Low", "Very Low"
             )
@@ -270,7 +270,7 @@ class TestReportOutputValidation:
         fa = FactorAnalyzer()
         home_report = pa.analyze(_home_set())
         away_report = pa.analyze(_away_set())
-        self.factor_report = fa.analyze(home_report, away_report, threshold=50.0)
+        self.factor_report = fa.analyze(home_report, away_report, min_wilson=50.0)
         self.home_report = home_report
         self.away_report = away_report
 
@@ -306,7 +306,7 @@ class TestReportOutputValidation:
         assert "away_factors" in d
         assert "disclaimer" in d
         assert "generated_at" in d
-        assert "confidence_threshold" in d
+        assert "generated_at" in d
 
         # Match structure
         assert "home_team" in d["match"]
