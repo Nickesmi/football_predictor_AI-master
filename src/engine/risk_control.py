@@ -50,6 +50,7 @@ def score_confidence(
     edge = candidate["edge"]
     odds = candidate["odds"]
     reliability = league_profile.get("reliability_score", 5.0)
+    data_quality = float(candidate.get("data_quality", 50.0))
 
     # Factor 1: Edge strength (0-0.3)
     edge_score = min(edge * 3.0, 0.3)
@@ -66,6 +67,9 @@ def score_confidence(
     }
     source_score = source_scores.get(model_source, 0.10)
 
+    # Factor 3b: Data quality (0-0.15)
+    data_quality_score = max(0.0, min(data_quality / 100.0, 1.0)) * 0.15
+
     # Factor 4: Odds sanity (0-0.2)
     # Very high odds (>8.0) or very low (<1.15) are noisier
     if 1.3 <= odds <= 6.0:
@@ -75,7 +79,7 @@ def score_confidence(
     else:
         odds_score = 0.05
 
-    confidence = round(edge_score + league_score + source_score + odds_score, 3)
+    confidence = round(edge_score + league_score + source_score + data_quality_score + odds_score, 3)
     confidence = min(confidence, 1.0)
 
     # Data quality flags
@@ -88,9 +92,12 @@ def score_confidence(
         flags.append("longshot")
     if odds < 1.15:
         flags.append("heavy_favorite")
+    if data_quality < 60:
+        flags.append("thin_or_low_quality_data")
 
     candidate["confidence"] = confidence
     candidate["league_reliability"] = reliability
+    candidate["data_quality"] = data_quality
     candidate["data_quality_flags"] = flags
     candidate["min_edge_threshold"] = league_profile.get("min_edge_threshold", 0.05)
     candidate["max_stake_units"] = league_profile.get("max_stake_units", 1.0)
@@ -106,12 +113,27 @@ def apply_risk_filter(candidates: list[dict]) -> list[dict]:
     passed = []
     for c in candidates:
         min_edge = c.get("min_edge_threshold", 0.05)
-        if c["edge"] >= min_edge and c["confidence"] > 0.20:
+        min_prob = 0.46
+        if c.get("odds", 0) >= 4.0:
+            min_prob = 0.34
+        if c.get("odds", 0) >= 7.0:
+            min_prob = 0.24
+
+        data_quality = float(c.get("data_quality", 50.0))
+        confidence_floor = 0.35 if data_quality >= 60 else 0.45
+
+        if (
+            c["edge"] >= min_edge
+            and c["confidence"] >= confidence_floor
+            and c["model_prob"] >= min_prob
+            and data_quality >= 35
+        ):
             passed.append(c)
         else:
             logger.debug(
                 f"Risk filter removed: {c['home_team']} vs {c['away_team']} "
                 f"{c['market']}/{c['selection']} edge={c['edge']:.3f} "
-                f"(min={min_edge})"
+                f"(min={min_edge}) prob={c['model_prob']:.3f} "
+                f"quality={data_quality:.1f}"
             )
     return passed

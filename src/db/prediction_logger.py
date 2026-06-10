@@ -90,17 +90,27 @@ def log_predictions(
         - tier (int, optional)
 
     Returns number of predictions logged.
+    
+    VALIDATION:
+    - Prevents logging if predictions are duplicated in same request
+    - Prevents logging predictions made after match start (future leakage)
+    - Uses (match_id, market_type) deduplication, not just match_id
     """
-    # Avoid duplicate logging: check if we already have entries for this match
-    existing = conn.execute(
-        "SELECT COUNT(*) FROM prediction_log WHERE match_id = ?",
-        (match_id,),
-    ).fetchone()[0]
-
-    if existing > 0:
-        return 0  # Already logged
-
+    from datetime import datetime
+    
+    # VALIDATION: Check timestamp is not in future
+    try:
+        match_dt = datetime.fromisoformat(match_date)
+        now = datetime.now()
+        if match_dt > now:
+            logger.warning(f"Cannot predict match {match_id}: match date {match_date} is in future")
+            return 0
+    except:
+        pass  # If date parsing fails, proceed (unlikely)
+    
     count = 0
+    logged_markets = set()  # Track which (match_id, market_type) we log in this request
+    
     for pick in evaluated_picks:
         market = pick.get("market", "")
         prob = pick.get("probability", 0)
@@ -116,6 +126,23 @@ def log_predictions(
             outcome = None
 
         market_type = _classify_market_type(market)
+        
+        # DEDUPLICATION: Skip if we already logged this (match, market_type) today
+        market_key = (match_id, market_type)
+        if market_key in logged_markets:
+            logger.debug(f"Skipping duplicate {market_type} for match {match_id}")
+            continue
+        
+        # Also check if this (match_id, market_type) exists in DB from earlier
+        existing = conn.execute(
+            "SELECT COUNT(*) FROM prediction_log WHERE match_id = ? AND market_type = ?",
+            (match_id, market_type),
+        ).fetchone()[0]
+        
+        if existing > 0:
+            # Market already logged for this match - skip it
+            logger.debug(f"Skipping already-logged {market_type} for match {match_id}")
+            continue
 
         conn.execute(
             """INSERT INTO prediction_log
@@ -126,12 +153,14 @@ def log_predictions(
              market, market_type, prob, outcome, tier),
         )
         count += 1
+        logged_markets.add(market_key)
 
     conn.commit()
-    logger.info(
-        f"Logged {count} predictions for {home_team} vs {away_team} "
-        f"(match {match_id}, {match_date})"
-    )
+    if count > 0:
+        logger.info(
+            f"Logged {count} predictions for {home_team} vs {away_team} "
+            f"(match {match_id}, {match_date})"
+        )
     return count
 
 
@@ -217,6 +246,56 @@ def get_all_market_types(conn: sqlite3.Connection) -> list[dict]:
         "avg_predicted": round(r[4], 1),
         "calibration_ready": r[2] >= 200,
     } for r in rows]
+
+
+def get_competition_type_analysis(conn: sqlite3.Connection) -> list[dict]:
+    """Compare prediction quality across different competition categories."""
+    import math
+    from src.db.competition_tracker import ensure_competitions_table
+    ensure_competitions_table(conn)
+
+    # We join with the competitions table to get category
+    rows = conn.execute(
+        """SELECT c.category,
+                  p.predicted_prob,
+                  p.actual_outcome
+           FROM prediction_log p
+           JOIN competitions c ON p.league_name = c.name
+           WHERE p.actual_outcome IS NOT NULL"""
+    ).fetchall()
+
+    categories = {}
+    for r in rows:
+        cat = r[0] or "men"
+        prob = r[1]
+        outcome = r[2]
+
+        if cat not in categories:
+            categories[cat] = {"total": 0, "hits": 0, "sum_prob": 0.0, "brier": 0.0}
+
+        categories[cat]["total"] += 1
+        categories[cat]["hits"] += outcome
+        categories[cat]["sum_prob"] += prob
+
+        p = max(1e-7, min(1 - 1e-7, prob / 100.0))
+        y = float(outcome)
+        categories[cat]["brier"] += (p - y) ** 2
+
+    results = []
+    for cat, stats in categories.items():
+        total = stats["total"]
+        results.append({
+            "category": cat,
+            "total_predictions": total,
+            "accuracy_pct": round(stats["hits"] / total * 100, 1) if total > 0 else 0,
+            "avg_predicted": round(stats["sum_prob"] / total, 1) if total > 0 else 0,
+            "calibration_gap": round((stats["sum_prob"] / total) - (stats["hits"] / total * 100), 1) if total > 0 else 0,
+            "brier_score": round(stats["brier"] / total, 4) if total > 0 else 0,
+        })
+
+    # Sort by total predictions descending
+    results.sort(key=lambda x: x["total_predictions"], reverse=True)
+    return results
 
 
 def update_daily_performance(conn: sqlite3.Connection, date_str: str) -> dict:

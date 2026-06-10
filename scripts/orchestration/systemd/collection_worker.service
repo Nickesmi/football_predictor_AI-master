@@ -1,0 +1,11 @@
+[Unit]
+Description=Football Predictor Collection Worker
+After=network.target
+
+[Service]
+Type=oneshot
+User=www-data
+WorkingDirectory=/opt/football_predictor
+ExecStart=/opt/football_predictor/.venv/bin/python scripts/collection_worker.py
+StandardOutput=append:/opt/football_predictor/logs/collection_worker.log
+StandardError=append:/opt/football_predictor/logs/collection_worker.log

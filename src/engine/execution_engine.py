@@ -18,8 +18,8 @@ Key design decisions:
     - Only evaluate markets that actually exist at the bookmaker
     - Ignore: Correct Score, Cards, Corners, Exotic combos
     - Focus: Over/Under, BTTS, Double Chance, 1X2, Asian Handicap
-    - Quarter-Kelly capped at 3% bankroll per bet
-    - Max 3 bets per match, max 8 bets per day
+    - Quarter-Kelly capped at 1% bankroll per bet
+    - Max 1 bet per match, max 3 bets per day
     - Edge = calibrated_prob - implied_prob
     - EV = (calibrated_prob/100 × odds) - 1
     - Bookmaker trust weighting (Pinnacle > bet365 > soft books)
@@ -36,24 +36,23 @@ logger = logging.getLogger("football_predictor")
 # EXECUTION RULES — Hard filters for bet qualification
 # ═══════════════════════════════════════════════════════════════════════
 #
-# Tuned for the professional sweet spot:
-#   - Most profitable sharp betting happens in moderate-confidence
-#     inefficiencies, NOT in obvious favorites
-#   - True 75%+ edges are extremely rare
-#   - Bookmakers are strongest on obvious favorites
+# Capital-preservation mode:
+#   - The local logs show weak broad-result accuracy, so execution must be
+#     selective until enough real settled picks prove a market is profitable.
+#   - A missed bet is acceptable; forcing volume from a 50% model is not.
 
-MIN_ODDS = 1.35          # minimum decimal odds (bookmaker margin too tight below this)
-MAX_ODDS = 1.75          # maximum decimal odds (model error increases / tail risk above this)
-MIN_CALIBRATED_PROB = 58.0  # minimum calibrated probability (%)
-MIN_EDGE = 4.0           # minimum edge over bookmaker (%)
-MIN_EV = 0.02            # minimum expected value (2%)
-MAX_BETS_PER_MATCH = 3   # cap per match
-MAX_BETS_PER_DAY = 8     # global daily cap (3-8 bets/day is optimal)
+MIN_ODDS = 1.40          # minimum decimal odds (bookmaker margin too tight below this)
+MAX_ODDS = 1.65          # maximum decimal odds (model error/tail risk increases above this)
+MIN_CALIBRATED_PROB = 70.0  # minimum calibrated probability (%)
+MIN_EDGE = 7.0           # minimum edge over bookmaker (%)
+MIN_EV = 0.05            # minimum expected value (5%)
+MAX_BETS_PER_MATCH = 1   # cap per match
+MAX_BETS_PER_DAY = 3     # global daily cap while model quality is unproven
 
 # Kelly sizing
 KELLY_FRACTION = 0.25    # quarter-Kelly
-MAX_STAKE_PCT = 3.0      # max 3% bankroll per bet
-DEFAULT_STAKE_PCT = 1.5  # default when Kelly suggests more
+MAX_STAKE_PCT = 1.0      # max 1% bankroll per bet
+DEFAULT_STAKE_PCT = 0.5  # default when Kelly suggests more
 
 
 # ═══════════════════════════════════════════════════════════════════════

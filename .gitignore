@@ -16,6 +16,29 @@ dist-ssr
 data/*.db
 data/*.db-shm
 data/*.db-wal
+.cache/
+catboost_info/
+data/logos/
+*.json
+!package.json
+!package-lock.json
+!frontend/package.json
+!frontend/package-lock.json
+benchmark_output.txt
+/analysis_*.py
+/audit_*.py
+/benchmark.py
+/clean_audit*.py
+/cleanup_data.py
+/live_audit.py
+/patch_*.py
+/recovered_main.py
+/reset_database.py
+/scratch_*.py
+/test_analysis.py
+/test_backtest.py
+/test_fixtures.py
+/test_health.py
 
 # Desktop build artifacts
 build/

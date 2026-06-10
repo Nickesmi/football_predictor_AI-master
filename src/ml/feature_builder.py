@@ -148,3 +148,34 @@ class FeatureBuilder:
             defensive_matchup=(home.clean_sheet_rate + away.failed_to_score_rate) / 2,
             offensive_matchup=(home.avg_scored + away.avg_scored) / 2,
         )
+
+    @staticmethod
+    def compute_data_quality(home: TeamProfile, away: TeamProfile, league_name: str, country: str = "") -> float:
+        """
+        Compute a Data Quality score from 0-100 based on matches available and league context.
+        """
+        score = 100.0
+
+        # Penalty for lack of history
+        min_matches = min(home.matches_played, away.matches_played)
+        if min_matches < 15:
+            score -= (15 - min_matches) * 2  # up to 30 penalty
+
+        if min_matches < 5:
+            score -= 20  # extra severe penalty if basically no data
+
+        # Category penalty
+        from src.db.competition_tracker import _infer_category
+        cat = _infer_category(league_name, country)
+        
+        if cat == 'friendly':
+            score -= 40
+        elif cat == 'youth':
+            score -= 30
+        elif cat == 'women':
+            score -= 15  # often fewer historical matches available consistently
+        elif cat == 'international':
+            score -= 20  # International teams play infrequently
+
+        # Ensure bounds
+        return max(0.0, min(100.0, score))

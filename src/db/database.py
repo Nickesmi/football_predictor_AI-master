@@ -107,6 +107,26 @@ def init_db(conn: sqlite3.Connection) -> None:
         CREATE INDEX IF NOT EXISTS idx_picks_date  ON picks(created_at);
         CREATE INDEX IF NOT EXISTS idx_matches_date ON matches(date);
 
+        -- ═══ Logo Registry ═══
+        CREATE TABLE IF NOT EXISTS team_logo_registry (
+            team_id         TEXT PRIMARY KEY,
+            team_name       TEXT NOT NULL,
+            provider        TEXT,
+            logo_url        TEXT,
+            local_path      TEXT,
+            etag            TEXT,
+            width           INTEGER,
+            height          INTEGER,
+            file_size       INTEGER,
+            sharpness_score REAL,
+            quality_score   REAL,
+            quality_grade   TEXT,
+            logo_source_rank INTEGER,
+            upgrade_reason  TEXT,
+            recheck_after_days INTEGER,
+            last_downloaded TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+
         -- ═══ PHASE 3: Prediction Logging ═══
         -- Every prediction from the results evaluation flow is logged here.
         -- This is the raw data source for calibration + backtesting.
@@ -246,6 +266,81 @@ def init_db(conn: sqlite3.Connection) -> None:
 
         CREATE INDEX IF NOT EXISTS idx_matchhist_date ON match_history(match_date);
         CREATE INDEX IF NOT EXISTS idx_matchhist_team ON match_history(home_team);
+
+        -- ═══ PHASE 5: Scoreline Intelligence Reform v2 ═══
+        -- Store full probability matrix at prediction time
+        CREATE TABLE IF NOT EXISTS scoreline_predictions (
+            fixture_id      TEXT PRIMARY KEY,
+            matrix_json     TEXT NOT NULL,
+            predicted_home_xg REAL,
+            predicted_away_xg REAL,
+            created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+
+        -- Log hit rates and xG error at settlement time
+        CREATE TABLE IF NOT EXISTS scoreline_learning_log (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            fixture_id      TEXT UNIQUE NOT NULL,
+            league_name     TEXT,
+            season          TEXT,
+            match_date      DATE,
+            
+            predicted_top_score TEXT,
+            predicted_top_probability REAL,
+            
+            actual_score    TEXT,
+            actual_rank     INTEGER,
+            actual_probability REAL,
+            
+            top1_hit        BOOLEAN,
+            top3_hit        BOOLEAN,
+            top5_hit        BOOLEAN,
+            top10_hit       BOOLEAN,
+            
+            predicted_home_xg REAL,
+            predicted_away_xg REAL,
+            actual_home_goals INTEGER,
+            actual_away_goals INTEGER,
+            home_goal_error   REAL,
+            away_goal_error   REAL,
+            total_goal_error  REAL,
+            
+            confidence_bucket TEXT,
+            created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        
+        CREATE INDEX IF NOT EXISTS idx_scoreline_league ON scoreline_learning_log(league_name);
+        CREATE INDEX IF NOT EXISTS idx_scoreline_date ON scoreline_learning_log(match_date);
+
+        -- ═══ BILQE: Qualification Log ═══
+        -- Tracks every layer's contribution per pick for ROI/Brier/CLV reporting.
+        CREATE TABLE IF NOT EXISTS qualification_log (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            match_id        TEXT NOT NULL,
+            match_date      DATE NOT NULL,
+            home_team       TEXT NOT NULL,
+            away_team       TEXT NOT NULL,
+            league_name     TEXT NOT NULL,
+            market          TEXT NOT NULL,
+            pick_quality_score REAL NOT NULL,
+            tier            TEXT NOT NULL,
+            data_quality_score REAL,
+            model_consensus_score REAL,
+            calibration_score REAL,
+            edge_score      REAL,
+            volatility_score REAL,
+            xg_reality_score REAL,
+            clv_adjustment  REAL,
+            roi_adjustment  REAL,
+            rejection_reason TEXT,
+            actual_outcome  INTEGER,
+            created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_quallog_date ON qualification_log(match_date);
+        CREATE INDEX IF NOT EXISTS idx_quallog_tier ON qualification_log(tier);
+        CREATE INDEX IF NOT EXISTS idx_quallog_league ON qualification_log(league_name);
+
     """)
     conn.commit()
 

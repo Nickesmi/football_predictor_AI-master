@@ -1,0 +1,11 @@
+# Football Predictor AI - Mac Local Development Crontab
+# Install with: crontab scripts/orchestration/crontab.txt
+
+# Fetch all fixtures and compute predictions daily at 00:00
+0 0 * * * cd /Users/nikantehrani/Desktop/football_predictor_ai-master && .venv/bin/python scripts/collection_worker.py >> logs/collection_worker.log 2>&1
+
+# Snapshot odds every 4 hours (00:00, 04:00, 08:00, etc)
+0 */4 * * * cd /Users/nikantehrani/Desktop/football_predictor_ai-master && .venv/bin/python scripts/odds_worker.py >> logs/odds_worker.log 2>&1
+
+# Settle picks 15 minutes after the hour, every hour
+15 * * * * cd /Users/nikantehrani/Desktop/football_predictor_ai-master && .venv/bin/python scripts/settlement_worker.py >> logs/settlement_worker.log 2>&1

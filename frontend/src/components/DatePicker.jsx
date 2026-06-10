@@ -1,5 +1,5 @@
 import React from 'react';
-import { ChevronLeft, ChevronRight } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Calendar } from 'lucide-react';
 
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -82,6 +82,22 @@ const DatePicker = ({ selectedDate, onDateChange }) => {
         >
           <ChevronRight className="w-4 h-4" />
         </button>
+
+        <div className="h-4 w-px bg-white/10 mx-1" />
+
+        <div className="relative w-8 h-8 rounded-lg flex items-center justify-center text-slate-400 hover:text-white hover:bg-white/5 transition-colors cursor-pointer" title="Select custom date">
+          <Calendar className="w-4 h-4" />
+          <input
+            type="date"
+            value={selectedDate}
+            onChange={(e) => {
+              if (e.target.value) {
+                onDateChange(e.target.value);
+              }
+            }}
+            className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
+          />
+        </div>
       </div>
     </div>
   );

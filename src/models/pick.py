@@ -69,12 +69,16 @@ GRADE_RULES = {
 }
 
 
-def assign_grade(edge: float, confidence: float, league_reliability: float) -> tuple[str, float]:
+def assign_grade(edge: float, confidence: float, league_reliability: float, model_prob: float = 0.5, odds: float = 2.0) -> tuple[str, float]:
     """
-    Assign a grade and suggested stake based on edge, confidence, and league reliability.
+    Assign a grade and suggested stake based on edge, confidence, league reliability, and Kelly fraction.
     Returns (grade, stake_units).
     """
-    # League-adjusted minimum edge
+    # Negative Edge = Instant Pass
+    if edge <= 0:
+        return "Pass", 0.0
+        
+    # League-adjusted minimum edge threshold
     if league_reliability >= 8.0:
         edge_boost = 0.0     # Top leagues: no adjustment
     elif league_reliability >= 6.5:
@@ -83,13 +87,35 @@ def assign_grade(edge: float, confidence: float, league_reliability: float) -> t
         edge_boost = 0.04    # Low leagues: need 4% more edge
 
     adjusted_edge = edge - edge_boost
+    
+    # Calculate pure Kelly Fraction
+    # f* = (bp - q) / b  where b = odds - 1, p = model_prob, q = 1 - p
+    b = odds - 1.0
+    if b <= 0: b = 0.01
+    q = 1.0 - model_prob
+    kelly_fraction = ((b * model_prob) - q) / b
+    
+    # Cap pure kelly at 15% of bankroll to avoid ruin, scale it normally as 0.0 - 0.15
+    kelly_cap = min(max(kelly_fraction, 0.0), 0.15)
+    
+    # We define 1 "unit" as 1% of the bankroll. So a kelly_cap of 0.10 means 10 units.
+    # To keep standard betting sizes (0.5u - 3.0u), we will use a Quarter Kelly strategy.
+    quarter_kelly_units = (kelly_cap * 100) * 0.25
 
     for grade_name, rules in GRADE_RULES.items():
         if adjusted_edge >= rules["min_edge"] and confidence >= rules["min_confidence"]:
-            # Scale stake by league trust
+            # Scale stake by league trust and model confidence
             league_scale = min(league_reliability / 9.0, 1.0)
-            stake = round(rules["base_stake"] * league_scale, 2)
-            stake = min(stake, 2.0)  # hard cap
+            confidence_scale = min(confidence / 0.8, 1.0)
+            
+            # The final stake blends the grade's base stake with the Kelly suggestion
+            kelly_stake = quarter_kelly_units * league_scale * confidence_scale
+            
+            # Blend 50/50 with the base rule for stability
+            blended_stake = (rules["base_stake"] + kelly_stake) / 2.0
+            
+            stake = round(blended_stake, 2)
+            stake = min(max(stake, 0.25), 3.0)  # hard cap between 0.25 and 3.0 units
             return grade_name, stake
 
     return "Pass", 0.0

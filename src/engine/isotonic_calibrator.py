@@ -46,7 +46,15 @@ IDEAL_SAMPLES = 500
 # Nothing in sports is 0% or 100%.  Cap outputs to prevent
 # downstream Kelly blowups and false certainty.
 CALIBRATED_FLOOR = 2.0   # minimum calibrated probability (%)
-CALIBRATED_CEILING = 95.0  # maximum calibrated probability (%)
+CALIBRATED_CEILING = 85.0  # maximum calibrated probability (%) - reduced to reduce overconfidence
+
+# Per-market-type ceilings. Handicap +spread markets are near-certain by
+# Poisson math but are NOT that reliable in practice — cap them more tightly.
+# This prevents the calibration model's X-axis truncation from outputting 95%
+# for everything above ~84%.
+MARKET_CEILINGS: dict[str, float] = {
+    "handicap": 82.0,
+}
 
 # ── Binning parameters ────────────────────────────────────────────
 BIN_WIDTH = 2.5   # percentage points per bin
@@ -165,6 +173,28 @@ class IsotonicCalibrator:
             avg_actual_test = float(np.mean(test_outcomes)) * 100 if len(test_outcomes) > 0 else 0.0
             gap_before = round(avg_pred_test - avg_actual_test, 1)
 
+            # ── Evaluate existing (old) model on test set for baseline ──
+            old_brier = 999.0
+            old_log_loss = 999.0
+            old_gap_after = 999.0
+            if market_type in self._models:
+                old_iso = self._models[market_type]
+                X_test = test_probs / 100.0
+                old_cal_test = np.clip(old_iso.predict(X_test) * 100, CALIBRATED_FLOOR, CALIBRATED_CEILING)
+                old_avg_cal = float(np.mean(old_cal_test)) if len(old_cal_test) > 0 else 0.0
+                old_gap_after = round(old_avg_cal - avg_actual_test, 1)
+
+                brier = 0.0
+                log_loss_val = 0.0
+                eps = 1e-7
+                for p_val, y_val in zip(old_cal_test / 100.0, test_outcomes):
+                    p_val = max(eps, min(1 - eps, float(p_val)))
+                    y_val = float(y_val)
+                    brier += (p_val - y_val) ** 2
+                    log_loss_val += -(y_val * np.log(p_val) + (1 - y_val) * np.log(1 - p_val))
+                old_brier = round(brier / len(test_data), 4) if len(test_data) > 0 else 999.0
+                old_log_loss = round(log_loss_val / len(test_data), 4) if len(test_data) > 0 else 999.0
+
             # ── Pre-bin training data to prevent overfitting ──
             # We aggregate into 2.5% bins and fit on smoothed hit rates.
             bin_centers, hit_rates, weights = _bin_predictions(train_probs, train_outcomes)
@@ -187,15 +217,6 @@ class IsotonicCalibrator:
             # Weighted fit: bins with more samples get more influence
             iso.fit(bin_centers, hit_rates, sample_weight=weights)
 
-            self._models[market_type] = iso
-            self._metadata[market_type] = {
-                "samples": n,
-                "train_samples": len(train_data),
-                "test_samples": len(test_data),
-                "bins_used": len(bin_centers),
-                "fitted_at": datetime.utcnow().isoformat(),
-            }
-
             # Post-calibration gap (evaluate out-of-sample on test set)
             X_test = test_probs / 100.0
             calibrated_test = np.clip(iso.predict(X_test) * 100, CALIBRATED_FLOOR, CALIBRATED_CEILING)
@@ -216,21 +237,56 @@ class IsotonicCalibrator:
             brier_score = round(brier / test_n, 4) if test_n > 0 else 0.0
             log_loss_score = round(log_loss_val / test_n, 4) if test_n > 0 else 0.0
 
+            # ── SAFETY RULE: Only activate if performance improves or no prior model exists ──
+            is_safe = True
+            reason = ""
+            if old_brier != 999.0:
+                if brier_score > old_brier:
+                    is_safe = False
+                    reason = f"Brier worsened ({old_brier:.4f} -> {brier_score:.4f})"
+                elif abs(gap_after) > abs(old_gap_after):
+                    is_safe = False
+                    reason = f"Gap worsened ({old_gap_after:+.1f}% -> {gap_after:+.1f}%)"
+                elif log_loss_score > old_log_loss:
+                    is_safe = False
+                    reason = f"Log Loss worsened ({old_log_loss:.4f} -> {log_loss_score:.4f})"
+
+            if is_safe:
+                self._models[market_type] = iso
+                self._metadata[market_type] = {
+                    "samples": n,
+                    "train_samples": len(train_data),
+                    "test_samples": len(test_data),
+                    "bins_used": len(bin_centers),
+                    "fitted_at": datetime.utcnow().isoformat(),
+                }
+                # Store the fitted model as JSON for persistence
+                self._store_model(conn, market_type, iso, n, brier_score, log_loss_score)
+                logger.info(
+                    f"Isotonic fit [{market_type}] ACCEPTED: {n} samples ({len(bin_centers)} bins), "
+                    f"gap {gap_before:+.1f}% → {gap_after:+.1f}%, Brier={brier_score:.4f}"
+                )
+            else:
+                logger.warning(
+                    f"Isotonic fit [{market_type}] REJECTED: {reason}. Keeping old model."
+                )
+
             summary[market_type] = {
                 "samples": n,
                 "train_samples": len(train_data),
                 "test_samples": test_n,
                 "bins_used": len(bin_centers),
-                "fitted": True,
+                "fitted": is_safe,
                 "gap_before": gap_before,
                 "gap_after": gap_after,
+                "old_gap_after": old_gap_after if old_gap_after != 999.0 else gap_before,
                 "improvement": round(abs(gap_before) - abs(gap_after), 1),
                 "brier_score": brier_score,
+                "old_brier": old_brier if old_brier != 999.0 else None,
                 "log_loss": log_loss_score,
+                "old_log_loss": old_log_loss if old_log_loss != 999.0 else None,
+                "reason": reason if not is_safe else "Accepted",
             }
-
-            # Store the fitted model as JSON for persistence
-            self._store_model(conn, market_type, iso, n, brier_score, log_loss_score)
 
             logger.info(
                 f"Isotonic fit [{market_type}]: {n} samples ({len(bin_centers)} bins), "
@@ -317,7 +373,7 @@ class IsotonicCalibrator:
         """Calibrate a raw probability (0-100 scale) using fitted isotonic model.
 
         Falls back to mild shrinkage if no model is available.
-        Output is always clamped to [CALIBRATED_FLOOR, CALIBRATED_CEILING].
+        Output is always clamped to [CALIBRATED_FLOOR, market-type ceiling].
 
         Args:
             raw_prob: model probability in 0-100 scale
@@ -326,16 +382,25 @@ class IsotonicCalibrator:
         Returns:
             calibrated probability in 0-100 scale
         """
+        ceiling = MARKET_CEILINGS.get(market_type, CALIBRATED_CEILING)
+
         if market_type in self._models:
             iso = self._models[market_type]
+            # Apply pre-shrinkage for handicap markets so raw values above the
+            # model's training X-range don't saturate at the ceiling.
+            input_prob = raw_prob
+            if market_type == "handicap":
+                # Shrink from edges toward centre before entering the model
+                p = raw_prob / 100.0
+                input_prob = round((0.5 + (p - 0.5) * 0.78) * 100.0, 1)
             # Convert to 0-1, predict, convert back to 0-100
-            calibrated = float(iso.predict(np.array([[raw_prob / 100.0]]))[0]) * 100
-            return round(max(CALIBRATED_FLOOR, min(CALIBRATED_CEILING, calibrated)), 1)
+            calibrated = float(iso.predict(np.array([[input_prob / 100.0]]))[0]) * 100
+            return round(max(CALIBRATED_FLOOR, min(ceiling, calibrated)), 1)
 
         # Fallback: mild shrinkage toward 50%
         # This is conservative but prevents overconfidence when uncalibrated
         shrunk = 0.85 * raw_prob + 0.15 * 50
-        return round(max(CALIBRATED_FLOOR, min(CALIBRATED_CEILING, shrunk)), 1)
+        return round(max(CALIBRATED_FLOOR, min(ceiling, shrunk)), 1)
 
     def get_status(self) -> dict:
         """Return calibration status per market type."""

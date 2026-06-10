@@ -1,0 +1,11 @@
+[Unit]
+Description=Football Predictor Settlement Worker
+After=network.target
+
+[Service]
+Type=oneshot
+User=www-data
+WorkingDirectory=/opt/football_predictor
+ExecStart=/opt/football_predictor/.venv/bin/python scripts/settlement_worker.py
+StandardOutput=append:/opt/football_predictor/logs/settlement_worker.log
+StandardError=append:/opt/football_predictor/logs/settlement_worker.log

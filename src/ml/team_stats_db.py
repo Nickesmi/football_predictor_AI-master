@@ -19,6 +19,8 @@ class TeamVenueStats:
     conceded: float
     corners: float
     cards: float
+    matches_played: int = 20
+    form_last5: float = 0.5
 
 
 # ─── PREMIER LEAGUE ───────────────────────────────────────────────────
@@ -388,6 +390,8 @@ def get_team_stats(team_name: str, venue: str, league: str = "") -> TeamVenueSta
                 conceded=conceded,
                 corners=round(overall.rolling_corners, 1),
                 cards=round(overall.rolling_cards, 1),
+                matches_played=overall.matches_played,
+                form_last5=overall.form_last5,
             )
 
         # SECONDARY: venue-specific row (team has only played at one venue so far)
@@ -398,6 +402,8 @@ def get_team_stats(team_name: str, venue: str, league: str = "") -> TeamVenueSta
                 conceded=round(live.rolling_conceded, 2),
                 corners=round(live.rolling_corners, 1),
                 cards=round(live.rolling_cards, 1),
+                matches_played=live.matches_played,
+                form_last5=live.form_last5,
             )
     except Exception:
         pass  # DB not available or import error → fall through to static

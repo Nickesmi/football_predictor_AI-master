@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo } from 'react';
 import { Loader2, AlertCircle, ShieldAlert, Cpu, ChevronDown, ChevronRight, Activity, Zap, Target, CornerUpRight, CreditCard, Trophy, Layers, Filter, BarChart3, TrendingUp, Shuffle, Crosshair, Crown, Shield } from 'lucide-react';
 
 const getBarColor = (pct) => {
@@ -46,26 +46,21 @@ const getSectionGradient = (secName) => {
   }
 };
 
-/* ── Tier styling ──────────────────────── */
-const TIER_STYLES = {
-  1: { border: "border-yellow-500/40", glow: "shadow-[0_0_15px_rgba(234,179,8,0.08)]", accent: "text-yellow-400", bg: "from-yellow-500/10 to-transparent", badge: "bg-yellow-500/20 text-yellow-400", icon: "text-yellow-400", label: "🏆 Tier 1", desc: "Highest Confidence" },
-  2: { border: "border-emerald-500/30", glow: "shadow-[0_0_12px_rgba(16,185,129,0.06)]", accent: "text-emerald-400", bg: "from-emerald-500/8 to-transparent", badge: "bg-emerald-500/15 text-emerald-400", icon: "text-emerald-400", label: "🥈 Tier 2", desc: "Very High Confidence" },
-  3: { border: "border-cyan-500/25", glow: "", accent: "text-cyan-400", bg: "from-cyan-500/6 to-transparent", badge: "bg-cyan-500/15 text-cyan-400", icon: "text-cyan-400", label: "🥉 Tier 3", desc: "High Confidence" },
-  4: { border: "border-blue-500/20", glow: "", accent: "text-blue-400", bg: "from-blue-500/5 to-transparent", badge: "bg-blue-500/10 text-blue-400", icon: "text-blue-400", label: "Tier 4", desc: "Moderate-High" },
-  5: { border: "border-violet-500/15", glow: "", accent: "text-violet-400", bg: "from-violet-500/5 to-transparent", badge: "bg-violet-500/10 text-violet-400", icon: "text-violet-400", label: "Tier 5", desc: "Moderate" },
-  6: { border: "border-slate-500/15", glow: "", accent: "text-slate-400", bg: "from-slate-500/5 to-transparent", badge: "bg-slate-500/10 text-slate-400", icon: "text-slate-400", label: "Tier 6", desc: "Standard" },
-  7: { border: "border-stone-500/15", glow: "", accent: "text-stone-400", bg: "from-stone-500/5 to-transparent", badge: "bg-stone-500/10 text-stone-400", icon: "text-stone-400", label: "Tier 7", desc: "Marginal" },
-  8: { border: "border-zinc-500/15", glow: "", accent: "text-zinc-400", bg: "from-zinc-500/5 to-transparent", badge: "bg-zinc-500/10 text-zinc-400", icon: "text-zinc-400", label: "Tier 8", desc: "Low Confidence" },
-  9: { border: "border-neutral-500/15", glow: "", accent: "text-neutral-400", bg: "from-neutral-500/5 to-transparent", badge: "bg-neutral-500/10 text-neutral-400", icon: "text-neutral-400", label: "Tier 9", desc: "Speculative" },
-  10: { border: "border-gray-500/15", glow: "", accent: "text-gray-500", bg: "from-gray-500/5 to-transparent", badge: "bg-gray-500/10 text-gray-500", icon: "text-gray-500", label: "Tier 10", desc: "Wildcard" },
+/* ── Category styling ──────────────────── */
+const CATEGORY_STYLES = {
+  "Result": { border: "border-emerald-500/30", glow: "shadow-[0_0_12px_rgba(16,185,129,0.06)]", accent: "text-emerald-400", bg: "from-emerald-500/10 to-transparent", badge: "bg-emerald-500/15 text-emerald-400", label: "Result Pick", desc: "Match outcome" },
+  "Goals": { border: "border-cyan-500/25", glow: "shadow-[0_0_12px_rgba(6,182,212,0.06)]", accent: "text-cyan-400", bg: "from-cyan-500/8 to-transparent", badge: "bg-cyan-500/15 text-cyan-400", label: "Total Goals", desc: "Over/Under lines" },
+  "Team Goals": { border: "border-teal-500/25", glow: "shadow-[0_0_12px_rgba(20,184,166,0.06)]", accent: "text-teal-400", bg: "from-teal-500/8 to-transparent", badge: "bg-teal-500/15 text-teal-400", label: "Team Goals", desc: "Individual team scores" },
+  "Handicaps": { border: "border-fuchsia-500/25", glow: "shadow-[0_0_12px_rgba(217,70,239,0.06)]", accent: "text-fuchsia-400", bg: "from-fuchsia-500/8 to-transparent", badge: "bg-fuchsia-500/15 text-fuchsia-400", label: "Handicaps", desc: "Spread & handicap lines" },
 };
 
 /* ── Score Prediction Card ──────────────────── */
-const ScorePrediction = ({ scorePrediction, dominance, homeName, awayName, poisson }) => {
+const ScorePrediction = ({ scorePrediction, dominance, homeName, awayName, poisson, actual, status }) => {
   if (!scorePrediction) return null;
 
-  const ftScores = scorePrediction.full_time || [];
+  const ftScores = poisson?.top_scorelines || scorePrediction.full_time || [];
   const fhScores = scorePrediction.first_half || [];
+  const allScorelines = poisson?.all_scorelines || [];
   const expectedGoals = scorePrediction.expected_goals || {};
   const corners = dominance?.corners || {};
   const cards = dominance?.cards || {};
@@ -97,6 +92,79 @@ const ScorePrediction = ({ scorePrediction, dominance, homeName, awayName, poiss
         </div>
       </div>
 
+      {/* ── POST-MATCH ANALYSIS (Only for Finished Matches) ── */}
+      {status === 'FT' && actual && (
+        <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-xl p-5 mb-6 relative overflow-hidden">
+          <div className="absolute top-0 right-0 w-32 h-32 bg-emerald-500/20 blur-3xl rounded-full" />
+          
+          <div className="flex items-center gap-2 mb-4">
+            <Trophy className="w-5 h-5 text-emerald-400" />
+            <h3 className="text-sm font-bold tracking-[0.15em] text-white uppercase">Post-Match Learning</h3>
+            <span className="bg-emerald-500/20 text-emerald-400 text-[9px] font-bold px-2 py-0.5 rounded-sm uppercase tracking-wider ml-auto">Engine Updated</span>
+          </div>
+
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            {/* Score Comparison */}
+            <div className="bg-black/20 p-3 rounded-lg border border-white/5">
+              <span className="text-[10px] text-slate-400 uppercase tracking-wider mb-2 block">Scoreline</span>
+              <div className="flex justify-between items-center mb-1">
+                <span className="text-xs text-slate-500">Predicted:</span>
+                <span className="text-sm font-mono text-slate-300">
+                  {scorePrediction?.full_time?.[0]?.home ?? 0}-{scorePrediction?.full_time?.[0]?.away ?? 0}
+                </span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-xs text-emerald-400 font-bold">Actual:</span>
+                <span className="text-sm font-mono font-bold text-white">
+                  {actual?.home_goals ?? 0}-{actual?.away_goals ?? 0}
+                </span>
+              </div>
+            </div>
+
+            {/* Result Comparison */}
+            <div className="bg-black/20 p-3 rounded-lg border border-white/5">
+              <span className="text-[10px] text-slate-400 uppercase tracking-wider mb-2 block">Result</span>
+              <div className="flex justify-between items-center mb-1">
+                <span className="text-xs text-slate-500">Predicted:</span>
+                <span className="text-xs text-slate-300">
+                  {(poisson?.result?.home_win ?? 0) > (poisson?.result?.away_win ?? 0) ? "Home Win" : "Away Win"}
+                </span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-xs text-emerald-400 font-bold">Actual:</span>
+                <span className="text-xs font-bold text-white">
+                  {(actual?.home_goals ?? 0) > (actual?.away_goals ?? 0) ? "Home Win" : 
+                   (actual?.home_goals ?? 0) < (actual?.away_goals ?? 0) ? "Away Win" : "Draw"}
+                </span>
+              </div>
+            </div>
+
+            {/* Model Error */}
+            <div className="bg-black/20 p-3 rounded-lg border border-white/5 md:col-span-2">
+              <span className="text-[10px] text-slate-400 uppercase tracking-wider mb-2 block">Prediction Error (Goals)</span>
+              <div className="flex items-center gap-4">
+                <div className="flex-1">
+                  <div className="flex justify-between text-xs mb-1">
+                    <span className="text-slate-500">Expected Total: <span className="text-white">{expectedGoals.total}</span></span>
+                    <span className="text-emerald-400">Actual: <span className="text-white">{actual?.total_goals ?? 0}</span></span>
+                  </div>
+                  <div className="h-1.5 w-full bg-white/10 rounded-full overflow-hidden flex">
+                    <div className="bg-slate-400 h-full" style={{ width: `${Math.min(((expectedGoals.total || 0) / 6) * 100, 100)}%` }} />
+                    <div className="bg-emerald-400 h-full" style={{ width: `${Math.min((Math.abs((actual?.total_goals ?? 0) - (expectedGoals.total || 0)) / 6) * 100, 100)}%` }} />
+                  </div>
+                </div>
+                <div className="text-right shrink-0">
+                  <span className="text-[10px] text-slate-500 block">Delta</span>
+                  <span className={`text-sm font-bold font-mono ${(actual?.total_goals ?? 0) - (expectedGoals.total || 0) > 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                    {((actual?.total_goals ?? 0) - (expectedGoals.total || 0)) > 0 ? '+' : ''}{((actual?.total_goals ?? 0) - (expectedGoals.total || 0)).toFixed(1)}
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* FT & FH Scores */}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         {[{ scores: ftScores, label: "Full Time", color: "cyan" }, { scores: fhScores, label: "First Half", color: "violet" }].map(({ scores, label, color }) => (
@@ -107,20 +175,72 @@ const ScorePrediction = ({ scorePrediction, dominance, homeName, awayName, poiss
               <span className="text-[9px] text-slate-500 ml-auto">Top {scores.length}</span>
             </div>
             <div className="divide-y divide-white/[0.03]">
-              {scores.map((score, idx) => (
-                <div key={idx} className={`flex items-center justify-between px-4 py-2.5 ${idx === 0 ? `bg-${color}-500/[0.04]` : ''}`}>
-                  <div className="flex items-center gap-3">
-                    {idx === 0 && <Crown className="w-3.5 h-3.5 text-yellow-400" />}
-                    <span className={`text-lg font-mono font-bold ${idx === 0 ? 'text-white' : 'text-slate-400'}`}>{score.home} - {score.away}</span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <div className="w-16 h-1.5 bg-black/40 rounded-full overflow-hidden">
-                      <div className={`h-full rounded-full bg-${color}-400 animate-grow`} style={{ width: `${Math.min(score.probability * 3, 100)}%`, opacity: idx === 0 ? 1 : 0.5 }} />
+              {scores.map((score, idx) => {
+                const isActual = status === 'FT' && label === 'Full Time' && 
+                                 score.score === `${actual?.home_goals ?? -1}-${actual?.away_goals ?? -1}`;
+                
+                // Keep compatibility with old structure
+                const homeS = score.home !== undefined ? score.home : (score.score ? score.score.split('-')[0] : 0);
+                const awayS = score.away !== undefined ? score.away : (score.score ? score.score.split('-')[1] : 0);
+                
+                return (
+                  <div key={idx} className={`flex items-center justify-between px-4 py-2.5 ${idx === 0 && !isActual ? `bg-${color}-500/[0.04]` : ''} ${isActual ? 'bg-emerald-500/20 border-l-2 border-emerald-400' : ''}`}>
+                    <div className="flex items-center gap-3">
+                      {idx === 0 && !isActual && <Crown className="w-3.5 h-3.5 text-yellow-400" />}
+                      {isActual && <Trophy className="w-3.5 h-3.5 text-emerald-400" />}
+                      <span className={`text-lg font-mono font-bold ${idx === 0 || isActual ? 'text-white' : 'text-slate-400'}`}>
+                        {homeS} - {awayS}
+                      </span>
+                      {isActual && <span className="text-[9px] font-bold text-emerald-400 uppercase tracking-wider px-1.5 py-0.5 bg-emerald-500/20 rounded">Actual</span>}
                     </div>
-                    <span className={`text-sm font-mono font-bold min-w-[44px] text-right ${idx === 0 ? `text-${color}-400` : 'text-slate-500'}`}>{score.probability}%</span>
+                    <div className="flex items-center gap-2">
+                      <div className="w-16 h-1.5 bg-black/40 rounded-full overflow-hidden">
+                        <div className={`h-full rounded-full bg-${color}-400 animate-grow`} style={{ width: `${Math.min(score.probability * 3, 100)}%`, opacity: idx === 0 || isActual ? 1 : 0.5 }} />
+                      </div>
+                      <span className={`text-sm font-mono font-bold min-w-[44px] text-right ${idx === 0 || isActual ? `text-${color}-400` : 'text-slate-500'}`}>{score.probability}%</span>
+                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
+              
+              {/* Actual Result Out of Top 5 */}
+              {status === 'FT' && label === 'Full Time' && actual && allScorelines.length > 0 && (() => {
+                const actualStr = `${actual.home_goals}-${actual.away_goals}`;
+                const inTop5 = scores.some(s => (s.score || `${s.home}-${s.away}`) === actualStr);
+                
+                if (inTop5) return null;
+                
+                const actualScoreData = allScorelines.find(s => s.score === actualStr) || { rank: '>99', probability: 0.0 };
+                const rank = actualScoreData.rank;
+                
+                let assessColor = "rose";
+                let assessLabel = "Poor";
+                if (rank <= 5) { assessColor = "emerald"; assessLabel = "Excellent"; }
+                else if (rank <= 10) { assessColor = "teal"; assessLabel = "Good"; }
+                else if (rank <= 20) { assessColor = "amber"; assessLabel = "Acceptable"; }
+                
+                return (
+                  <div className="bg-rose-500/5 border-t border-rose-500/20 mt-2 p-4">
+                     <div className="flex items-center gap-2 mb-3">
+                        <AlertCircle className="w-4 h-4 text-rose-400" />
+                        <span className="text-xs font-bold text-rose-400 uppercase tracking-wider">Actual Result ⭐</span>
+                        <span className={`ml-auto text-[9px] font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-${assessColor}-500/20 text-${assessColor}-400 border border-${assessColor}-500/30`}>
+                          Assessment: {assessLabel}
+                        </span>
+                     </div>
+                     <div className="flex items-center justify-between">
+                       <div className="flex items-center gap-3">
+                         <span className="text-xl font-mono font-bold text-white">{actual.home_goals} - {actual.away_goals}</span>
+                       </div>
+                       <div className="text-right">
+                         <span className="block text-xs font-mono font-bold text-slate-300">Rank #{rank}</span>
+                         <span className="block text-xs font-mono text-slate-500">{actualScoreData.probability}% Prob</span>
+                       </div>
+                     </div>
+                     <p className="text-[10px] text-slate-500 mt-2 text-center">This scoreline was not inside the Top {scores.length} predictions.</p>
+                  </div>
+                );
+              })()}
             </div>
           </div>
         ))}
@@ -166,49 +286,126 @@ const ScorePrediction = ({ scorePrediction, dominance, homeName, awayName, poiss
   );
 };
 
-/* ── Single Tier Component ──────────────────── */
-const TierCard = ({ tier }) => {
-  const style = TIER_STYLES[tier.tier] || TIER_STYLES[6];
-  const picks = tier.picks || [];
+/* ── Calibrated Confidence Chart Component ───────── */
+const ConfidenceChartCard = ({ picks, tiers = [] }) => {
+  const getIcon = (cat) => {
+    switch (cat) {
+      case "Result": return <Trophy className="w-3.5 h-3.5 text-emerald-400" />;
+      case "Goals": return <Target className="w-3.5 h-3.5 text-cyan-400" />;
+      case "Team Goals": return <TrendingUp className="w-3.5 h-3.5 text-teal-400" />;
+      case "Handicaps": return <Zap className="w-3.5 h-3.5 text-fuchsia-400" />;
+      default: return <Shield className="w-3.5 h-3.5 text-slate-400" />;
+    }
+  };
+
+  const getBadgeStyle = (cat) => {
+    switch (cat) {
+      case "Result": return "bg-emerald-500/15 text-emerald-400 border border-emerald-500/20";
+      case "Goals": return "bg-cyan-500/15 text-cyan-400 border border-cyan-500/20";
+      case "Team Goals": return "bg-teal-500/15 text-teal-400 border border-teal-500/20";
+      case "Handicaps": return "bg-fuchsia-500/15 text-fuchsia-400 border border-fuchsia-500/20";
+      default: return "bg-slate-500/15 text-slate-400 border border-white/5";
+    }
+  };
+
+  const fallbackTiers = [
+    { id: "tier1", name: "Tier 1", label: "Elite Confidence", range: "80-100%", picks: (picks || []).filter(p => p.probability >= 80) },
+    { id: "tier2", name: "Tier 2", label: "Strong Confidence", range: "70-79.9%", picks: (picks || []).filter(p => p.probability >= 70 && p.probability < 80) },
+    { id: "tier3", name: "Tier 3", label: "Moderate Confidence", range: "60-69.9%", picks: (picks || []).filter(p => p.probability >= 60 && p.probability < 70) },
+  ];
+  const displayTiers = tiers.length ? tiers : fallbackTiers;
+
+  const getTierStyle = (id) => {
+    switch (id) {
+      case "tier1":
+        return { border: "border-emerald-500/30", bg: "bg-emerald-500/10", text: "text-emerald-400", icon: <Crown className="w-4 h-4 text-emerald-400" /> };
+      case "tier2":
+        return { border: "border-blue-500/30", bg: "bg-blue-500/10", text: "text-blue-400", icon: <Shield className="w-4 h-4 text-blue-400" /> };
+      default:
+        return { border: "border-amber-500/25", bg: "bg-amber-500/10", text: "text-amber-400", icon: <Activity className="w-4 h-4 text-amber-400" /> };
+    }
+  };
 
   return (
-    <div className={`bg-[#111318] border ${style.border} rounded-xl overflow-hidden ${style.glow} transition-all`}>
-      {/* Tier Header */}
-      <div className={`px-4 py-3 border-b border-white/5 bg-gradient-to-r ${style.bg} flex items-center justify-between`}>
-        <div className="flex items-center gap-2.5">
-          <Shield className={`w-4 h-4 ${style.icon}`} />
-          <span className="text-sm font-bold text-white uppercase tracking-wider">{style.label}</span>
-          <span className={`text-[9px] font-bold px-2 py-0.5 rounded-sm uppercase tracking-wider ${style.badge}`}>{style.desc}</span>
-        </div>
-        <div className="flex items-center gap-2">
-          <Shuffle className="w-3 h-3 text-slate-500 opacity-60" />
-          <span className="text-[9px] text-slate-500 font-mono">{tier.min_probability}%–{tier.max_probability}%</span>
-        </div>
-      </div>
+    <div className="space-y-4">
+      {displayTiers.map((tier) => {
+        const style = getTierStyle(tier.id);
+        const tierPicks = tier.picks || [];
 
-      {/* Tier Picks Grid */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-px bg-white/[0.02]">
-        {picks.map((pick, idx) => (
-          <div key={idx} className="bg-[#0D0F13] p-3.5 hover:bg-white/[0.02] transition-colors group relative">
-            <div className="absolute top-0 right-0 w-10 h-10 bg-gradient-to-bl from-white/[0.02] to-transparent rounded-bl-full pointer-events-none" />
-            <span className={`text-[9px] ${style.accent} font-bold uppercase tracking-wider mb-1 block opacity-70`}>
-              {pick.section}
-            </span>
-            <p className="text-[13px] font-medium text-slate-300 mb-3 leading-snug line-clamp-2 min-h-[36px]">{pick.market}</p>
-            <div className="flex items-end justify-between">
-              <div className="w-full">
-                <div className="flex justify-between items-center mb-1">
-                  <span className="text-[9px] text-slate-600 uppercase font-mono">Prob</span>
-                  <span className={`text-sm font-bold font-mono ${getTextColor(pick.probability)}`}>{pick.probability.toFixed(1)}%</span>
-                </div>
-                <div className="w-full h-1 bg-black/40 rounded-full overflow-hidden">
-                  <div className={`h-full ${getBarColor(pick.probability)} rounded-full animate-grow`} style={{ width: `${Math.min(pick.probability, 100)}%` }} />
+        return (
+          <div key={tier.id} className={`bg-[#111318] border ${style.border} rounded-xl overflow-hidden shadow-lg`}>
+            {/* Tier Header */}
+            <div className={`px-4 py-3 ${style.bg} border-b border-white/5 flex items-center justify-between gap-3`}>
+              <div className="flex items-center gap-2">
+                {style.icon}
+                <div>
+                  <span className={`text-xs font-bold uppercase tracking-wider block ${style.text}`}>{tier.name} · {tier.range}</span>
+                  <span className={`text-[9px] ${style.text} opacity-70 uppercase tracking-widest`}>{tier.label}</span>
                 </div>
               </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <span className="hidden md:inline-flex bg-black/25 text-slate-300 border border-white/5 text-[10px] font-bold px-2 py-0.5 rounded uppercase tracking-wider font-mono">
+                  avg {(tier.avg_probability || 0).toFixed(1)}%
+                </span>
+                <span className={`bg-white/10 ${style.text} text-[10px] font-bold px-2 py-0.5 rounded uppercase tracking-wider font-mono`}>
+                  {tierPicks.length} picks
+                </span>
+                <span className="hidden sm:inline-flex bg-emerald-500/10 text-emerald-400 text-[10px] font-bold px-2 py-0.5 rounded uppercase tracking-wider font-mono">
+                  {tier.bankroll_qualified_count || 0} passed gate
+                </span>
+              </div>
+            </div>
+
+            {/* Tier List */}
+            <div className="divide-y divide-white/[0.04] bg-[#0D0F13]">
+              {tierPicks.length === 0 && (
+                <div className="p-4 text-[11px] text-slate-600 uppercase tracking-widest">
+                  No markets in this tier
+                </div>
+              )}
+              {tierPicks.map((pick, idx) => (
+                <div key={idx} className="flex flex-col sm:flex-row sm:items-center justify-between p-4 hover:bg-white/[0.02] transition-colors gap-3">
+                  {/* Left: Category Icon & Badge + Market name */}
+                  <div className="flex items-center gap-3 flex-1 min-w-0">
+                    <div className={`flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold tracking-wider shrink-0 uppercase ${getBadgeStyle(pick.section)}`}>
+                      {getIcon(pick.section)}
+                      <span>{pick.section}</span>
+                    </div>
+                    <span className="text-[13px] font-medium text-slate-200 truncate">{pick.market}</span>
+                    {pick.bankroll_qualified && (
+                      <span className="hidden md:inline-flex items-center gap-1 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider">
+                        <Shield className="w-3 h-3" />
+                        Gate
+                      </span>
+                    )}
+                    {pick.fair_odds && (
+                      <span className="hidden lg:inline-flex bg-black/25 text-slate-400 border border-white/5 rounded px-1.5 py-0.5 text-[9px] font-mono uppercase">
+                        fair {pick.fair_odds}
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Right: Progress bar & probability */}
+                  <div className="flex items-center gap-3 shrink-0 sm:w-64">
+                    <div className="flex-1 h-2 bg-black/40 rounded-full overflow-hidden hidden sm:block border border-white/5">
+                      <div
+                        className={`h-full ${getBarColor(pick.probability)} rounded-full animate-grow`}
+                        style={{ width: `${Math.min(pick.probability, 100)}%` }}
+                      />
+                    </div>
+                    <div className="flex items-baseline justify-between sm:justify-end sm:gap-2 w-full sm:w-auto font-mono">
+                      <span className="text-[9px] text-slate-600 uppercase font-mono sm:hidden">Probability</span>
+                      <span className={`text-sm font-bold ${getTextColor(pick.probability)}`}>
+                        {pick.probability.toFixed(1)}%
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              ))}
             </div>
           </div>
-        ))}
-      </div>
+        );
+      })}
     </div>
   );
 };
@@ -217,18 +414,14 @@ const TierCard = ({ tier }) => {
 const MatchDetail = ({ fixture, analysis, loading, error }) => {
   const [activeLayer, setActiveLayer] = useState('layer2');
 
-  useEffect(() => {
-    setActiveLayer(Math.random() > 0.5 ? 'layer1' : 'layer2');
-  }, [fixture?.id]);
   const [expandedSections, setExpandedSections] = useState({
     "Goals": true, "First Half": true, "Second Half": true, "Team Goals": true,
     "Result": true, "Handicaps": true, "Corners": true, "Cards": true
   });
 
   const sectionOrder = useMemo(() => {
-    const sections = ["Goals", "First Half", "Second Half", "Team Goals", "Result", "Handicaps", "Corners", "Cards"];
-    return sections.sort(() => Math.random() - 0.5);
-  }, [fixture?.id]);
+    return ["Goals", "First Half", "Second Half", "Team Goals", "Result", "Handicaps", "Corners", "Cards"];
+  }, []);
 
   const toggleSection = (sec) => {
     setExpandedSections(prev => ({ ...prev, [sec]: !prev[sec] }));
@@ -257,7 +450,7 @@ const MatchDetail = ({ fixture, analysis, loading, error }) => {
 
   if (!analysis) return null;
 
-  const tiers = analysis.tiers || [];
+  const categories = analysis.categories || [];
   const fullAnalysis = analysis.full_analysis || {};
   const poisson = analysis.poisson;
   const scorePrediction = analysis.score_prediction;
@@ -303,9 +496,9 @@ const MatchDetail = ({ fixture, analysis, loading, error }) => {
           <span className="text-white font-mono font-bold mr-1">{analysis.total_markets_scanned}</span> MARKETS
         </span>
         <div className="h-4 w-px bg-white/10" />
-        <span className="text-[10px] text-yellow-400 uppercase tracking-widest font-bold flex items-center gap-1">
+        <span className="text-[10px] text-emerald-400 uppercase tracking-widest font-bold flex items-center gap-1">
           <Shield className="w-3 h-3" />
-          10 TIERS × 6 PICKS
+          <span className="text-white font-mono font-bold mr-0.5">{analysis.total_confident_picks || analysis.top_picks?.length || 0}</span> CONFIDENT PICKS (≥60%)
         </span>
         <div className="h-4 w-px bg-white/10" />
         <span className="text-[10px] text-emerald-400 uppercase tracking-widest font-bold flex items-center gap-1">
@@ -315,28 +508,42 @@ const MatchDetail = ({ fixture, analysis, loading, error }) => {
       </div>
 
       {/* ── Score Prediction + Dominance ──────────────── */}
-      <ScorePrediction scorePrediction={scorePrediction} dominance={dominance} homeName={homeName} awayName={awayName} poisson={poisson} />
+      <ScorePrediction 
+        scorePrediction={scorePrediction} 
+        dominance={dominance} 
+        homeName={homeName} 
+        awayName={awayName} 
+        poisson={poisson}
+        actual={fixture?.actual || (fixture?.status === 'FT' && fixture?.home_goals != null ? {
+          home_goals: fixture.home_goals,
+          away_goals: fixture.away_goals,
+          total_goals: fixture.home_goals + fixture.away_goals
+        } : null)}
+        status={fixture?.status} 
+      />
 
       {/* ── Layer Toggle ──────────────────────── */}
       <div className="flex gap-2 mb-6">
         <button
           onClick={() => setActiveLayer('layer2')}
           className={`flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-xl border transition-all duration-200 ${activeLayer === 'layer2'
-            ? 'bg-gradient-to-r from-yellow-500/10 to-emerald-500/10 border-yellow-500/40 shadow-[0_0_20px_rgba(234,179,8,0.08)]'
+            ? 'bg-gradient-to-r from-emerald-500/10 to-teal-500/10 border-emerald-500/40 shadow-[0_0_20px_rgba(16,185,129,0.08)]'
             : 'bg-[#111318] border-white/5 hover:border-white/10'
             }`}
         >
-          <Shield className={`w-4 h-4 ${activeLayer === 'layer2' ? 'text-yellow-400' : 'text-slate-500'}`} />
+          <Shield className={`w-4 h-4 ${activeLayer === 'layer2' ? 'text-emerald-400' : 'text-slate-500'}`} />
           <div className="text-left">
             <span className={`text-xs font-bold uppercase tracking-wider block ${activeLayer === 'layer2' ? 'text-white' : 'text-slate-400'}`}>
-              Layer 2 — Tiered Picks
+              Layer 2 — Confident Picks
             </span>
-            <span className={`text-[9px] ${activeLayer === 'layer2' ? 'text-yellow-400/70' : 'text-slate-600'}`}>
-              10 tiers shuffled • odds randomized
+            <span className={`text-[9px] ${activeLayer === 'layer2' ? 'text-emerald-400/70' : 'text-slate-600'}`}>
+              3 rank tiers (≥60%)
             </span>
           </div>
           {activeLayer === 'layer2' && (
-            <span className="bg-yellow-500/20 text-yellow-400 text-[10px] font-bold px-2 py-0.5 rounded-md ml-auto">60</span>
+            <span className="bg-emerald-500/20 text-emerald-400 text-[10px] font-bold px-2 py-0.5 rounded-md ml-auto">
+              {analysis.total_confident_picks || analysis.top_picks?.length || 0}
+            </span>
           )}
         </button>
 
@@ -363,13 +570,11 @@ const MatchDetail = ({ fixture, analysis, loading, error }) => {
       </div>
 
       {/* ══════════════════════════════════════════ */}
-      {/* LAYER 2 — TIERED PICKS                    */}
+      {/* LAYER 2 — CONFIDENT PICKS                 */}
       {/* ══════════════════════════════════════════ */}
       {activeLayer === 'layer2' && (
         <div className="animate-fade-in space-y-4">
-          {tiers.map((tier) => (
-            <TierCard key={tier.tier} tier={tier} />
-          ))}
+          <ConfidenceChartCard picks={analysis.top_picks} tiers={analysis.tiers || []} />
         </div>
       )}
 

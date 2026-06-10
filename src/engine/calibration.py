@@ -33,6 +33,8 @@ class ProbabilityCalibrator:
         # bin_edges[i] to bin_edges[i+1] → (total, wins)
         self.bin_width = 1.0 / n_bins
         self.bins: dict[int, dict] = {}
+        self.group_bins: dict[tuple[str, str], dict[int, dict]] = {}
+        self.group_counts: dict[tuple[str, str], int] = {}
         self._fitted = False
 
     def fit_from_db(self, conn: sqlite3.Connection) -> None:
@@ -41,7 +43,7 @@ class ProbabilityCalibrator:
         Only uses settled picks (won/lost).
         """
         rows = conn.execute(
-            """SELECT model_prob, result FROM picks
+            """SELECT market, selection, model_prob, result FROM picks
                WHERE result IN ('won', 'lost')
                ORDER BY created_at"""
         ).fetchall()
@@ -56,6 +58,8 @@ class ProbabilityCalibrator:
 
         # Reset bins
         self.bins = {}
+        self.group_bins = {}
+        self.group_counts = {}
         for i in range(self.n_bins):
             self.bins[i] = {"total": 0, "wins": 0}
 
@@ -66,12 +70,30 @@ class ProbabilityCalibrator:
             self.bins[bin_idx]["total"] += 1
             self.bins[bin_idx]["wins"] += won
 
+            for key in (
+                (row["market"] or "", row["selection"] or ""),
+                (row["market"] or "", "*"),
+            ):
+                if key not in self.group_bins:
+                    self.group_bins[key] = {
+                        i: {"total": 0, "wins": 0} for i in range(self.n_bins)
+                    }
+                    self.group_counts[key] = 0
+                self.group_bins[key][bin_idx]["total"] += 1
+                self.group_bins[key][bin_idx]["wins"] += won
+                self.group_counts[key] += 1
+
         self._fitted = True
         logger.info(
             f"Calibrator fitted on {len(rows)} picks across {self.n_bins} bins"
         )
 
-    def calibrate(self, raw_prob: float) -> float:
+    def calibrate(
+        self,
+        raw_prob: float,
+        market: str | None = None,
+        selection: str | None = None,
+    ) -> float:
         """
         Calibrate a raw probability.
 
@@ -84,7 +106,16 @@ class ProbabilityCalibrator:
             return 0.85 * raw_prob + 0.15 * 0.5
 
         bin_idx = min(int(raw_prob / self.bin_width), self.n_bins - 1)
-        bin_data = self.bins.get(bin_idx, {"total": 0, "wins": 0})
+        bins = self.bins
+        if market:
+            exact_key = (market, selection or "")
+            market_key = (market, "*")
+            if self.group_counts.get(exact_key, 0) >= 30:
+                bins = self.group_bins[exact_key]
+            elif self.group_counts.get(market_key, 0) >= 30:
+                bins = self.group_bins[market_key]
+
+        bin_data = bins.get(bin_idx, {"total": 0, "wins": 0})
 
         if bin_data["total"] < 5:
             # Not enough samples in this bin — use shrinkage

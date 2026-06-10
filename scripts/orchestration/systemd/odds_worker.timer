@@ -1,0 +1,9 @@
+[Unit]
+Description=Run Football Predictor Odds Worker Every 4 Hours
+
+[Timer]
+OnCalendar=0/4:00:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

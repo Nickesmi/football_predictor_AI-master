@@ -67,6 +67,8 @@ def find_value(
                 "implied_prob": round(implied_prob, 4),
                 "edge": round(edge, 4),
                 "odds": round(decimal_odds, 3),
+                "data_quality": float(model_probs.get("data_quality", 50.0)),
+                "model_source": model_probs.get("source", "unknown"),
             })
 
     # Sort by edge descending

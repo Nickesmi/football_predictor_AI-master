@@ -99,6 +99,9 @@ class PoissonPrediction:
 
     # Top 5 most likely scorelines
     top_scorelines: list[dict] = field(default_factory=list)
+    
+    # Complete list of all computed scorelines (filtered >= 0.01%)
+    all_scorelines: list[dict] = field(default_factory=list)
 
     # Strength ratios for display
     home_attack_strength: float = 0.0
@@ -155,7 +158,12 @@ class PoissonPrediction:
                     "away_win": round(self.fh_away_win, 1),
                 }
             },
-            "top_scorelines": self.top_scorelines[:5],
+            "top_scorelines": self.top_scorelines[:6],
+            "all_scorelines": self.all_scorelines,
+            "xg": {
+                "home": round(self.lambda_home, 2),
+                "away": round(self.lambda_away, 2)
+            }
         }
 
 
@@ -232,9 +240,17 @@ class PoissonGoalModel:
         lambda_home = home_str.attack_strength * away_str.defense_weakness * self.profile.avg_home_goals
         lambda_away = away_str.attack_strength * home_str.defense_weakness * self.profile.avg_away_goals
 
-        # Clamp to reasonable range
-        lambda_home = max(0.2, min(lambda_home, 5.0))
-        lambda_away = max(0.1, min(lambda_away, 4.5))
+        # Clamp to reasonable range — no single team realistically scores 3+ or 0.3 on average
+        lambda_home = max(0.4, min(lambda_home, 3.5))
+        lambda_away = max(0.3, min(lambda_away, 3.0))
+
+        # Regression to mean: pull extreme lambdas toward league average (prevents
+        # lopsided stats from producing 3%/88% result probabilities)
+        REGRESS_FACTOR = 0.15  # 15% pull toward league mean
+        mean_home = self.profile.avg_home_goals
+        mean_away = self.profile.avg_away_goals
+        lambda_home = lambda_home * (1 - REGRESS_FACTOR) + mean_home * REGRESS_FACTOR
+        lambda_away = lambda_away * (1 - REGRESS_FACTOR) + mean_away * REGRESS_FACTOR
 
         # Step 3: Build probability matrix
         matrix = {}
@@ -271,12 +287,22 @@ class PoissonGoalModel:
         home_cs = sum(matrix[(h, 0)] for h in range(self.MAX_GOALS + 1)) * 100
         away_cs = sum(matrix[(0, a)] for a in range(self.MAX_GOALS + 1)) * 100
 
-        # Top scorelines
-        scorelines = sorted(matrix.items(), key=lambda x: x[1], reverse=True)[:5]
+        # Top scorelines & All scorelines with ranks
+        scorelines_sorted = sorted(matrix.items(), key=lambda x: x[1], reverse=True)
         top_scores = [
             {"score": f"{h}-{a}", "probability": round(p * 100, 1)}
-            for (h, a), p in scorelines
+            for (h, a), p in scorelines_sorted[:6]
         ]
+        
+        all_scorelines = []
+        for i, ((h, a), p) in enumerate(scorelines_sorted):
+            prob_pct = p * 100
+            if prob_pct >= 0.01:  # Filter out extremely unlikely tails to save space
+                all_scorelines.append({
+                    "score": f"{h}-{a}",
+                    "probability": round(prob_pct, 2),
+                    "rank": i + 1
+                })
 
         # ── First Half Calculations ──
         fh_matrix = {}
@@ -328,6 +354,7 @@ class PoissonGoalModel:
             fh_draw=fh_draw_p,
             fh_away_win=fh_away_win_p,
             top_scorelines=top_scores,
+            all_scorelines=all_scorelines,
             home_attack_strength=home_str.attack_strength,
             home_defense_weakness=home_str.defense_weakness,
             away_attack_strength=away_str.attack_strength,
