@@ -1232,10 +1232,9 @@ def _compute_match_analysis(home_name: str, away_name: str, league_name: str = "
     # LAYER 2 — CONFIDENT PICKS (bankroll-protected shortlist)
     # ══════════════════════════════════════════════════════
     #
-    # Focus Categories: All Categories
+    # Focus Categories: every market category with probability >= 60%.
     #
-    tier_sections = {"Result", "Goals", "Team Goals", "Handicaps"}
-    allowed_sections = set(tier_sections)
+    allowed_sections = set(section_order)
     pick_gate = None
     pick_gate_status = {
         "enabled": False,

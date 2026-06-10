@@ -29,12 +29,8 @@ Key behavior:
 - Pulls daily fixtures from available providers.
 - Computes match probabilities using Poisson, XGBoost-style predictors, calibration, and data-quality checks.
 - Shows full structured market analysis across all sections.
-- Promotes a focused confidence layer using the aligned market categories:
-  - Result
-  - Total Goals
-  - Team Goals
-  - Handicaps
-- Splits all confident picks above 60 percent into three rank-based tiers:
+- Promotes every market with probability at or above 60 percent into Layer 2.
+- Splits all Layer 2 picks into three rank-based tiers:
   - Tier 1: top ranked group
   - Tier 2: second ranked group
   - Tier 3: third ranked group
@@ -50,7 +46,7 @@ It reports:
 - Overall settled accuracy.
 - Correct, wrong, and excluded pick counts.
 - Tier 1, Tier 2, and Tier 3 accuracy.
-- Aligned category accuracy for Result, Total Goals, Team Goals, and Handicaps.
+- Category accuracy for the main result-tracking groups.
 - Match-by-match expanded verification.
 
 ## Backend Highlights

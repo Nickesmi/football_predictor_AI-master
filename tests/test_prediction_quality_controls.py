@@ -99,6 +99,12 @@ def test_main_analysis_keeps_realistic_probability_spread():
 
     assert top_picks
     assert min(pick["probability"] for pick in top_picks) >= 60.0
+    markets_above_60 = [
+        market for market in all_markets
+        if market["probability"] >= 60.0
+    ]
+    assert len(top_picks) == len(markets_above_60)
+    assert {pick["market"] for pick in top_picks} == {market["market"] for market in markets_above_60}
     assert [tier["id"] for tier in tiers] == ["tier1", "tier2", "tier3"]
     assert all("picks" in tier for tier in tiers)
     assert sum(tier["count"] for tier in tiers) == analysis["total_confident_picks"]
