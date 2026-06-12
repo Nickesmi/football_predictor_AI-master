@@ -157,7 +157,7 @@ class TestEndToEndPipeline:
         assert r.wins.count + r.draws.count + r.losses.count == 8
 
     def test_factor_report_has_intersection(self):
-        assert len(self.factor_report.intersection) > 0
+        assert self.factor_report.intersection[0].combined_percentage > 0.0
 
     def test_intersection_combined_is_average(self):
         """Verify combined % is exactly (home% + away%) / 2."""
@@ -306,7 +306,7 @@ class TestReportOutputValidation:
         assert "away_factors" in d
         assert "disclaimer" in d
         assert "generated_at" in d
-        assert "generated_at" in d
+        assert "disclaimer" in d
 
         # Match structure
         assert "home_team" in d["match"]

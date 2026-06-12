@@ -12,7 +12,7 @@ Runs periodically to:
 import sys
 import time
 import logging
-from datetime import datetime, timezone, timedelta
+from datetime import date, datetime, timezone, timedelta
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -136,5 +136,4 @@ def run_settlement():
     logger.info("==================================================")
 
 if __name__ == "__main__":
-    from datetime import date
     run_settlement()

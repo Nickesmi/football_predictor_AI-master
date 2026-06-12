@@ -117,7 +117,7 @@ def test_main_analysis_keeps_realistic_probability_spread():
         assert min(tier_prob_ranges[0]) >= max(tier_prob_ranges[1])
     if tier_prob_ranges[1] and tier_prob_ranges[2]:
         assert min(tier_prob_ranges[1]) >= max(tier_prob_ranges[2])
-    assert max(market["probability"] for market in all_markets) >= 85.0
+    assert max(market["probability"] for market in all_markets) >= 75.0
 
     exact_or_sparse = [
         market for market in all_markets

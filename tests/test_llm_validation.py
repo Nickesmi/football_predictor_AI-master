@@ -390,6 +390,6 @@ class TestOutputConsistency:
         md = rf.format_markdown(empty)
         d = rf.format_dict(empty)
 
-        assert len(text) > 0
-        assert len(md) > 0
+        assert "No highly stable patterns found" in text
+        assert "No highly stable patterns found" in md
         assert d["intersection"] == []

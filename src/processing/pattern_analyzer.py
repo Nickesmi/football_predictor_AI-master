@@ -98,7 +98,7 @@ class PatternAnalyzer:
             first_half=self._compute_first_half(matches, total, context),
         )
 
-        high = report.get_high_confidence_patterns(threshold=65.0)
+        high = report.get_high_confidence_patterns(min_wilson=65.0)
         logger.info(
             "Analysis complete: %d high-confidence patterns (>=65%%) found.",
             len(high),

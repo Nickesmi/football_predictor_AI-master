@@ -136,17 +136,17 @@ class TestFixtureStatusFiltering:
     def test_ft_status_parsed(self):
         fix = _api_fixture(status="FT")
         result = self.fetcher._parse_single_fixture(fix)
-        assert result is not None
+        assert result.match_id == '1001'
 
     def test_aet_status_parsed(self):
         fix = _api_fixture(status="AET")
         result = self.fetcher._parse_single_fixture(fix)
-        assert result is not None
+        assert result.match_id == '1001'
 
     def test_pen_status_parsed(self):
         fix = _api_fixture(status="PEN")
         result = self.fetcher._parse_single_fixture(fix)
-        assert result is not None
+        assert result.match_id == '1001'
 
     def test_ns_status_rejected(self):
         fix = _api_fixture(status="NS")
@@ -327,7 +327,7 @@ class TestStatisticsParsing:
             reds_home=1, reds_away=0,
         )
         result = APIFootballFetcher._parse_statistics(stats)
-        assert result is not None
+        assert result.corners_home == 6
         assert result.corners_home == 6
         assert result.corners_away == 4
         assert result.yellow_cards_home == 3
@@ -505,7 +505,7 @@ class TestMalformedData:
         fix = _api_fixture()
         del fix["events"]
         result = self.fetcher._parse_single_fixture(fix)
-        assert result is not None
+        assert result.match_id == '1001'
         assert len(result.goals) == 0
         assert len(result.cards) == 0
 

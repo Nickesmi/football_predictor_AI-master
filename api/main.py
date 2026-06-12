@@ -13,13 +13,24 @@ import json
 import math
 import os
 import ssl
+import certifi
 import time
 import urllib.request
 import asyncio
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional, Union
-from fastapi import FastAPI, HTTPException, BackgroundTasks
+
+from fastapi import Header
+
+ADMIN_API_KEY = os.getenv("ADMIN_API_KEY", "dev-admin-secret")
+
+def verify_admin_key(x_api_key: str = Header(None)):
+    if not x_api_key or x_api_key != ADMIN_API_KEY:
+        raise HTTPException(status_code=401, detail="Invalid or missing admin API key")
+    return x_api_key
+
+from fastapi import FastAPI, HTTPException, BackgroundTasks, Depends
 from fastapi.middleware.cors import CORSMiddleware
 
 from src.config import logger, APIFOOTBALL_API_KEY
@@ -1731,9 +1742,7 @@ def _proxy_image(url: str):
             "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15",
             "Accept": "image/webp,image/apng,image/*,*/*;q=0.8",
         })
-        ctx = ssl.create_default_context()
-        ctx.check_hostname = False
-        ctx.verify_mode = ssl.CERT_NONE
+        ctx = ssl.create_default_context(cafile=certifi.where())
         resp = urllib.request.urlopen(req, timeout=5, context=ctx)
         return Response(content=resp.read(), media_type="image/png")
     except Exception as e:
@@ -1751,7 +1760,7 @@ def health_check():
 
 # ── Logo Audit & Upgrade Endpoints ──
 
-@app.get("/api/debug/logo-audit")
+@app.get("/api/debug/logo-audit", dependencies=[Depends(verify_admin_key)])
 def logo_audit(date: str):
     """Diagnose logo resolutions and auto-upgrade if poor."""
     from src.utils.logo_evaluator import find_best_logo
@@ -1810,7 +1819,7 @@ def logo_audit(date: str):
         "results": audit_results
     }
 
-@app.get("/api/debug/logo-health")
+@app.get("/api/debug/logo-health", dependencies=[Depends(verify_admin_key)])
 def logo_health():
     """Aggregates registry data: returns total_teams, excellent, good, fair, and poor counts."""
     from src.db.database import get_db
@@ -1828,7 +1837,7 @@ def logo_health():
         "poor": poor
     }
 
-@app.get("/api/debug/logo-upgrades")
+@app.get("/api/debug/logo-upgrades", dependencies=[Depends(verify_admin_key)])
 def logo_upgrades():
     """Exposes visibility into the upgrade engine's success."""
     from src.db.database import get_db
@@ -1849,7 +1858,7 @@ def logo_upgrades():
         }
     }
 
-@app.get("/api/debug/logo-render-audit")
+@app.get("/api/debug/logo-render-audit", dependencies=[Depends(verify_admin_key)])
 def logo_render_audit(render_w: int = 64, render_h: int = 64, dpr: float = 2.0):
     """Computes effective_scale and identifies UPSCALED logos."""
     from src.db.database import get_db
@@ -2309,7 +2318,7 @@ def get_prediction_status(fixture_id: str):
     return _PREDICTION_STATUS.get(fixture_id, {"status": "unknown"})
 
 
-@app.get("/api/debug/model-health")
+@app.get("/api/debug/model-health", dependencies=[Depends(verify_admin_key)])
 def get_model_health_report():
     """
     Full model health report — accuracy, calibration, and league intelligence.
@@ -2338,7 +2347,7 @@ def get_model_health_report():
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/api/debug/team-rating")
+@app.get("/api/debug/team-rating", dependencies=[Depends(verify_admin_key)])
 def get_team_rating_endpoint(team: str):
     """
     Get dynamic team learning state (rating, momentum) and history.
@@ -2353,7 +2362,7 @@ def get_team_rating_endpoint(team: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/api/debug/calibration")
+@app.get("/api/debug/calibration", dependencies=[Depends(verify_admin_key)])
 def get_calibration_report_debug(market_type: str = "result"):
     """
     Get full calibration report and reliability diagram.
@@ -2387,7 +2396,7 @@ def get_calibration_report_debug(market_type: str = "result"):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/api/debug/settle-date/{date_str}")
+@app.get("/api/debug/settle-date/{date_str}", dependencies=[Depends(verify_admin_key)])
 def settle_date_endpoint(date_str: str):
     """
     Manually settle all predictions for a completed date.
@@ -2479,40 +2488,7 @@ def settle_date_endpoint(date_str: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/api/debug/calibration")
-def get_calibration_report_debug(market_type: str = "result"):
-    """
-    Get full calibration report and reliability diagram.
-    """
-    try:
-        from src.db.database import get_db
-        from src.db.prediction_logger import get_calibration_data, get_competition_type_analysis, get_backtest_summary
-        
-        conn = get_db()
-        
-        # Task 1 & 2: Reliability Diagram (buckets)
-        cal_data = get_calibration_data(conn, market_type, min_samples=10)
-        
-        # Task 6: Brier Score (from backtest summary)
-        backtest = get_backtest_summary(conn, market_type)
-        
-        # Task 7: Competition Type Analysis
-        comp_analysis = get_competition_type_analysis(conn)
-        
-        return {
-            "market_type": market_type,
-            "total_predictions": backtest.get("total_predictions", 0),
-            "brier_score": backtest.get("brier_score", 0),
-            "log_loss": backtest.get("log_loss", 0),
-            "accuracy_pct": backtest.get("accuracy_pct", 0),
-            "calibration_gap": backtest.get("calibration_gap", 0),
-            "reliability_diagram": cal_data.get("buckets", []),
-            "competition_analysis": comp_analysis
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.get("/api/debug/coverage")
+@app.get("/api/debug/coverage", dependencies=[Depends(verify_admin_key)])
 def debug_coverage(date: str):
     """
     Full coverage report for a given date.
@@ -2591,7 +2567,7 @@ def debug_coverage(date: str):
     }
 
 
-@app.get("/api/debug/coverage-report")
+@app.get("/api/debug/coverage-report", dependencies=[Depends(verify_admin_key)])
 def debug_coverage_report(date: str):
     """
     Mathematical proof of 100% fixture coverage for a given date.
@@ -2747,7 +2723,7 @@ def get_competitions(limit: int = 200):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/api/debug/date-trace")
+@app.get("/api/debug/date-trace", dependencies=[Depends(verify_admin_key)])
 def debug_date_trace(date: str):
     """
     Full pipeline trace for a given date.
@@ -2828,7 +2804,7 @@ def debug_date_trace(date: str):
     return trace
 
 
-@app.get("/api/debug/date-validation")
+@app.get("/api/debug/date-validation", dependencies=[Depends(verify_admin_key)])
 def debug_date_validation(date: str):
     """
     Debug endpoint — validate fixture date consistency for a given date.
@@ -4111,7 +4087,7 @@ def get_performance_overview():
 from src.engine.isotonic_calibrator import get_isotonic_calibrator
 
 
-@app.post("/api/admin/retrain-engine")
+@app.post("/api/admin/retrain-engine", dependencies=[Depends(verify_admin_key)])
 def retrain_engine():
     """Retrain the global engine components.
     
@@ -4347,14 +4323,14 @@ def simulate_execution(
 # PHASE 4: LIVE ADAPTIVE PIPELINE — API Endpoints
 # ═══════════════════════════════════════════════════════════════════════
 
-@app.get("/api/debug/provider-health")
+@app.get("/api/debug/provider-health", dependencies=[Depends(verify_admin_key)])
 def get_provider_health():
     """Returns the health status of all data providers."""
     from src.engine.audit_engine import audit_provider_health
     return audit_provider_health()
 
 
-@app.get("/api/debug/realtime-health")
+@app.get("/api/debug/realtime-health", dependencies=[Depends(verify_admin_key)])
 def debug_realtime_health(date: str = None):
     """Real-time freshness audit for fixtures, odds, live scores, and settlement."""
     from src.engine.audit_engine import audit_realtime_freshness
@@ -4363,7 +4339,7 @@ def debug_realtime_health(date: str = None):
     return audit_realtime_freshness(date)
 
 
-@app.get("/api/debug/odds-integrity")
+@app.get("/api/debug/odds-integrity", dependencies=[Depends(verify_admin_key)])
 def debug_odds_integrity(date: str = None):
     """Audit the odds pipeline for data availability and integrity."""
     from src.engine.audit_engine import audit_odds_integrity
@@ -4372,28 +4348,28 @@ def debug_odds_integrity(date: str = None):
     return audit_odds_integrity(date)
 
 
-@app.get("/api/debug/probability-integrity")
+@app.get("/api/debug/probability-integrity", dependencies=[Depends(verify_admin_key)])
 def debug_probability_integrity(home: str = "Arsenal", away: str = "Chelsea", league: str = "Premier League"):
     """Verify all market probabilities are mathematically consistent."""
     from src.engine.audit_engine import audit_probability_integrity
     return audit_probability_integrity(home, away, league)
 
 
-@app.get("/api/debug/model-validation")
+@app.get("/api/debug/model-validation", dependencies=[Depends(verify_admin_key)])
 def debug_model_validation():
     """Run backtest on settled predictions only."""
     from src.engine.audit_engine import audit_model_validation
     return audit_model_validation()
 
 
-@app.get("/api/debug/warehouse-stats")
+@app.get("/api/debug/warehouse-stats", dependencies=[Depends(verify_admin_key)])
 def debug_warehouse_stats():
     """Verify warehouse completeness and coverage."""
     from src.engine.audit_engine import audit_warehouse
     return audit_warehouse()
 
 
-@app.get("/api/debug/production-readiness")
+@app.get("/api/debug/production-readiness", dependencies=[Depends(verify_admin_key)])
 def debug_production_readiness(date: str = None):
     """Master production readiness audit — aggregates all checks."""
     from src.engine.audit_engine import audit_production_readiness
@@ -4403,7 +4379,7 @@ def debug_production_readiness(date: str = None):
 
 # ── Phase 5: Scoreline & xG Diagnostics ──
 
-@app.get("/api/debug/scoreline-performance")
+@app.get("/api/debug/scoreline-performance", dependencies=[Depends(verify_admin_key)])
 def get_scoreline_performance(
     league: str = None,
     season: str = None,
@@ -4459,7 +4435,7 @@ def get_scoreline_performance(
         "avg_actual_probability": round(avg_prob, 2)
     }
 
-@app.get("/api/debug/xg-performance")
+@app.get("/api/debug/xg-performance", dependencies=[Depends(verify_admin_key)])
 def get_xg_performance():
     import sqlite3
     from src.db.database import get_db
@@ -4507,7 +4483,7 @@ def get_xg_performance():
         "worst_leagues": worst_leagues
     }
 
-@app.get("/api/debug/model-comparison")
+@app.get("/api/debug/model-comparison", dependencies=[Depends(verify_admin_key)])
 def get_model_comparison():
     """
     Returns the strict mathematical backtesting comparison of all Deep Learning
@@ -4517,7 +4493,7 @@ def get_model_comparison():
     benchmark_data = run_full_benchmark()
     return benchmark_data["metrics"]
 
-@app.get("/api/debug/model-rankings")
+@app.get("/api/debug/model-rankings", dependencies=[Depends(verify_admin_key)])
 def get_model_rankings():
     """
     Returns the final ranking of all predictive models, ordered by
@@ -4700,7 +4676,7 @@ def manual_ingest_match(
         return {"error": str(e)}
 
 
-@app.get("/api/debug/backtest-features")
+@app.get("/api/debug/backtest-features", dependencies=[Depends(verify_admin_key)])
 def run_feature_backtest(limit: int = 50):
     """
     Feature Contribution Backtesting Framework.

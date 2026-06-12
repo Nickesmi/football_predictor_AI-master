@@ -360,7 +360,7 @@ class TestAPIFootballFetcher:
         )
         stats = result.matches[0].statistics
 
-        assert stats is not None
+        assert hasattr(stats, 'corners_home')
         assert stats.corners_home == 5
         assert stats.corners_away == 3
         assert stats.possession_home == "55%"

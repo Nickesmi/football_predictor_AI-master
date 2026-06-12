@@ -267,7 +267,7 @@ class TestFactorAnalyzer:
         )
         # Home factors >= 50% should include: Over 0.5 FT (100%),
         # Team Scored (90%), Over 1.5 FT (80%), etc.
-        assert len(result.home_factors) > 0
+        assert result.home_factors[0].percentage > 0.0
         # Sorted descending
         for i in range(len(result.home_factors) - 1):
             assert result.home_factors[i].percentage >= result.home_factors[i + 1].percentage
@@ -276,7 +276,7 @@ class TestFactorAnalyzer:
         result = self.analyzer.analyze(
             self.home_report, self.away_report, min_wilson=50.0
         )
-        assert len(result.away_factors) > 0
+        assert result.away_factors[0].percentage > 0.0
         for i in range(len(result.away_factors) - 1):
             assert result.away_factors[i].percentage >= result.away_factors[i + 1].percentage
 
@@ -285,7 +285,7 @@ class TestFactorAnalyzer:
             self.home_report, self.away_report, min_wilson=50.0
         )
         # Both teams have BTTS Yes, Over 0.5 FT, Over 1.5 FT, etc.
-        assert len(result.intersection) > 0
+        assert result.intersection[0].combined_percentage > 0.0
 
     def test_intersection_sorted_by_stability(self):
         result = self.analyzer.analyze(
@@ -305,7 +305,7 @@ class TestFactorAnalyzer:
         btts = next(
             (f for f in result.intersection if f.label == "BTTS - Yes"), None
         )
-        assert btts is not None
+        assert btts.combined_percentage > 0.0
         assert btts.combined_percentage > 70.0
         assert btts.home_stat.percentage == 70.0
         assert btts.away_stat.percentage == 75.0
@@ -317,9 +317,9 @@ class TestFactorAnalyzer:
         o15 = next(
             (f for f in result.intersection if f.label == "Over 1.5 Goals FT"), None
         )
-        assert o15 is not None
+        assert o15.combined_percentage > 0.0
         # Home 80% + Away 75% → 77.5%
-        assert o15.stability_score > 60.0
+        assert o15.stability_score == pytest.approx(69.75, abs=0.01)
 
     def test_intersection_team_scored(self):
         result = self.analyzer.analyze(
@@ -328,9 +328,9 @@ class TestFactorAnalyzer:
         ts = next(
             (f for f in result.intersection if f.label == "Team Scored"), None
         )
-        assert ts is not None
+        assert ts.combined_percentage > 0.0
         # Home 90% + Away 83.3% → 86.65 → 86.7%
-        assert ts.stability_score > 60.0
+        assert ts.stability_score == pytest.approx(96.95, abs=0.01)
 
     def test_intersection_corners(self):
         result = self.analyzer.analyze(
@@ -339,9 +339,9 @@ class TestFactorAnalyzer:
         corners = next(
             (f for f in result.intersection if f.label == "Over 8.5 Corners"), None
         )
-        assert corners is not None
+        assert corners.combined_percentage > 0.0
         # Home 70% + Away 66.7% → 68.35 → 68.4%
-        assert corners.stability_score > 60.0
+        assert corners.stability_score == pytest.approx(75.25, abs=0.01)
 
     def test_intersection_cards_1h(self):
         result = self.analyzer.analyze(
@@ -350,9 +350,9 @@ class TestFactorAnalyzer:
         cards = next(
             (f for f in result.intersection if f.label == "Card in 1st Half"), None
         )
-        assert cards is not None
+        assert cards.combined_percentage > 0.0
         # Home 80% + Away 75% → 77.5%
-        assert cards.stability_score > 60.0
+        assert cards.stability_score == pytest.approx(82.25, abs=0.01)
 
 
 # ==================================================================
@@ -417,7 +417,7 @@ class TestEdgeCases:
         result = self.analyzer.analyze(home, away, min_wilson=50.0)
         assert len(result.home_factors) == 0
         assert len(result.intersection) == 0
-        assert len(result.away_factors) > 0
+        assert result.away_factors[0].percentage > 0.0
 
     def test_empty_away_report(self):
         home = _build_home_report()
@@ -431,7 +431,7 @@ class TestEdgeCases:
         result = self.analyzer.analyze(home, away, min_wilson=50.0)
         assert len(result.away_factors) == 0
         assert len(result.intersection) == 0
-        assert len(result.home_factors) > 0
+        assert result.home_factors[0].percentage > 0.0
 
     def test_both_empty(self):
         home = TeamPatternReport(
@@ -492,8 +492,8 @@ class TestEdgeCases:
         btts = next(
             (f for f in result.intersection if f.label == "BTTS - Yes"), None
         )
-        assert btts is not None
-        assert btts.stability_score > 60.0
+        assert btts.combined_percentage > 0.0
+        assert btts.stability_score == pytest.approx(84.6, abs=0.01)
         assert btts.agreement_strength == "Strong Agreement"
 
     def test_report_repr(self):

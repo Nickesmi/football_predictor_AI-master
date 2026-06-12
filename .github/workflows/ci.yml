@@ -29,3 +29,8 @@ jobs:
     - name: Run test suite
       run: |
         python -m pytest tests/ --tb=short -q
+
+    - name: Run test integrity audit
+      run: |
+        chmod +x scripts/test_integrity_audit.py
+        ./scripts/test_integrity_audit.py
