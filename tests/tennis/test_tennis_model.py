@@ -49,14 +49,17 @@ class TestRankProbability:
 
 class TestQualityShrinkage:
     def test_full_quality_no_shrinkage(self):
-        assert _quality_shrinkage(0.75, 100) == 0.75
+        # 100 quality now caps at 95% model weight
+        prob = _quality_shrinkage(0.75, 100)
+        assert prob < 0.75
+        assert prob > 0.70
 
     def test_zero_quality_full_shrinkage(self):
         prob = _quality_shrinkage(0.80, 0)
         assert abs(prob - 0.5) < 1e-6
 
     def test_partial_shrinkage(self):
-        prob = _quality_shrinkage(0.70, 50)
+        prob = _quality_shrinkage(0.70, 70)
         assert 0.5 < prob < 0.70  # shrunk but still favors p1
 
 
@@ -122,12 +125,12 @@ class TestPredictMatch:
         assert mw["confidence"] in ("HIGH", "MEDIUM", "LOW")
 
     def test_low_quality_shrinks_toward_50(self):
+        # High quality
         high_q = predict_match(self._minimal_features(data_quality_score=100))
-        low_q  = predict_match(self._minimal_features(data_quality_score=0))
-        # Low quality should be closer to 50/50
-        assert abs(low_q["match_winner"]["player_1_win"] - 50) < abs(
-            high_q["match_winner"]["player_1_win"] - 50
-        )
+        # Low quality triggers NO PICK
+        low_q = predict_match(self._minimal_features(data_quality_score=30))
+        assert low_q["match_winner"] is None
+        assert "NO PICK" in low_q["warnings"][0]
 
     def test_new_player_uses_defaults(self):
         """Should not raise when both players have default Elo."""

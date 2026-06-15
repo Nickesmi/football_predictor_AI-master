@@ -88,10 +88,17 @@ def _form_probability(
 def _quality_shrinkage(prob: float, data_quality: float) -> float:
     """
     Shrink probability toward 0.5 based on data quality (0–100).
-    At quality=100 → no shrinkage.
-    At quality=0   → fully shrunk to 0.5.
+    90+ -> 95% model weight
+    60  -> 70% model weight
+    <40 -> NO PICK (handled in predict_match), but scales aggressively here.
     """
-    weight = data_quality / 100.0
+    if data_quality >= 90:
+        weight = 0.95
+    elif data_quality >= 60:
+        weight = 0.70 + ((data_quality - 60) / 30.0) * 0.25
+    else:
+        weight = (max(0, data_quality) / 60.0) * 0.70
+
     return weight * prob + (1.0 - weight) * 0.5
 
 
@@ -125,6 +132,19 @@ def predict_match(features: dict) -> dict:
     Invariant guarantee: player_1_win + player_2_win == 1.0
     """
     dq = float(features.get("data_quality_score", 50))
+
+    # ── Governance Rule: NO PICK for poor data ────────────────────────────────
+    if dq < 40:
+        return {
+            "model_version":  "v1.0-elo",
+            "data_quality":   dq,
+            "missing_features": features.get("missing_features", []),
+            "match_winner":   None,
+            "sets_markets":   {},
+            "top_picks":      [],
+            "warnings":       ["Data quality too low (< 40) — NO PICK. Model requires more historical data."],
+            "_signals":       None,
+        }
 
     # ── Layer 1: Elo ──────────────────────────────────────────────────────────
     elo_diff = float(features.get("elo_diff", 0.0))
@@ -199,7 +219,7 @@ def predict_match(features: dict) -> dict:
 
     # ── Sets markets (rule-based v1) ──────────────────────────────────────────
     best_of = features.get("best_of", 3)
-    sets_markets = _compute_sets_markets(p1_win, p2_win, dq, best_of)
+    sets_markets = _compute_sets_markets(p1_win, p2_win, dq, best_of, features)
 
     # ── Top picks assembly ────────────────────────────────────────────────────
     top_picks = _build_top_picks(match_winner, sets_markets, features)
@@ -231,10 +251,10 @@ def predict_match(features: dict) -> dict:
     }
 
 
-def _compute_sets_markets(p1_win: float, p2_win: float, dq: float, best_of: int) -> dict:
+def _compute_sets_markets(p1_win: float, p2_win: float, dq: float, best_of: int, features: dict) -> dict:
     """
     Rule-based sets handicap and total games markets.
-    Only proposed when favourite probability is sufficiently high.
+    Uses straight sets rate and fatigue for smart handicap qualification.
     """
     favourite_prob  = max(p1_win, p2_win)
     favourite_is_p1 = p1_win >= p2_win
@@ -242,21 +262,28 @@ def _compute_sets_markets(p1_win: float, p2_win: float, dq: float, best_of: int)
     markets = {}
 
     # ── Player -1.5 Sets (straight sets win) ──────────────────────────────────
-    if favourite_prob >= 0.68 and dq >= 50:
-        # Estimate straight sets probability:
-        # If p(win) = 0.70, rough p(straight sets) ≈ win_prob^(sets_needed)
-        sets_needed = 2 if best_of == 3 else 3
-        straight_prob = favourite_prob ** sets_needed * 1.3  # adjustment factor
-        straight_prob = min(straight_prob, 0.90)
-        straight_prob = _quality_shrinkage(straight_prob, dq)
+    if favourite_prob >= 0.65 and dq >= 50:
+        if favourite_is_p1:
+            ss_rate = features.get("straight_sets_rate_p1") or 0.0
+            fatigue = features.get("fatigue_matches_p1", 0) * 2 + features.get("fatigue_sets_p1", 0)
+        else:
+            ss_rate = features.get("straight_sets_rate_p2") or 0.0
+            fatigue = features.get("fatigue_matches_p2", 0) * 2 + features.get("fatigue_sets_p2", 0)
 
-        selection = "player_1 -1.5 sets" if favourite_is_p1 else "player_2 -1.5 sets"
-        markets["favourite_minus_1_5_sets"] = {
-            "selection":  selection,
-            "probability": round(straight_prob * 100, 1),
-            "fair_odds":   _safe_fair_odds(straight_prob),
-            "confidence":  _confidence_label(straight_prob, dq),
-        }
+        # Smart handicap rule: need good straight sets history and low fatigue
+        if ss_rate > 0.60 and fatigue < 20:
+            sets_needed = 2 if best_of == 3 else 3
+            straight_prob = favourite_prob ** sets_needed * 1.3  # adjustment factor
+            straight_prob = min(straight_prob, 0.90)
+            straight_prob = _quality_shrinkage(straight_prob, dq)
+
+            selection = "player_1 -1.5 sets" if favourite_is_p1 else "player_2 -1.5 sets"
+            markets["favourite_minus_1_5_sets"] = {
+                "selection":  selection,
+                "probability": round(straight_prob * 100, 1),
+                "fair_odds":   _safe_fair_odds(straight_prob),
+                "confidence":  _confidence_label(straight_prob, dq),
+            }
 
     # ── First Set Winner ──────────────────────────────────────────────────────
     # First set follows match winner probability with slight regression

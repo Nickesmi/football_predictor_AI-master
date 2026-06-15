@@ -134,6 +134,36 @@ def _get_recent_results(
         return []
 
 
+def _get_straight_sets_rate(conn: sqlite3.Connection, player: str, n: int = 10) -> Optional[float]:
+    """Calculate the percentage of recent wins that were in straight sets (loser scored 0 sets)."""
+    try:
+        rows = conn.execute(
+            """
+            SELECT sets_1, sets_2
+            FROM tennis_results r
+            JOIN tennis_matches m ON r.match_id = m.match_id
+            WHERE r.winner = ?
+            ORDER BY m.date DESC
+            LIMIT ?
+            """,
+            (player, n)
+        ).fetchall()
+
+        if not rows:
+            return None
+
+        straight_sets_count = 0
+        for r in rows:
+            s1, s2 = int(r[0]), int(r[1])
+            loser_sets = min(s1, s2)
+            if loser_sets == 0:
+                straight_sets_count += 1
+
+        return straight_sets_count / len(rows)
+    except Exception:
+        return None
+
+
 def _get_h2h(conn: sqlite3.Connection, p1: str, p2: str, n: int = 10) -> list[int]:
     """
     Get last N H2H results from p1's perspective (1=p1 won, 0=p1 lost).
@@ -258,6 +288,10 @@ def build_features(
         missing.append("surface_form_p1")
     if not surf_p2:
         missing.append("surface_form_p2")
+
+    # ── Straight sets rate ────────────────────────────────────────────────────
+    features["straight_sets_rate_p1"] = _get_straight_sets_rate(conn, player_1, n=10)
+    features["straight_sets_rate_p2"] = _get_straight_sets_rate(conn, player_2, n=10)
 
     # ── H2H ──────────────────────────────────────────────────────────────────
     h2h = _get_h2h(conn, player_1, player_2, n=10)
