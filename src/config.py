@@ -44,8 +44,18 @@ def save_settings(settings: dict):
 
 _settings = load_settings()
 
-APIFOOTBALL_API_KEY: str = _settings.get("api_key") or os.getenv("APIFOOTBALL_API_KEY", "")
+APIFOOTBALL_API_KEY: str = _settings.get("api_key") or os.getenv("APIFOOTBALL_API_KEY") or os.getenv("API_FOOTBALL_KEY", "")
 APIFOOTBALL_HOST: str = _settings.get("api_host") or os.getenv("APIFOOTBALL_HOST", "v3.football.api-sports.io")
+RAPIDAPI_KEY: str = os.getenv("RAPIDAPI_KEY", "")
+RAPIDAPI_HOST: str = os.getenv("RAPIDAPI_HOST", "")
+
+if not APIFOOTBALL_API_KEY:
+    print("FATAL ERROR: APIFOOTBALL_API_KEY or API_FOOTBALL_KEY is missing from environment variables.", file=sys.stderr)
+    sys.exit(1)
+
+if not RAPIDAPI_KEY or not RAPIDAPI_HOST:
+    print("FATAL ERROR: RAPIDAPI_KEY and RAPIDAPI_HOST must be provided in environment variables for SofaScore fallback.", file=sys.stderr)
+    sys.exit(1)
 API_RATE_LIMIT_PER_MINUTE: int = int(_settings.get("api_rate_limit") or os.getenv("API_RATE_LIMIT_PER_MINUTE", "10"))
 
 # ---------------------------------------------------------------------------

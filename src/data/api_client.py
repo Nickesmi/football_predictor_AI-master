@@ -88,25 +88,16 @@ class APIFootballClient:
     # ------------------------------------------------------------------
 
     def get(self, endpoint: str, **params: Any) -> dict:
-        """
-        Execute a GET request against the given endpoint.
+        from src.data.provider_health import is_circuit_open, record_provider_result
 
-        Args:
-            endpoint: API endpoint name (e.g. "fixtures", "leagues", "teams").
-            **params: Query-string parameters forwarded to the API.
-
-        Returns:
-            The full JSON response as a Python dict.
-
-        Raises:
-            requests.HTTPError: On non-2xx status after retries.
-            ValueError: If the API returns an error payload.
-        """
         cache_key = self._make_cache_key(endpoint, params)
         cached = self._read_cache(cache_key)
         if cached is not None:
             logger.debug("Cache HIT for %s %s", endpoint, params)
             return cached
+
+        if is_circuit_open("api-football"):
+            raise RuntimeError("Circuit breaker open for api-football")
 
         logger.info("Cache MISS – calling API: %s %s", endpoint, params)
         self._throttle()
@@ -114,14 +105,24 @@ class APIFootballClient:
         url = f"{self._base_url}/{endpoint}"
         headers = self._build_headers()
 
-        response = self._session.get(url, headers=headers, params=params, timeout=30)
-        response.raise_for_status()
+        start_time = time.time()
+        try:
+            response = self._session.get(url, headers=headers, params=params, timeout=30)
+            response.raise_for_status()
+            data = response.json()
+            self._validate_response(data, endpoint, params)
+            
+            latency = int((time.time() - start_time) * 1000)
+            record_provider_result("api-football", endpoint, True, latency, fixture_count=data.get("results", 0))
+            
+            self._write_cache(cache_key, data)
+            return data
+        except Exception as e:
+            latency = int((time.time() - start_time) * 1000)
+            record_provider_result("api-football", endpoint, False, latency, error_message=str(e))
+            raise
 
-        data = response.json()
-        self._validate_response(data, endpoint, params)
-        self._write_cache(cache_key, data)
 
-        return data
 
     # ------------------------------------------------------------------
     # Internals

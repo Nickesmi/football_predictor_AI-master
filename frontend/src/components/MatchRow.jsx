@@ -30,14 +30,22 @@ const TeamLogo = ({ src, name, size = 28 }) => {
   );
 };
 
-/** Status badge — NS / LIVE mm' / FT */
-const StatusBadge = ({ status, time }) => {
+/** Status badge — NS / LIVE mm' / FT / STALE */
+const StatusBadge = ({ status, time, is_stale }) => {
+  if (is_stale || status === 'STALE') {
+    return (
+      <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[9px] font-bold bg-red-900/40 text-red-400 border border-red-500/30 shrink-0">
+        STALE
+      </span>
+    );
+  }
+
   const isLive = status && (status.startsWith('LIVE') || status === '1H' || status === '2H' || status === 'HT');
   const isFt   = status === 'FT';
 
   if (isLive) return (
-    <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[9px] font-bold bg-red-500/20 text-red-400 border border-red-500/30 shrink-0">
-      <span className="w-1 h-1 rounded-full bg-red-400 animate-pulse" />
+    <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[9px] font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 shrink-0">
+      <span className="w-1 h-1 rounded-full bg-emerald-400 animate-pulse" />
       {status}
     </span>
   );
@@ -66,7 +74,7 @@ const MatchRow = ({ match, isSelected, onClick }) => {
       <div className="flex items-center gap-2.5">
         {/* Kickoff / Status */}
         <div className="w-[44px] shrink-0 flex flex-col items-center justify-center">
-          <StatusBadge status={match.status} time={match.time} />
+          <StatusBadge status={match.status} time={match.time} is_stale={match.is_stale || match._stale} />
         </div>
 
         {/* Teams */}

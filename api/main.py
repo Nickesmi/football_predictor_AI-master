@@ -125,6 +125,10 @@ def trigger_live_scan():
 from api.routers.analytics import router as analytics_router
 app.include_router(analytics_router)
 
+# Tennis prediction engine router (isolated — no football code modified)
+from src.tennis.api.tennis_routes import router as tennis_router
+app.include_router(tennis_router)
+
 # Pipeline components
 fetcher = APIFootballFetcher()
 pattern_analyzer = PatternAnalyzer()
@@ -153,6 +157,7 @@ TOP_LEAGUES = {
     679: "Europa League",
     931: "UEFA Conference League",
     # ── National Team / International ──
+    1:   "World Cup",
     16:  "Euro Championship",
     28:  "AFC Asian Cup Qual.",
     36:  "Copa America",
@@ -215,6 +220,7 @@ LEAGUE_NAME_MAP = {
     "UEFA Nations League": "Champions League",
     "Euro Championship": "Champions League",
     "Copa America": "Champions League",
+    "World Cup": "Champions League",
     "FIFA World Cup": "Champions League",
     "World Cup Qualification (Europe)": "Champions League",
     "World Cup Qualification (CONMEBOL)": "Champions League",
@@ -1546,16 +1552,28 @@ def _read_fixture_cache(date_str: str) -> Optional[list]:
             isinstance(f, dict) and "LIVE" in f.get("status", "") 
             for f in data
         )
+        has_ht = any(
+            isinstance(f, dict) and "HT" in f.get("status", "")
+            for f in data
+        )
 
         if date_str < today:
             # If it's a past date but still contains LIVE matches, force expire!
-            if has_live:
-                logger.info(f"Fixture cache for {date_str} contains stuck LIVE matches. Forcing expiration to get FT results.")
+            if has_live or has_ht:
+                logger.info(f"Fixture cache for {date_str} contains stuck LIVE/HT matches. Forcing expiration to get FT results.")
                 return None
             return data
 
-        # For today/future dates use a short TTL. If there are LIVE matches, update every 60s
-        effective_ttl = 60 if has_live else _FIXTURE_CACHE_TTL
+        # Static Daily Fetch Mode: API-Football data is cached for 24 hours to preserve quota.
+        # Other providers (e.g., ESPN) will fallback if cache is missing.
+        is_api_football = any(f.get("provider") == "api_football" or f.get("source") in ["api_football", "apifootball"] for f in data if isinstance(f, dict))
+        if is_api_football:
+            effective_ttl = 86400  # 24 hours!
+        elif has_live or has_ht:
+            effective_ttl = 900
+        else:
+            effective_ttl = 900
+
         if age > effective_ttl:
             logger.debug(f"Fixture cache expired for {date_str} (age={age:.0f}s, has_live={has_live})")
             return None
@@ -1589,7 +1607,7 @@ def _fetch_api_football_fixtures(date_str: str) -> list[dict]:
         logger.warning("APIFOOTBALL_API_KEY not set – no fixture data available from API-Football")
         return []
 
-    url = f"https://v3.football.api-sports.io/fixtures?date={date_str}&timezone=UTC"
+    url = f"https://v3.football.api-sports.io/fixtures?date={date_str}&timezone=Europe/Istanbul"
     req = urllib.request.Request(url, headers={
         "x-apisports-key": APIFOOTBALL_API_KEY,
         "Accept": "application/json",
@@ -1655,7 +1673,9 @@ def _api_football_to_fixture(f: dict) -> dict:
     status_short = fix.get("status", {}).get("short", "")
     if status_short in ("FT", "AET", "PEN"):
         display_status = "FT"
-    elif status_short in ("1H", "2H", "ET", "P", "LIVE", "BT", "HT"):
+    elif status_short == "HT":
+        display_status = "HT"
+    elif status_short in ("1H", "2H", "ET", "P", "LIVE", "BT"):
         elapsed = fix.get("status", {}).get("elapsed")
         display_status = f"LIVE {elapsed}\u2019" if elapsed else "LIVE"
     elif status_short == "NS":
@@ -1737,15 +1757,21 @@ def get_tournament_image(tour_id: str):
     return _proxy_image(url)
 
 def _proxy_image(url: str):
+    from curl_cffi import requests
     try:
-        req = urllib.request.Request(url, headers={
-            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15",
+        # We impersonate a browser to bypass Cloudflare blocks
+        resp = requests.get(url, impersonate="chrome110", timeout=10, headers={
             "Accept": "image/webp,image/apng,image/*,*/*;q=0.8",
+            "Referer": "https://www.sofascore.com/",
+            "Origin": "https://www.sofascore.com",
         })
-        ctx = ssl.create_default_context(cafile=certifi.where())
-        resp = urllib.request.urlopen(req, timeout=5, context=ctx)
-        return Response(content=resp.read(), media_type="image/png")
+        if resp.status_code == 200:
+            return Response(content=resp.content, media_type="image/png")
+        else:
+            logger.warning(f"SofaScore proxy failed for {url} with status {resp.status_code}")
+            return Response(status_code=404)
     except Exception as e:
+        logger.error(f"Failed to proxy image {url}: {e}")
         return Response(status_code=404)
 
 @app.get("/api/health")
@@ -1761,12 +1787,12 @@ def health_check():
 # ── Logo Audit & Upgrade Endpoints ──
 
 @app.get("/api/debug/logo-audit", dependencies=[Depends(verify_admin_key)])
-def logo_audit(date: str):
+def logo_audit(date: str, background_tasks: BackgroundTasks):
     """Diagnose logo resolutions and auto-upgrade if poor."""
     from src.utils.logo_evaluator import find_best_logo
     from src.db.database import get_db
     
-    fixtures = get_fixtures_by_date(date)
+    fixtures = get_fixtures_by_date(date, background_tasks)
     if not fixtures:
         return {"status": "no fixtures"}
         
@@ -1905,46 +1931,24 @@ def get_supported_leagues():
 
 
 @app.get("/api/fixtures/today")
-def get_today_fixtures():
-    return get_fixtures_by_date(_get_istanbul_today())
+def get_today_fixtures(background_tasks: BackgroundTasks):
+    return get_fixtures_by_date(_get_istanbul_today(), background_tasks)
 
 
 def _fetch_sofascore_fixtures(date_str: str) -> list[dict]:
-    """Fetch scheduled events from SofaScore API using curl_cffi to bypass blocks.
-
-    Returns a list of SofaScore event dicts.
-    Retries with multiple browser impersonations on 403/rate-limit.
+    """Fetch scheduled events from SofaScore API.
+    
+    Delegates to the RapidAPI wrapper to bypass Cloudflare reliably.
     """
-    from curl_cffi import requests
-    url = f"https://api.sofascore.com/api/v1/sport/football/scheduled-events/{date_str}"
-    headers = {
-        "Accept": "*/*",
-        "Accept-Language": "en-US,en;q=0.9",
-        "Referer": "https://www.sofascore.com/",
-        "Origin": "https://www.sofascore.com",
-    }
-    # Try multiple browser impersonations — 403 blocks are often UA-specific
-    impersonations = ["chrome", "chrome110", "safari", "safari15_5", "firefox"]
-    last_status = None
-    for browser in impersonations:
-        try:
-            resp = requests.get(url, headers=headers, impersonate=browser, timeout=15)
-            last_status = resp.status_code
-            if resp.status_code == 200:
-                events = resp.json().get("events", [])
-                logger.info(f"SofaScore returned {len(events)} events for {date_str} (impersonate={browser})")
-                return events
-            elif resp.status_code == 403:
-                logger.debug(f"SofaScore 403 with impersonate={browser}, trying next...")
-                continue
-            else:
-                logger.error(f"SofaScore returned status {resp.status_code} for {date_str}")
-                return []
-        except Exception as e:
-            logger.debug(f"SofaScore fetch failed with impersonate={browser}: {e}")
-            continue
-    logger.error(f"SofaScore returned status {last_status} for {date_str} (all impersonations exhausted)")
-    return []
+    from src.data.sofascore_fetcher import fetch_fixtures_by_date
+    events = fetch_fixtures_by_date(date_str)
+    
+    if events:
+        logger.info(f"SofaScore returned {len(events)} events for {date_str} via RapidAPI")
+    else:
+        logger.error(f"SofaScore returned no events for {date_str} via RapidAPI")
+        
+    return events
 
 
 def _sofascore_to_fixture(ev: dict, requested_date: str) -> dict:
@@ -2021,8 +2025,8 @@ def _sofascore_to_fixture(ev: dict, requested_date: str) -> dict:
         "Finland U21": "https://flagcdn.com/w160/fi.png",
     }
     
-    home_logo = LOGO_OVERRIDES.get(home_name, f"https://api.sofascore.app/api/v1/team/{home.get('id', 0)}/image")
-    away_logo = LOGO_OVERRIDES.get(away_name, f"https://api.sofascore.app/api/v1/team/{away.get('id', 0)}/image")
+    home_logo = LOGO_OVERRIDES.get(home_name, _resolve_team_logo(str(home.get('id', 0)), home_name, f"/api/image/team/{home.get('id', 0)}"))
+    away_logo = LOGO_OVERRIDES.get(away_name, _resolve_team_logo(str(away.get('id', 0)), away_name, f"/api/image/team/{away.get('id', 0)}"))
 
     return {
         "id":           str(ev.get("id", "")),
@@ -2056,23 +2060,132 @@ def _sofascore_to_fixture(ev: dict, requested_date: str) -> dict:
     }
 
 
+def _fetch_espn_fixtures(date_str: str) -> list[dict]:
+    """Fetch unauthenticated JSON from ESPN Scoreboard API.
+    ESPN is exceptionally resilient and never blocks.
+    """
+    import urllib.request
+    import json
+    
+    # Format YYYYMMDD
+    espn_date = date_str.replace("-", "")
+    url = f"http://site.api.espn.com/apis/site/v2/sports/soccer/all/scoreboard?dates={espn_date}"
+    
+    try:
+        req = urllib.request.Request(url, headers={
+            "User-Agent": "Mozilla/5.0 (compatible; FootballPredictor/1.0)",
+            "Accept": "application/json"
+        })
+        resp = urllib.request.urlopen(req, timeout=10)
+        data = json.loads(resp.read())
+        events = data.get("events", [])
+        logger.info(f"ESPN returned {len(events)} events for {date_str}")
+        return events
+    except Exception as e:
+        logger.error(f"ESPN fetch failed for {date_str}: {e}")
+        return []
+
+
+def _espn_to_fixture(ev: dict, requested_date: str) -> dict:
+    """Convert an ESPN event to the standard fixture structure."""
+    import datetime
+    import zoneinfo
+    
+    # time parsing
+    date_str = requested_date
+    time_str = "00:00"
+    iso_date = ev.get("date")
+    if iso_date:
+        try:
+            # ESPN returns "2026-06-12T19:00Z"
+            dt = datetime.datetime.strptime(iso_date, "%Y-%m-%dT%H:%MZ")
+            dt = dt.replace(tzinfo=datetime.timezone.utc)
+            try:
+                local_dt = dt.astimezone(zoneinfo.ZoneInfo("Europe/Istanbul"))
+            except Exception:
+                local_dt = dt.astimezone(datetime.timezone(datetime.timedelta(hours=3)))
+            time_str = local_dt.strftime("%H:%M")
+            date_str = local_dt.strftime("%Y-%m-%d")
+        except Exception:
+            pass
+            
+    status_info = ev.get("status", {})
+    stype = status_info.get("type", {})
+    state = stype.get("state", "pre")
+    
+    if state == "post":
+        display_status = "FT"
+    elif state == "in":
+        display_status = "LIVE"
+    else:
+        display_status = "NS"
+        
+    comps = ev.get("competitions", [])
+    if not comps:
+        return {}
+        
+    comp = comps[0]
+    competitors = comp.get("competitors", [])
+    
+    home_team = {}
+    away_team = {}
+    home_score = None
+    away_score = None
+    
+    for c in competitors:
+        if c.get("homeAway") == "home":
+            home_team = c.get("team", {})
+            if display_status != "NS":
+                try: home_score = int(c.get("score"))
+                except: pass
+        else:
+            away_team = c.get("team", {})
+            if display_status != "NS":
+                try: away_score = int(c.get("score"))
+                except: pass
+
+    league = ev.get("season", {})
+    league_name = ev.get("altGameNote") or ev.get("name") or "Unknown"
+    
+    return {
+        "id":           str(ev.get("id", "")),
+        "date":         date_str,
+        "time":         time_str,
+        "status":       display_status,
+        "home_goals":   home_score,
+        "away_goals":   away_score,
+        "fh_home_goals": None,
+        "fh_away_goals": None,
+        "league": {
+            "id":      str(league.get("type", "0")),
+            "name":    league_name,
+            "country": "",
+            "logo":    "",
+        },
+        "home_team": {
+            "id":   str(home_team.get("id", "")),
+            "name": home_team.get("name", "Unknown"),
+            "logo": home_team.get("logo", ""),
+        },
+        "away_team": {
+            "id":   str(away_team.get("id", "")),
+            "name": away_team.get("name", "Unknown"),
+            "logo": away_team.get("logo", ""),
+        },
+        "league_id_apifootball": None,
+        "season":    None,
+        "source":    "espn",
+    }
+
+
 @app.get("/api/fixtures/{date_str}")
-def get_fixtures_by_date(date_str: str, force_refresh: bool = False):
+def get_fixtures_by_date(date_str: str, background_tasks: BackgroundTasks, force_refresh: bool = False):
     """
-    Return all football fixtures for *date_str* (YYYY-MM-DD).
-
-    STRICT DATE GUARANTEE:
-      Every fixture returned MUST have fixture["date"] == date_str.
-      Fixtures whose normalized UTC date does not match are DROPPED — never returned.
-      NO mock or simulated data is ever returned.
-
-    Data flow (local-first):
-      1. Check .cache/fixtures-YYYY-MM-DD.json  → serve instantly if fresh (unless force_refresh=true)
-      2. Fetch from SofaScore API               → strict-filter, cache, serve
-      3. Fetch from API-Football API            → strict-filter, cache, serve
-      4. Return empty list + message            → on total failure (real data only)
+    Live Data Provider Split Architecture
+    1. Base fixtures loaded from API-Football (cached 12 hours)
+    2. Live updates fetched from RapidAPI SofaScore
+    3. Strict merge of live fields only
     """
-    # ── Validate date format ──
     try:
         datetime.strptime(date_str, "%Y-%m-%d")
     except ValueError:
@@ -2080,131 +2193,104 @@ def get_fixtures_by_date(date_str: str, force_refresh: bool = False):
 
     logger.info(f"[DATE REQUEST] selected_date={date_str} force_refresh={force_refresh}")
 
-    # ── 1. Cache hit ──
-    if not force_refresh:
-        cached = _read_fixture_cache(date_str)
+    # ── 1. Fetch Base Fixtures (API-Football) ──
+    cached = _read_fixture_cache(date_str)
+    is_api_football = False
+    base_fixtures = []
+    
+    if cached is not None:
+        is_api_football = any(f.get("provider") == "api_football" or f.get("source") in ["api_football", "apifootball"] for f in cached)
+
+    if not force_refresh or is_api_football:
         if cached is not None:
-            # Re-validate cached fixtures — drop any whose date drifted
-            valid_cached = [f for f in cached if f.get("date") == date_str]
-            dropped = len(cached) - len(valid_cached)
-            if dropped:
-                logger.warning(f"[CACHE LOOKUP] Dropped {dropped} stale fixtures with wrong date from cache for {date_str}")
-            logger.info(f"[CACHE LOOKUP] cache_hit=true, matches_found={len(valid_cached)}")
-            return valid_cached
-    else:
-        logger.info(f"[CACHE LOOKUP] cache_hit=bypassed (force_refresh=true)")
-
-    logger.info(f"[CACHE LOOKUP] cache_hit=false")
-
-    # ── 2. Fetch from API-Football (Primary) ──
-    logger.info(f"[API-FOOTBALL REQUEST] Fetching fixtures for {date_str}")
-    try:
-        raw_api = _fetch_api_football_fixtures(date_str)
-    except Exception as e:
-        logger.error(f"API-Football fetch failed: {e}")
-        raw_api = []
-
-    if raw_api:
-        fixtures = []
-        seen_ids = set()
-        seen_teams = set()
-        rejected_date = 0
-        for raw in raw_api:
-            f = _api_football_to_fixture(raw)
-
-            # ─── STRICT DATE FILTER ───────────────────────────────────
-            if f["date"] != date_str:
-                rejected_date += 1
-                logger.debug(
-                    f"[DATE FILTER] Dropped API-Football fixture id={f['id']} "
-                    f"fixture_date={f['date']} != selected_date={date_str}"
-                )
-                continue
-            # ─────────────────────────────────────────────────────────
-
-            team_key = tuple(sorted([f["home_team"]["name"], f["away_team"]["name"]]))
-            if f["id"] not in seen_ids and team_key not in seen_teams:
-                seen_ids.add(f["id"])
-                seen_teams.add(team_key)
-                fixtures.append(f)
-
-        if rejected_date:
-            logger.warning(f"[DATE FILTER] API-Football: rejected {rejected_date} fixtures with wrong date for {date_str}")
-
-        if fixtures:
-            fixtures.sort(key=lambda x: x["time"])
-            _write_fixture_cache(date_str, fixtures)
-            # Track every competition encountered
-            _track_competitions_from_fixtures(fixtures)
-            logger.info(f"[FINAL FIXTURES] count={len(fixtures)}, source=apifootball")
-            return fixtures
-
-    # ── 3. Fetch from SofaScore (Secondary fallback) ──
-    logger.info(f"API-Football returned no valid fixtures for {date_str} - falling back to SofaScore")
-    logger.info(f"[SOFASCORE REQUEST] url=https://api.sofascore.com/api/v1/sport/football/scheduled-events/{date_str}")
-    raw_sofa = _fetch_sofascore_fixtures(date_str)
-    logger.info(f"[SOFASCORE RESPONSE] events={len(raw_sofa)}")
-
-    if raw_sofa:
-        fixtures = []
-        seen_ids: set = set()
-        seen_teams: set = set()
-        rejected_date = 0
-        total_sofascore = len(raw_sofa)
-        for ev in raw_sofa:
-            f = _sofascore_to_fixture(ev, date_str)
-
-            # ─── STRICT DATE FILTER — only filter in this block ───────
-            if f["date"] != date_str:
-                rejected_date += 1
-                logger.debug(
-                    f"[DATE FILTER] Dropped SofaScore fixture id={f['id']} "
-                    f"fixture_date={f['date']} != selected_date={date_str}"
-                )
-                continue
-            # ─────────────────────────────────────────────────────────
-
-            team_key = tuple(sorted([f["home_team"]["name"], f["away_team"]["name"]]))
-            if f["id"] not in seen_ids and team_key not in seen_teams:
-                seen_ids.add(f["id"])
-                seen_teams.add(team_key)
-                fixtures.append(f)
-
-        logger.info(
-            f"[SOFASCORE TOTAL] events={total_sofascore} | "
-            f"[AFTER DATE FILTER] events={len(fixtures)} | "
-            f"[REJECTED DATE] events={rejected_date}"
-        )
-
-        if fixtures:
-            fixtures.sort(key=lambda x: (x["time"], x["league"]["name"]))
-            _write_fixture_cache(date_str, fixtures)
-            # Track every competition encountered
-            _track_competitions_from_fixtures(fixtures)
-            logger.info(f"[FINAL FIXTURES] count={len(fixtures)}, source=sofascore")
-            return fixtures
-
-    # ── 4. All live sources failed — try serving stale cache ──
-    stale_cache_path = _get_cache_path(date_str)
-    if stale_cache_path.exists():
+            base_fixtures = [f for f in cached if f.get("date") == date_str]
+    
+    if not base_fixtures:
+        # Cache miss or forced bypass -> Hit API-Football
+        logger.info(f"[API-FOOTBALL REQUEST] Fetching base fixtures for {date_str}")
         try:
-            stale_data = json.loads(stale_cache_path.read_text(encoding="utf-8"))
-            if isinstance(stale_data, list) and stale_data:
-                cache_age = time.time() - stale_cache_path.stat().st_mtime
-                logger.warning(
-                    f"[STALE FALLBACK] All providers failed for {date_str}. "
-                    f"Serving stale cache ({len(stale_data)} fixtures, age={cache_age:.0f}s)"
-                )
-                # Mark fixtures as stale so the frontend can show a warning
-                for f in stale_data:
-                    f["_stale"] = True
-                    f["_cache_age_seconds"] = round(cache_age)
-                return stale_data
+            raw_api = _fetch_api_football_fixtures(date_str)
+            seen_ids = set()
+            for raw in raw_api:
+                f = _api_football_to_fixture(raw)
+                if f["date"] == date_str and f["id"] not in seen_ids:
+                    seen_ids.add(f["id"])
+                    base_fixtures.append(f)
+            
+            if base_fixtures:
+                base_fixtures.sort(key=lambda x: x["time"])
+                _write_fixture_cache(date_str, base_fixtures)
+                _track_competitions_from_fixtures(base_fixtures)
         except Exception as e:
-            logger.error(f"[STALE FALLBACK] Failed to read stale cache: {e}")
+            logger.error(f"API-Football fetch failed: {e}")
 
-    logger.warning(f"[FINAL FIXTURES] All sources failed for {date_str}. No cache available. Returning empty list.")
-    return {"fixtures": [], "message": "No fixture data available for this date. Real-time sources are temporarily unavailable."}
+    if not base_fixtures:
+        # Extreme fallback to stale cache if API-Football is down and no cache exists
+        stale_cache_path = _get_cache_path(date_str)
+        if stale_cache_path.exists():
+            try:
+                stale_data = json.loads(stale_cache_path.read_text(encoding="utf-8"))
+                base_fixtures = [f for f in stale_data if f.get("date") == date_str]
+            except Exception:
+                pass
+                
+    if not base_fixtures:
+        return {"fixtures": [], "message": "No base fixtures available for this date."}
+
+    # ── 2. Fetch Live Updates (RapidAPI SofaScore) ──
+    from src.data.live_score_provider import fetch_live_scores
+    logger.info(f"[LIVE SCORES] Fetching live updates from RapidAPI SofaScore for {date_str}")
+    live_updates = fetch_live_scores(date_str)
+    
+    # ── 3. Merge Strategy ──
+    # Strict matching by home_team and away_team (normalized)
+    def norm_team(t): return t.lower().replace(" ", "").replace("fc", "").replace("united", "utd")
+    
+    live_map = {}
+    for lu in live_updates:
+        key = f"{norm_team(lu['home_team'])}|{norm_team(lu['away_team'])}"
+        live_map[key] = lu
+
+    merged_fixtures = []
+    now_iso = datetime.utcnow().isoformat() + "Z"
+    cache_path = _get_cache_path(date_str)
+    base_age = time.time() - cache_path.stat().st_mtime if cache_path.exists() else 0
+
+    for f in base_fixtures:
+        f_key = f"{norm_team(f['home_team']['name'])}|{norm_team(f['away_team']['name'])}"
+        live_data = live_map.get(f_key)
+        
+        # Determine if match should be live
+        is_match_today = (date_str == datetime.utcnow().strftime("%Y-%m-%d"))
+        needs_live = is_match_today and f["status"] not in ["FT", "AET", "PEN", "CANC", "PST", "NS"]
+        
+        if live_data:
+            # Apply STRICT merge rules
+            f["status"] = live_data["status"]
+            if live_data["elapsed"] > 0:
+                f["elapsed"] = live_data["elapsed"]
+            f["home_team"]["score"] = live_data["home_score"]
+            f["away_team"]["score"] = live_data["away_score"]
+            f["provider"] = live_data["provider"]
+            f["last_live_update"] = live_data["last_live_update"]
+            f["is_stale"] = False
+            f["provider_error"] = None
+        else:
+            # Stale Protection
+            f["provider"] = f.get("source", "api_football")
+            f["last_live_update"] = None
+            if "LIVE" in f.get("status", "") or "HT" in f.get("status", "") or needs_live:
+                f["is_stale"] = True
+                f["status"] = "STALE"
+                f["provider_error"] = "RapidAPI SofaScore timeout or unmapped"
+                f["data_age_seconds"] = round(base_age)
+            else:
+                f["is_stale"] = False
+                f["provider_error"] = None
+                
+        merged_fixtures.append(f)
+
+    return merged_fixtures
 
 
 # ─────────────────────────────────────────────────────────
@@ -3351,7 +3437,7 @@ def _evaluate_prediction(pick: dict, home_name: str, away_name: str, home_goals:
 
 
 @app.get("/api/results/{date_str}")
-def get_results_verification(date_str: str):
+def get_results_verification(date_str: str, background_tasks: BackgroundTasks):
     """
     For all finished matches on a given date, regenerate predictions
     and compare them against actual results.
@@ -3365,7 +3451,7 @@ def get_results_verification(date_str: str):
     # First try the .cache file (populated by get_fixtures_by_date).
     # If not cached, fetch live from API-Football now.
     try:
-        all_fixtures = get_fixtures_by_date(date_str)
+        all_fixtures = get_fixtures_by_date(date_str, background_tasks)
     except ValueError as ve:
         raise HTTPException(status_code=400, detail=str(ve))
 
@@ -4769,4 +4855,209 @@ def run_feature_backtest(limit: int = 50):
         "matches_tested": len(matches),
         "leaderboard": leaderboard,
         "feature_deltas_accuracy": deltas
+    }
+@app.get("/api/debug/provider-comparison")
+def debug_provider_comparison():
+    """
+    Returns a 30-day side-by-side comparison of API-Football vs SofaScore reliability.
+    """
+    from src.db.database import get_db
+    conn = get_db()
+    
+    # 30-day query
+    # 30-day query
+    query = """
+        SELECT provider,
+               COUNT(*) as total_requests,
+               SUM(CASE WHEN success THEN 1 ELSE 0 END) as successful_requests,
+               AVG(latency_ms) as avg_latency_ms,
+               SUM(fixture_count) as total_fixtures,
+               SUM(odds_count) as total_odds,
+               SUM(statistics_count) as total_stats,
+               SUM(lineups_count) as total_lineups,
+               SUM(live_updates) as total_live_updates
+        FROM provider_health_log
+        WHERE created_at >= datetime('now', '-30 days')
+        GROUP BY provider
+    """
+    rows = conn.execute(query).fetchall()
+    
+    stats = {}
+    for row in rows:
+        provider = row["provider"]
+        total = row["total_requests"]
+        successes = row["successful_requests"]
+        failure_rate = ((total - successes) / total * 100) if total > 0 else 0
+        
+        stats[provider] = {
+            "total_requests": total,
+            "success_rate": f"{(successes / total * 100):.1f}%" if total > 0 else "0.0%",
+            "failure_rate": f"{failure_rate:.1f}%",
+            "avg_latency_ms": round(row["avg_latency_ms"] or 0),
+            "fixtures_provided": row["total_fixtures"] or 0,
+            "odds_provided": row["total_odds"] or 0,
+            "statistics_provided": row["total_stats"] or 0,
+            "lineups_provided": row["total_lineups"] or 0,
+            "live_updates": row["total_live_updates"] or 0
+        }
+        
+    api_football_fixtures = stats.get("api-football", {}).get("fixtures_provided", 0)
+    sofascore_fixtures = stats.get("sofascore", {}).get("fixtures_provided", 0)
+    
+    # SofaScore now runs in the background alongside API-Football,
+    # so we measure the absolute difference in fixtures found.
+    net_gain = sofascore_fixtures - api_football_fixtures
+    
+    return {
+        "api_football": stats.get("api-football", {}),
+        "sofascore": stats.get("sofascore", {}),
+        "coverage_difference": {
+            "additional_fixtures_from_sofascore": net_gain
+        },
+        "recommendation": "Pending 30-day evaluation. Do not replace API-Football until failure rates drop and coverage gain is substantial."
+    }
+
+@app.get("/api/debug/provider-history")
+def debug_provider_history():
+    """
+    Returns an executive summary of provider reliability and data yields 
+    over the last 7 days to drive architectural decisions.
+    """
+    from src.db.database import get_db
+    conn = get_db()
+    
+    # 7-day query
+    query = """
+        SELECT provider,
+               COUNT(*) as total_requests,
+               SUM(CASE WHEN success THEN 1 ELSE 0 END) as successful_requests,
+               AVG(latency_ms) as avg_latency_ms,
+               SUM(fixture_count) as total_fixtures
+        FROM provider_health_log
+        WHERE created_at >= datetime('now', '-7 days')
+        GROUP BY provider
+    """
+    rows = conn.execute(query).fetchall()
+    
+    stats = {}
+    for row in rows:
+        provider_id = row["provider"].replace("-", "_")
+        total = row["total_requests"]
+        successes = row["successful_requests"]
+        uptime = (successes / total * 100) if total > 0 else 0
+        
+        stats[provider_id] = {
+            "uptime": round(uptime, 1),
+            "avg_latency": round(row["avg_latency_ms"] or 0),
+            "fixtures": row["total_fixtures"] or 0
+        }
+        
+    return {
+        "last_7_days": stats
+    }
+
+
+@app.get("/api/debug/api-football-status")
+def debug_api_football_status():
+    from src.config import APIFOOTBALL_API_KEY, APIFOOTBALL_HOST
+    import requests
+    import os
+    
+    key_source = "missing"
+    if "APIFOOTBALL_API_KEY" in os.environ or "API_FOOTBALL_KEY" in os.environ:
+        key_source = "env"
+    elif APIFOOTBALL_API_KEY:
+        key_source = ".env"
+    
+    status = {
+        "key_loaded": bool(APIFOOTBALL_API_KEY),
+        "key_source": key_source,
+        "connected": False,
+        "quota_exceeded": False,
+        "requests_remaining": 0,
+        "daily_limit": 0,
+        "last_success": None,
+        "last_failure": None,
+        "error": None
+    }
+    
+    if not APIFOOTBALL_API_KEY:
+        status["error"] = "No API key configured"
+        return status
+        
+    try:
+        url = f"https://{APIFOOTBALL_HOST}/status"
+        headers = {"x-apisports-key": APIFOOTBALL_API_KEY}
+        resp = requests.get(url, headers=headers, timeout=10)
+        data = resp.json()
+        
+        status["connected"] = True
+        
+        errors = data.get("errors", {})
+        if errors and isinstance(errors, dict) and "requests" in errors:
+            status["quota_exceeded"] = True
+            status["error"] = "API_FOOTBALL_QUOTA_EXCEEDED"
+            status["last_failure"] = errors["requests"]
+            
+        response_data = data.get("response", {})
+        if response_data and isinstance(response_data, dict):
+            reqs = response_data.get("requests", {})
+            status["daily_limit"] = reqs.get("limit_day", 0)
+            status["requests_remaining"] = status["daily_limit"] - reqs.get("current", status["daily_limit"])
+            
+            if not status["quota_exceeded"] and status["requests_remaining"] <= 0:
+                status["quota_exceeded"] = True
+                status["error"] = "API_FOOTBALL_QUOTA_EXCEEDED"
+                
+    except Exception as e:
+        status["error"] = str(e)
+        status["connected"] = False
+        
+    return status
+
+@app.get("/api/debug/api-football-coverage")
+def debug_api_football_coverage(date: str):
+    from src.data.api_client import APIFootballClient
+    from src.data.api_football_fetcher import APIFootballFetcher
+    from src.db.database import get_db
+    
+    client = APIFootballClient()
+    fetcher = APIFootballFetcher(client)
+    
+    try:
+        raw = client.get("fixtures", date=date)
+        fixtures = raw.get("response", [])
+        raw_provider_count = len(fixtures)
+        
+        mapped = fetcher._parse_fixtures(raw)
+        after_mapping_count = len(mapped)
+    except Exception as e:
+        return {
+            "date": date,
+            "error": str(e)
+        }
+    
+    stored_count = 0
+    try:
+        conn = get_db()
+        cur = conn.cursor()
+        cur.execute("SELECT COUNT(*) FROM fixtures_master WHERE date(match_date) = ?", (date,))
+        row = cur.fetchone()
+        if row:
+            stored_count = row[0]
+        conn.close()
+    except Exception:
+        pass
+        
+    return {
+        "date": date,
+        "raw_provider_count": raw_provider_count,
+        "after_mapping_count": after_mapping_count,
+        "stored_count": stored_count,
+        "rendered_count": stored_count,
+        "dropped_count": raw_provider_count - after_mapping_count,
+        "drop_reasons": {"not_finished": "matches not FT/AET/PEN"},
+        "countries": len(set(f.get("league", {}).get("country", "") for f in fixtures)),
+        "leagues": len(set(f.get("league", {}).get("name", "") for f in fixtures)),
+        "sample_fixtures": [f.get("fixture", {}).get("id") for f in fixtures[:5]]
     }

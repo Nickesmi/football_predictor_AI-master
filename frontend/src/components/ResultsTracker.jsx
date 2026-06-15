@@ -368,9 +368,11 @@ const ResultsTracker = ({ onBack, selectedDate }) => {
     }
   };
 
-  const fetchResults = useCallback(async (dateStr) => {
-    setLoading(true);
-    setError(null);
+  const fetchResults = useCallback(async (dateStr, isBackground = false) => {
+    if (!isBackground) {
+      setLoading(true);
+      setError(null);
+    }
     try {
       const res = await fetch(`${API}/results/${dateStr}?t=${Date.now()}`);
       if (!res.ok) {
@@ -379,13 +381,51 @@ const ResultsTracker = ({ onBack, selectedDate }) => {
       }
       setData(await res.json());
     } catch (e) {
-      setError(e.message);
+      if (!isBackground) setError(e.message);
     } finally {
-      setLoading(false);
+      if (!isBackground) setLoading(false);
     }
   }, []);
 
   useEffect(() => { fetchResults(date); }, [date, fetchResults]);
+
+  const [isTabVisible, setIsTabVisible] = useState(!document.hidden);
+  
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      const isVisible = !document.hidden;
+      setIsTabVisible(isVisible);
+      if (isVisible) {
+        fetchResults(date, true);
+      }
+    };
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => document.removeEventListener("visibilitychange", handleVisibilityChange);
+  }, [date, fetchResults]);
+
+  const pollInterval = React.useMemo(() => {
+    if (!isTabVisible) return 300000; // 5 mins if tab is hidden
+    
+    let interval = 300000; // Default 5 minutes
+    const matches = data?.matches || [];
+    if (matches.length > 0) {
+      const statuses = matches.map(m => m.fixture?.status || "");
+      const isLive = statuses.some(s => s.includes("LIVE") || s.includes("1H") || s.includes("2H") || s.includes("ET") || s.includes("P"));
+      const isHalftime = statuses.some(s => s.includes("HT") || s.includes("BT"));
+      
+      if (isLive) interval = 15000;
+      else if (isHalftime) interval = 30000;
+    }
+    return interval;
+  }, [data, isTabVisible]);
+
+  // Adaptive background polling for live results updates
+  useEffect(() => {
+    const t = setInterval(() => {
+      fetchResults(date, true);
+    }, pollInterval);
+    return () => clearInterval(t);
+  }, [date, fetchResults, pollInterval]);
 
   const summary      = data?.summary      || {};
   const matches      = data?.matches      || [];

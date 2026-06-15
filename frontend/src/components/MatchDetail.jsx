@@ -472,8 +472,29 @@ const MatchDetail = ({ fixture, analysis, loading, error }) => {
             <h2 className="text-lg font-bold text-white tracking-wide">{homeName}</h2>
             {poisson && <span className="text-[10px] text-emerald-400/80 font-mono">xG: {poisson.lambda_home.toFixed(2)}</span>}
           </div>
-          <div className="flex flex-col items-center justify-center px-4">
-            <span className="text-[10px] text-emerald-400 uppercase tracking-[0.2em] font-bold mb-2">{fixture.status}</span>
+          <div className="flex flex-col items-center justify-center px-4 text-center">
+            {(fixture.is_stale || fixture._stale) ? (
+              <>
+                <span className="text-[10px] text-red-400 uppercase tracking-[0.2em] font-bold mb-1 flex items-center gap-1">
+                  <AlertCircle className="w-3 h-3" /> STALE
+                </span>
+                <span className="text-[9px] text-slate-400 mb-0.5">Provider: {fixture.provider === 'rapidapi_sofascore' ? 'RapidAPI SofaScore' : fixture.provider || 'API-Football'}</span>
+                {fixture.provider_error && <span className="text-[9px] text-red-400/80 mb-0.5">Error: {fixture.provider_error}</span>}
+                {fixture.data_age_seconds > 0 && <span className="text-[9px] text-slate-500 mb-2">Updated: {Math.floor(fixture.data_age_seconds / 60)} minutes ago</span>}
+              </>
+            ) : (
+              <>
+                <span className="text-[10px] text-emerald-400 uppercase tracking-[0.2em] font-bold mb-1">
+                  {fixture.status}
+                </span>
+                {fixture.status && fixture.status !== "NS" && fixture.status !== "FT" && (
+                  <>
+                    <span className="text-[9px] text-slate-400 mb-0.5">Provider: {fixture.provider === 'rapidapi_sofascore' ? 'RapidAPI SofaScore' : fixture.provider}</span>
+                    <span className="text-[9px] text-emerald-500/60 mb-2">Updated: just now</span>
+                  </>
+                )}
+              </>
+            )}
             <div className="bg-black/40 border border-white/10 px-4 py-1.5 rounded-full text-xs text-slate-400 font-mono tracking-wider">{fixture.time}</div>
             <span className="text-[9px] text-slate-500 mt-2 uppercase tracking-widest text-center max-w-[120px]">{fixture.league.name}</span>
           </div>

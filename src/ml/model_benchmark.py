@@ -118,7 +118,6 @@ def rank_models(model_metrics: Dict[str, Dict[str, float]]) -> Dict[str, str]:
 _benchmark_cache = None
 
 def run_full_benchmark() -> Dict:
-def run_full_benchmark():
     return {
         "metrics": {
             "CatBoost": {"Accuracy": 0.582, "Brier Score": 0.185, "Log Loss": 0.982, "Calibration Error": 0.021, "ROI": 1.05},

@@ -7,9 +7,9 @@ const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', '
 const pad = (n) => String(n).padStart(2, '0');
 const fmtDate = (d) => `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
 
-const DatePicker = ({ selectedDate, onDateChange }) => {
-  const today = fmtDate(new Date());
+const DatePicker = ({ selectedDate, onDateChange, today = fmtDate(new Date()) }) => {
   const sel = new Date(selectedDate + 'T00:00:00');
+  const todayDate = new Date(today + 'T00:00:00');
 
   const shift = (days) => {
     const d = new Date(sel);
@@ -30,10 +30,10 @@ const DatePicker = ({ selectedDate, onDateChange }) => {
 
   const label = (d) => {
     if (isToday(d)) return 'Today';
-    const yesterday = new Date();
+    const yesterday = new Date(todayDate);
     yesterday.setDate(yesterday.getDate() - 1);
     if (fmtDate(d) === fmtDate(yesterday)) return 'Yesterday';
-    const tomorrow = new Date();
+    const tomorrow = new Date(todayDate);
     tomorrow.setDate(tomorrow.getDate() + 1);
     if (fmtDate(d) === fmtDate(tomorrow)) return 'Tomorrow';
     return `${DAYS[d.getDay()]}`;

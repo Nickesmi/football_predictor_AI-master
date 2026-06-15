@@ -55,6 +55,22 @@ def init_db(conn: sqlite3.Connection) -> None:
             created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
 
+        CREATE TABLE IF NOT EXISTS provider_health_log (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            provider        TEXT NOT NULL,
+            request_id      TEXT,
+            endpoint        TEXT,
+            success         INTEGER NOT NULL,
+            latency_ms      INTEGER,
+            fixture_count   INTEGER DEFAULT 0,
+            odds_count      INTEGER DEFAULT 0,
+            statistics_count INTEGER DEFAULT 0,
+            lineups_count    INTEGER DEFAULT 0,
+            live_updates     INTEGER DEFAULT 0,
+            error_message   TEXT,
+            created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+
         CREATE TABLE IF NOT EXISTS odds_snapshots (
             id              INTEGER PRIMARY KEY AUTOINCREMENT,
             match_id        TEXT NOT NULL REFERENCES matches(id),
