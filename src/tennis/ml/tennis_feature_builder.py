@@ -333,6 +333,9 @@ def build_features(
         "h2h":                 5,
     }
     penalty = sum(penalties.get(m, 3) for m in missing)
+    if s == "unknown":
+        penalty += 15
+        
     data_quality = max(0, min(100, 100 - penalty))
 
     features["data_quality_score"] = data_quality
