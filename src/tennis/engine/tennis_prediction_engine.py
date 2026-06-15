@@ -39,12 +39,25 @@ def _store_predictions(
 
     # ── Match Winner ──────────────────────────────────────────────────────────
     mw = prediction["match_winner"]
+    if mw is None:
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO tennis_predictions
+              (match_id, prediction_time, market_type, selection,
+               predicted_probability, fair_odds, confidence_score,
+               model_version, features_json)
+            VALUES (?, ?, 'match_winner', 'NO PICK', 0.0, 0.0, 'NO PICK', ?, ?)
+            """,
+            (match_id, now, MODEL_VERSION, features_json)
+        )
+        conn.commit()
+        return
+
     for player_key, prob_key, odds_key in [
         ("Player 1", "player_1_win", "fair_odds_p1"),
         ("Player 2", "player_2_win", "fair_odds_p2"),
     ]:
         prob = float(mw[prob_key]) / 100.0
-        conf = prob if player_key == "Player 1" else 1.0 - prob + prob  # raw prob as score
         conn.execute(
             """
             INSERT OR IGNORE INTO tennis_predictions
@@ -57,7 +70,7 @@ def _store_predictions(
                 match_id, now, player_key,
                 prob,
                 float(mw[odds_key]),
-                prob,
+                mw["confidence"],
                 MODEL_VERSION,
                 features_json,
             )
