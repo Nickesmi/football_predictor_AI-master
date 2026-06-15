@@ -5163,3 +5163,69 @@ def debug_pending_settlements():
         "oldest_pending_minutes": oldest_minutes,
         "matches": matches
     }
+
+@debug_router.get("/dashboard")
+def debug_dashboard():
+    conn = get_db()
+    cursor = conn.cursor()
+    
+    # 1. Health
+    cursor.execute("""
+        SELECT success FROM provider_health_log 
+        WHERE provider = 'sofascore' 
+        ORDER BY id DESC LIMIT 10
+    """)
+    rows = cursor.fetchall()
+    health_status = "unknown"
+    if rows:
+        recent_successes = sum(1 for r in rows if r[0] == 1)
+        health_status = "healthy" if recent_successes >= 8 else ("failing" if recent_successes < 3 else "degraded")
+        
+    # 2. Live Quality
+    cursor.execute("SELECT is_stale, COUNT(*) FROM matches WHERE status IN ('LIVE', 'HT', 'STALE') GROUP BY is_stale")
+    counts = dict(cursor.fetchall())
+    fresh = counts.get(0, 0)
+    stale = counts.get(1, 0)
+    total_live = fresh + stale
+    coverage = round((fresh / total_live * 100), 1) if total_live > 0 else 100.0
+    
+    # 3. Pending & Settled
+    cursor.execute("SELECT COUNT(*) FROM pending_settlements")
+    pending_count = cursor.fetchone()[0]
+    
+    cursor.execute("SELECT COUNT(*) FROM match_history WHERE match_date = date('now')")
+    settled_today = cursor.fetchone()[0]
+    
+    # 4. Predictions / NO PICK
+    cursor.execute("SELECT market, selection, grade, edge FROM picks WHERE match_id IN (SELECT id FROM matches WHERE date = date('now'))")
+    picks = cursor.fetchall()
+    no_pick = 0
+    high_c = 0
+    med_c = 0
+    low_c = 0
+    for p in picks:
+        if p[1] == "NO PICK" or p[0] == "NO PICK":
+            no_pick += 1
+            continue
+        grade = p[2]
+        edge = p[3] or 0
+        if grade in ("A", "A+", "A++"):
+            high_c += 1
+        elif grade in ("B", "B+", "B-"):
+            med_c += 1
+        else:
+            low_c += 1
+            
+    return {
+        "provider": "sofascore",
+        "sofascore_health": health_status,
+        "live_matches": total_live,
+        "stale_matches": stale,
+        "coverage_pct": coverage,
+        "pending_settlements": pending_count,
+        "settled_today": settled_today,
+        "high_confidence": high_c,
+        "medium_confidence": med_c,
+        "low_confidence": low_c,
+        "no_pick": no_pick
+    }
