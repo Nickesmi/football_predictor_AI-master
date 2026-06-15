@@ -52,7 +52,21 @@ def init_db(conn: sqlite3.Connection) -> None:
             away_goals      INTEGER,
             total_corners   INTEGER,
             total_cards     INTEGER,
+            provider        TEXT DEFAULT 'sofascore',
+            data_quality_score REAL,
+            is_main_fixture BOOLEAN,
+            is_stale        BOOLEAN DEFAULT 0,
+            provider_error  TEXT,
+            last_live_update TIMESTAMP,
             created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE TABLE IF NOT EXISTS pending_settlements (
+            event_id        TEXT PRIMARY KEY,
+            first_ft_seen   TIMESTAMP NOT NULL,
+            provider        TEXT,
+            created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            confirmed       BOOLEAN DEFAULT 0
         );
 
         CREATE TABLE IF NOT EXISTS provider_health_log (

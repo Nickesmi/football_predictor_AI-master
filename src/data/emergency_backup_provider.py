@@ -384,3 +384,8 @@ class APIFootballFetcher:
             possession_home=_get_stat(home_stats, "Ball Possession"),
             possession_away=_get_stat(away_stats, "Ball Possession"),
         )
+
+    def fetch_fixtures(self, date_str: str) -> list[dict]:
+        logger.info(f"EMERGENCY BACKUP: Fetching fixtures for {date_str} via API-Football")
+        raw = self._client.get("fixtures", date=date_str)
+        return raw.get("response", [])

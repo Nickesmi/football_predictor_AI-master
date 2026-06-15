@@ -34,7 +34,7 @@ from fastapi import FastAPI, HTTPException, BackgroundTasks, Depends
 from fastapi.middleware.cors import CORSMiddleware
 
 from src.config import logger, APIFOOTBALL_API_KEY
-from src.data.api_football_fetcher import APIFootballFetcher
+from src.data.emergency_backup_provider import APIFootballFetcher
 from src.processing.pattern_analyzer import PatternAnalyzer
 from src.processing.factor_analyzer import FactorAnalyzer
 from src.reporting.report_formatter import ReportFormatter
@@ -5018,7 +5018,7 @@ def debug_api_football_status():
 @app.get("/api/debug/api-football-coverage")
 def debug_api_football_coverage(date: str):
     from src.data.api_client import APIFootballClient
-    from src.data.api_football_fetcher import APIFootballFetcher
+    from src.data.emergency_backup_provider import APIFootballFetcher
     from src.db.database import get_db
     
     client = APIFootballClient()
@@ -5061,3 +5061,70 @@ def debug_api_football_coverage(date: str):
         "leagues": len(set(f.get("league", {}).get("name", "") for f in fixtures)),
         "sample_fixtures": [f.get("fixture", {}).get("id") for f in fixtures[:5]]
     }
+
+# ── DEBUG API ROUTES ─────────────────────────────────────────────────────────
+
+from fastapi import APIRouter
+debug_router = APIRouter(prefix="/api/debug", tags=["Debug"])
+
+@debug_router.get("/sofascore-status")
+def debug_sofascore_status():
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT success, latency_ms, created_at 
+        FROM provider_health_log 
+        WHERE provider = 'sofascore' 
+        ORDER BY id DESC LIMIT 100
+    """)
+    rows = cursor.fetchall()
+    
+    if not rows:
+        return {"connected": False, "avg_latency_ms": 0, "failure_rate_24h": 0.0}
+        
+    success_count = sum(1 for r in rows if r[0] == 1)
+    fail_count = len(rows) - success_count
+    latencies = [r[1] for r in rows if r[1] is not None]
+    
+    last_success = next((r[2] for r in rows if r[0] == 1), None)
+    last_failure = next((r[2] for r in rows if r[0] == 0), None)
+    
+    return {
+        "connected": success_count > 0 and rows[0][0] == 1,
+        "avg_latency_ms": sum(latencies)/len(latencies) if latencies else 0,
+        "failure_rate_24h": fail_count / len(rows),
+        "last_success": last_success,
+        "last_failure": last_failure
+    }
+
+@debug_router.get("/main-fixtures")
+def debug_main_fixtures():
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("SELECT is_main_fixture, COUNT(*) FROM matches WHERE date = date('now') GROUP BY is_main_fixture")
+    counts = dict(cursor.fetchall())
+    main_c = counts.get(1, 0)
+    rejected_c = counts.get(0, 0)
+    return {
+        "raw_count": main_c + rejected_c,
+        "main_count": main_c,
+        "rejected": rejected_c
+    }
+
+@debug_router.get("/live-quality")
+def debug_live_quality():
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("SELECT is_stale, COUNT(*) FROM matches WHERE status IN ('LIVE', 'HT', 'STALE') GROUP BY is_stale")
+    counts = dict(cursor.fetchall())
+    fresh = counts.get(0, 0)
+    stale = counts.get(1, 0)
+    total = fresh + stale
+    return {
+        "live_matches": total,
+        "fresh": fresh,
+        "stale": stale,
+        "coverage_pct": (fresh / total * 100) if total > 0 else 100
+    }
+
+app.include_router(debug_router)

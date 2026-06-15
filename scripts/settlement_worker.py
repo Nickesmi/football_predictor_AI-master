@@ -1,12 +1,7 @@
 #!/usr/bin/env python3
 """
-Settlement Worker — Post-BILQE Data Warehouse Expansion
-
-Runs periodically to:
-1. Fetch fixtures from today and yesterday.
-2. Identify finished matches (FT/AET/PEN).
-3. Ingest results into match_history.
-4. Settle all associated predictions in prediction_log and picks.
+Settlement Worker — SofaScore First Architecture
+Implements Double Confirmation: LIVE -> FT -> wait 60s -> check again -> settle.
 """
 
 import sys
@@ -20,14 +15,15 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.config import logger
 from src.db.database import get_db
-from api.main import fetcher, TOP_LEAGUES
+from src.data.sofascore_provider import fetch_daily_matches
 
 def run_settlement():
     logger.info("==================================================")
-    logger.info("STARTING AUTOMATED SETTLEMENT")
+    logger.info("STARTING AUTOMATED SETTLEMENT (DB Double Confirm)")
     logger.info("==================================================")
     
     conn = get_db()
+    cursor = conn.cursor()
     
     today = date.today()
     yesterday = today - timedelta(days=1)
@@ -36,50 +32,55 @@ def run_settlement():
     finished_fixtures = []
     
     for d in dates_to_check:
-        logger.info(f"Fetching fixtures for {d}")
-        try:
-            fixtures = fetcher.fetch_fixtures(d)
-            for fix in fixtures:
-                status = fix.get("fixture", {}).get("status", {}).get("short", "")
-                if status in ("FT", "AET", "PEN"):
-                    finished_fixtures.append(fix)
-        except Exception as e:
-            logger.error(f"Failed to fetch fixtures for {d}: {e}")
+        matches, err = fetch_daily_matches(d)
+        if err:
+            logger.error(f"Settlement fetch failed for {d}: {err}")
+            continue
             
-    logger.info(f"Found {len(finished_fixtures)} finished fixtures across {dates_to_check}")
-    
-    settled_matches = 0
-    settled_picks = 0
+        for fix in matches:
+            if fix.get("status") == "FT":
+                finished_fixtures.append(fix)
+                
+    now_ts = datetime.now(timezone.utc).timestamp()
+    settled_count = 0
     
     for fix in finished_fixtures:
-        fixture_id = str(fix["fixture"]["id"])
-        match_date = fix["fixture"]["date"][:10]
-        home_team = fix["teams"]["home"]["name"]
-        away_team = fix["teams"]["away"]["name"]
-        league_id = fix["league"]["id"]
-        league_name = TOP_LEAGUES.get(league_id, fix["league"]["name"])
-        
-        home_goals = fix.get("goals", {}).get("home")
-        away_goals = fix.get("goals", {}).get("away")
+        event_id = fix["event_id"]
+        home_goals = fix["home_score"]
+        away_goals = fix["away_score"]
         
         if home_goals is None or away_goals is None:
             continue
             
-        try:
-            # 1. Update Match History
-            # We insert/update the match_history table
-            conn.execute(
-                """INSERT OR IGNORE INTO match_history 
-                   (match_id, match_date, league, home_team, away_team, home_goals, away_goals)
-                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                (fixture_id, match_date, league_name, home_team, away_team, home_goals, away_goals)
-            )
+        # Check pending_settlements
+        cursor.execute("SELECT first_ft_seen FROM pending_settlements WHERE event_id = ?", (event_id,))
+        row = cursor.fetchone()
+        
+        if not row:
+            # First time seeing it as FT
+            logger.info(f"Match {event_id} reached FT. Added to pending_settlements for 60s confirmation.")
+            cursor.execute("""
+                INSERT INTO pending_settlements (event_id, first_ft_seen, provider)
+                VALUES (?, ?, ?)
+            """, (event_id, datetime.now(timezone.utc).isoformat(), fix["provider"]))
+            conn.commit()
+            continue
             
-            # 2. Settle prediction_log
-            # We need to map actual goals to outcomes
-            # Home Win, Draw, Away Win, BTTS, Over 2.5 etc.
+        # Already pending
+        first_ft_seen = datetime.fromisoformat(row[0]).timestamp()
+        if (now_ts - first_ft_seen) >= 60:
+            # Double confirmed!
+            logger.info(f"Match {event_id} DOUBLE CONFIRMED FT. Settling now.")
+            
+            # 1. match_history
+            cursor.execute("""
+                INSERT OR IGNORE INTO match_history 
+                (match_id, match_date, league, home_team, away_team, home_goals, away_goals)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, (event_id, fix["date"], fix["league"], fix["home_team"], fix["away_team"], home_goals, away_goals))
+            
+            # 2. prediction_log
             total_goals = home_goals + away_goals
-            
             outcomes = {
                 "Home Win": 1 if home_goals > away_goals else 0,
                 "Draw": 1 if home_goals == away_goals else 0,
@@ -94,46 +95,40 @@ def run_settlement():
             }
             
             for market, outcome in outcomes.items():
-                conn.execute(
-                    """UPDATE prediction_log 
-                       SET actual_outcome = ?
-                       WHERE match_id = ? AND market = ? AND actual_outcome IS NULL""",
-                    (outcome, fixture_id, market)
-                )
+                cursor.execute("""
+                    UPDATE prediction_log 
+                    SET actual_outcome = ?
+                    WHERE match_id = ? AND market = ? AND actual_outcome IS NULL
+                """, (outcome, event_id, market))
                 
-            # 3. Settle picks table
-            for market, outcome in outcomes.items():
-                # If hit -> W, miss -> L
+                # 3. picks
                 result_str = 'W' if outcome == 1 else 'L'
-                
-                # Fetch pending picks for this match/market
-                picks = conn.execute(
+                picks = cursor.execute(
                     "SELECT id, odds_at_pick FROM picks WHERE match_id = ? AND market = ? AND result IS NULL",
-                    (fixture_id, market)
+                    (event_id, market)
                 ).fetchall()
                 
                 for p in picks:
                     pick_id = p[0]
                     odds = p[1] or 2.0
                     pnl = (odds - 1.0) if outcome == 1 else -1.0
-                    
-                    conn.execute(
-                        """UPDATE picks 
-                           SET result = ?, pnl_units = ?
-                           WHERE id = ?""",
-                        (result_str, pnl, pick_id)
-                    )
-                    settled_picks += 1
-                    
-            conn.commit()
-            settled_matches += 1
+                    cursor.execute("""
+                        UPDATE picks SET result = ?, pnl_units = ? WHERE id = ?
+                    """, (result_str, pnl, pick_id))
             
-        except Exception as e:
-            logger.error(f"Failed to settle match {fixture_id}: {e}")
+            # Remove from pending
+            cursor.execute("DELETE FROM pending_settlements WHERE event_id = ?", (event_id,))
+            conn.commit()
+            settled_count += 1
             
     logger.info("==================================================")
-    logger.info(f"SETTLEMENT COMPLETE: {settled_matches} matches, {settled_picks} picks settled.")
+    logger.info(f"SETTLEMENT COMPLETE: {settled_count} matches double-confirmed and settled.")
     logger.info("==================================================")
 
 if __name__ == "__main__":
-    run_settlement()
+    while True:
+        try:
+            run_settlement()
+        except Exception as e:
+            logger.error(f"Settlement worker crashed: {e}")
+        time.sleep(300) # Run every 5 minutes
