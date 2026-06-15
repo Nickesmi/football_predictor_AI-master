@@ -53,9 +53,14 @@ def is_main_fixture(event: dict) -> bool:
     return False
 
 def compute_quality_score(event: dict, is_stale: bool = False, provider_error: str = None) -> int:
-    score = 40
+    score = 40 # Unknown League base
     league_name = event.get("tournament", {}).get("name", "")
     
+    # Fast reject for Youth/Reserve
+    for kw in REJECT_KEYWORDS:
+        if kw.lower() in league_name.lower():
+            return 0
+            
     if league_name in TIER_1_LEAGUES:
         score = 95
     elif league_name in WOMENS_TIER_1_LEAGUES:
@@ -63,7 +68,7 @@ def compute_quality_score(event: dict, is_stale: bool = False, provider_error: s
     elif league_name in TIER_2_LEAGUES:
         score = 75
         
-    # Example missing field penalties
+    # Penalties
     if not event.get("homeTeam") or not event.get("awayTeam"):
         score -= 20
         

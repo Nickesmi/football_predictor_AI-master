@@ -73,6 +73,11 @@ def run_settlement():
 
         if attempts >= 5:
             logger.error(f"Match {event_id} failed settlement 5 times. Keeping pending but ignoring until manual intervention.")
+            cursor.execute("""
+                INSERT INTO provider_health_log (provider, endpoint, success, latency_ms, error_message)
+                VALUES ('sofascore', 'settlement_retry_failure', 0, 0, ?)
+            """, (f"CRITICAL: Match {event_id} failed settlement 5 times",))
+            conn.commit()
             continue
             
         # Double confirm using fetch_match directly

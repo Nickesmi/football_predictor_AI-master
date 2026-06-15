@@ -5128,3 +5128,38 @@ def debug_live_quality():
     }
 
 app.include_router(debug_router)
+
+@debug_router.get("/pending-settlements")
+def debug_pending_settlements():
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT event_id, attempts, provider, first_ft_seen, last_check 
+        FROM pending_settlements 
+        ORDER BY first_ft_seen ASC
+    """)
+    rows = cursor.fetchall()
+    
+    matches = []
+    now_ts = datetime.now(timezone.utc).timestamp()
+    oldest_minutes = 0
+    
+    for r in rows:
+        first_ft_dt = datetime.fromisoformat(r[3])
+        minutes_pending = int((now_ts - first_ft_dt.timestamp()) / 60)
+        if minutes_pending > oldest_minutes:
+            oldest_minutes = minutes_pending
+            
+        matches.append({
+            "event_id": r[0],
+            "attempts": r[1],
+            "provider": r[2],
+            "first_ft_seen": r[3],
+            "last_check": r[4]
+        })
+        
+    return {
+        "pending_count": len(matches),
+        "oldest_pending_minutes": oldest_minutes,
+        "matches": matches
+    }
