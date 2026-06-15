@@ -111,13 +111,13 @@ def _safe_fair_odds(prob: float) -> float:
     return round(1.0 / prob, 3)
 
 
-def _confidence_label(prob: float, data_quality: float) -> str:
-    """Categorise confidence as HIGH / MEDIUM / LOW."""
+def _confidence_label(prob: float, data_quality: float, elo_diff: float = 0.0, fatigue: int = 0) -> str:
+    """Categorise confidence as HIGH / MEDIUM / LOW / NO PICK."""
     if data_quality < 40:
-        return "LOW"
-    if prob >= 0.65 and data_quality >= 70:
+        return "NO PICK"
+    if prob >= 0.65 and data_quality >= 90 and abs(elo_diff) >= 150 and fatigue <= 10:
         return "HIGH"
-    if prob >= 0.55 and data_quality >= 50:
+    if prob >= 0.60 and data_quality >= 70:
         return "MEDIUM"
     return "LOW"
 
@@ -208,7 +208,8 @@ def predict_match(features: dict) -> dict:
     p2_win = 1.0 - p1_win
 
     # ── Match Winner market ───────────────────────────────────────────────────
-    mw_conf = _confidence_label(max(p1_win, p2_win), dq)
+    fav_fatigue = features.get("fatigue_matches_p1", 0) if p1_win >= p2_win else features.get("fatigue_matches_p2", 0)
+    mw_conf = _confidence_label(max(p1_win, p2_win), dq, elo_diff, fav_fatigue)
     match_winner = {
         "player_1_win": round(p1_win * 100, 1),
         "player_2_win": round(p2_win * 100, 1),
@@ -282,7 +283,7 @@ def _compute_sets_markets(p1_win: float, p2_win: float, dq: float, best_of: int,
                 "selection":  selection,
                 "probability": round(straight_prob * 100, 1),
                 "fair_odds":   _safe_fair_odds(straight_prob),
-                "confidence":  _confidence_label(straight_prob, dq),
+                "confidence":  _confidence_label(straight_prob, dq, 0.0, fatigue),
             }
 
     # ── First Set Winner ──────────────────────────────────────────────────────
@@ -294,7 +295,7 @@ def _compute_sets_markets(p1_win: float, p2_win: float, dq: float, best_of: int,
         "player_2_win":  round((1 - first_set_p1) * 100, 1),
         "fair_odds_p1":  _safe_fair_odds(first_set_p1),
         "fair_odds_p2":  _safe_fair_odds(1 - first_set_p1),
-        "confidence":    _confidence_label(max(first_set_p1, 1 - first_set_p1), dq),
+        "confidence":    _confidence_label(max(first_set_p1, 1 - first_set_p1), dq, 0.0, 0),
     }
 
     return markets

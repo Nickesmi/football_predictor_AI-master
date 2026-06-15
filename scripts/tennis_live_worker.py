@@ -33,6 +33,30 @@ logger = logging.getLogger("tennis_live_worker")
 POLL_INTERVAL_SECONDS = 30
 
 
+def _get_adaptive_poll_interval(conn, date_str: str) -> int:
+    """Calculate adaptive poll interval based on today's match statuses."""
+    try:
+        rows = conn.execute(
+            "SELECT status FROM tennis_matches WHERE date=?",
+            (date_str,)
+        ).fetchall()
+        
+        if not rows:
+            return 300  # No matches today, check every 5 mins
+            
+        statuses = [r[0].upper() for r in rows if r[0]]
+        has_live = any(s == 'LIVE' or s.startswith('SET') or s.isdigit() for s in statuses)
+        has_ns = any(s in ('NS', 'TBD', 'DELAYED') for s in statuses)
+        
+        if has_live:
+            return 15
+        if has_ns:
+            return 300  # 5 minutes
+        return 900  # All finished, check every 15 mins
+    except Exception:
+        return 30
+
+
 def _log_health(conn, success: bool, latency_ms: int, match_count: int, error: str = None):
     try:
         conn.execute(
@@ -99,7 +123,7 @@ def main():
     from src.db.database import get_db
     from src.tennis.db.tennis_schema import init_tennis_db
 
-    logger.info("[TENNIS LIVE WORKER] Starting — poll interval: 30s")
+    logger.info("[TENNIS LIVE WORKER] Starting adaptive polling")
     conn = get_db()
     init_tennis_db(conn)
 
@@ -109,7 +133,9 @@ def main():
             run_once(conn, date_str)
         except Exception as exc:
             logger.error(f"[TENNIS LIVE] Unexpected error: {exc}", exc_info=True)
-        time.sleep(POLL_INTERVAL_SECONDS)
+            
+        sleep_sec = _get_adaptive_poll_interval(conn, date_str)
+        time.sleep(sleep_sec)
 
 
 if __name__ == "__main__":

@@ -233,11 +233,24 @@ function App() {
   }, [selectedDate, todayDate, fetchFixtures]);
 
   const pollInterval = React.useMemo(() => {
-    return 900000; // Throttled to 15 minutes to protect free-tier API limits
+    if (!isTabVisible || selectedDate !== todayDate) return null;
+
+    const statuses = fixtures.map(f => (f.status || '').toUpperCase());
+    const hasLive = statuses.some(s => s === 'LIVE' || /^\d+$/.test(s) || s === '1H' || s === '2H');
+    const hasHT = statuses.some(s => s === 'HT');
+    const hasNS = statuses.some(s => s === 'NS' || s === 'TBD');
+
+    if (hasLive) return 15000;  // 15 seconds
+    if (hasHT) return 30000;    // 30 seconds
+    if (hasNS) return 300000;   // 5 minutes
+    
+    return null; // FT -> never refresh
   }, [fixtures, isTabVisible, selectedDate, todayDate]);
 
   // Adaptive background polling for real-time scores
   useEffect(() => {
+    if (pollInterval === null) return;
+    
     const t = setInterval(() => {
       fetchFixtures(selectedDate, {
         isBackground: true,
