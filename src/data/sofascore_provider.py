@@ -28,8 +28,13 @@ TIER_2_LEAGUES = {
     "Brasileirão Série A", "Liga Profesional de Fútbol", "Saudi Pro League"
 }
 
+WOMENS_TIER_1_LEAGUES = {
+    "UEFA Women's Champions League", "Women's World Cup", "Women's EURO",
+    "NWSL", "Women's Super League", "Liga F", "WSL"
+}
+
 REJECT_KEYWORDS = [
-    "U17", "U19", "U20", "U21", "U23", "Youth", "Reserve", "Women", 
+    "U17", "U19", "U20", "U21", "U23", "Youth", "Reserve", 
     "Amateur", "Friendly", "Club Friendly Games"
 ]
 
@@ -53,6 +58,8 @@ def compute_quality_score(event: dict, is_stale: bool = False, provider_error: s
     
     if league_name in TIER_1_LEAGUES:
         score = 95
+    elif league_name in WOMENS_TIER_1_LEAGUES:
+        score = 90
     elif league_name in TIER_2_LEAGUES:
         score = 75
         
@@ -60,8 +67,13 @@ def compute_quality_score(event: dict, is_stale: bool = False, provider_error: s
     if not event.get("homeTeam") or not event.get("awayTeam"):
         score -= 20
         
-    if is_stale or provider_error:
+    score_home = event.get("homeScore", {}).get("current")
+    score_away = event.get("awayScore", {}).get("current")
+    if score_home is None or score_away is None:
         score -= 15
+        
+    if is_stale or provider_error:
+        score -= 20
         
     return max(0, min(100, score))
 
@@ -165,9 +177,8 @@ def normalize_event(event: dict, is_stale: bool = False, provider_error: str = N
         kickoff_str = None
 
     elapsed = None
-    if status_str in ("LIVE", "HT"):
-        # Very rough elapsed logic if needed, but SofaScore rarely gives exact minutes nicely in scheduled-events
-        elapsed = 45 if status_str == "HT" else 41  # mock elapsed for now
+    # SofaScore scheduled-events endpoint doesn't return accurate live minutes reliably.
+    # An honest unknown value (None) is better than fake precision.
         
     is_main = is_main_fixture(event)
     quality = compute_quality_score(event, is_stale, provider_error)

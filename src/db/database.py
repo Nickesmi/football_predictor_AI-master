@@ -66,7 +66,9 @@ def init_db(conn: sqlite3.Connection) -> None:
             first_ft_seen   TIMESTAMP NOT NULL,
             provider        TEXT,
             created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            confirmed       BOOLEAN DEFAULT 0
+            confirmed       BOOLEAN DEFAULT 0,
+            attempts        INTEGER DEFAULT 0,
+            last_check      TIMESTAMP
         );
 
         CREATE TABLE IF NOT EXISTS provider_health_log (
