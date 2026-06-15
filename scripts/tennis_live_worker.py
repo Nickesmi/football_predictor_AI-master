@@ -42,7 +42,7 @@ def _get_adaptive_poll_interval(conn, date_str: str) -> int:
         ).fetchall()
         
         if not rows:
-            return 300  # No matches today, check every 5 mins
+            return 900  # No matches today, sleep 15 mins
             
         statuses = [r[0].upper() for r in rows if r[0]]
         has_live = any(s == 'LIVE' or s.startswith('SET') or s.isdigit() for s in statuses)

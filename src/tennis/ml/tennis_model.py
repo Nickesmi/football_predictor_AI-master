@@ -115,7 +115,7 @@ def _confidence_label(prob: float, data_quality: float, elo_diff: float = 0.0, f
     """Categorise confidence as HIGH / MEDIUM / LOW / NO PICK."""
     if data_quality < 40:
         return "NO PICK"
-    if prob >= 0.65 and data_quality >= 90 and abs(elo_diff) >= 150 and fatigue <= 10:
+    if prob >= 0.70 and data_quality >= 90 and abs(elo_diff) >= 150 and fatigue <= 10:
         return "HIGH"
     if prob >= 0.60 and data_quality >= 70:
         return "MEDIUM"
