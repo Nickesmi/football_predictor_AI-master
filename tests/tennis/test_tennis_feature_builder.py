@@ -53,8 +53,23 @@ class TestBuildFeatures:
     def test_new_players_degrade_gracefully(self, tennis_db):
         """Should not raise for players with no history."""
         features = build_features(tennis_db, "Unknown Player A", "Unknown Player B", "hard")
-        assert features["data_quality_score"] < 80  # penalized for missing data
-        assert len(features["missing_features"]) > 0
+        assert features["data_quality_score"] == 25
+        assert features["missing_features"] == [
+            "elo_p1_new_player",
+            "elo_p2_new_player",
+            "rank_p1",
+            "rank_p2",
+            "form_last5_p1",
+            "form_last10_p1",
+            "form_last5_p2",
+            "form_last10_p2",
+            "surface_form_p1",
+            "surface_form_p2",
+            "h2h",
+        ]
+        assert features["win_rate_last5_p1"] is None
+        assert features["surface_win_rate_p2"] is None
+        assert features["h2h_total"] == 0
 
     def test_elo_defaults_for_new_player(self, tennis_db):
         features = build_features(tennis_db, "NewPlayer1", "NewPlayer2", "clay")

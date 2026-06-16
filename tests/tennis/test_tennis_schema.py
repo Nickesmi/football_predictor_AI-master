@@ -68,7 +68,19 @@ class TestTennisSchema:
         """)
         tennis_db.commit()
         row = tennis_db.execute(
-            "SELECT * FROM tennis_matches WHERE match_id='m1'"
+            """
+            SELECT match_id, date, player_1, player_2, status, sets_1, sets_2
+            FROM tennis_matches
+            WHERE match_id='m1'
+            """
         ).fetchone()
-        assert row is not None
+        assert dict(row) == {
+            "match_id": "m1",
+            "date": "2026-06-15",
+            "player_1": "Federer",
+            "player_2": "Nadal",
+            "status": "NS",
+            "sets_1": 0,
+            "sets_2": 0,
+        }
         assert row["player_1"] == "Federer"
