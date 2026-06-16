@@ -24,6 +24,40 @@ logger = logging.getLogger("football_predictor.tennis")
 MODEL_VERSION = "v1.0-elo"
 
 
+def _insert_prediction_row(
+    conn: sqlite3.Connection,
+    match_id: str,
+    now: str,
+    market_type: str,
+    selection: str,
+    probability: float,
+    fair_odds: float,
+    confidence_score: float,
+    model_version: str,
+    features_json: str,
+) -> None:
+    conn.execute(
+        """
+        INSERT INTO tennis_predictions
+          (match_id, prediction_time, market_type, selection,
+           predicted_probability, fair_odds, confidence_score,
+           model_version, features_json)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            match_id,
+            now,
+            market_type,
+            selection,
+            probability,
+            fair_odds,
+            confidence_score,
+            model_version,
+            features_json,
+        )
+    )
+
+
 def _store_predictions(
     conn: sqlite3.Connection,
     match_id: str,
@@ -37,93 +71,32 @@ def _store_predictions(
         if k not in ("missing_features", "h2h_recent3")
     })
 
-    # ── Match Winner ──────────────────────────────────────────────────────────
+    conn.execute("DELETE FROM tennis_predictions WHERE match_id = ?", (match_id,))
+
+    # ── No pick governance row ────────────────────────────────────────────────
     mw = prediction["match_winner"]
     if mw is None:
-        conn.execute(
-            """
-            INSERT OR IGNORE INTO tennis_predictions
-              (match_id, prediction_time, market_type, selection,
-               predicted_probability, fair_odds, confidence_score,
-               model_version, features_json)
-            VALUES (?, ?, 'match_winner', 'NO PICK', 0.0, 0.0, 'NO PICK', ?, ?)
-            """,
-            (match_id, now, MODEL_VERSION, features_json)
+        _insert_prediction_row(
+            conn, match_id, now, "match_winner", "NO PICK",
+            0.0, 0.0, 0.0, prediction.get("model_version", MODEL_VERSION), features_json
         )
         conn.commit()
         return
 
-    for player_key, prob_key, odds_key in [
-        ("Player 1", "player_1_win", "fair_odds_p1"),
-        ("Player 2", "player_2_win", "fair_odds_p2"),
-    ]:
-        prob = float(mw[prob_key]) / 100.0
-        conn.execute(
-            """
-            INSERT OR IGNORE INTO tennis_predictions
-              (match_id, prediction_time, market_type, selection,
-               predicted_probability, fair_odds, confidence_score,
-               model_version, features_json)
-            VALUES (?, ?, 'match_winner', ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                match_id, now, player_key,
-                prob,
-                float(mw[odds_key]),
-                mw["confidence"],
-                MODEL_VERSION,
-                features_json,
-            )
+    for pick in prediction.get("all_picks", []):
+        probability = float(pick.get("probability", 0.0)) / 100.0
+        _insert_prediction_row(
+            conn=conn,
+            match_id=match_id,
+            now=now,
+            market_type=pick.get("market_type") or pick.get("market") or "unknown",
+            selection=pick.get("selection") or "Unknown",
+            probability=probability,
+            fair_odds=float(pick.get("fair_odds") or 0.0),
+            confidence_score=float(pick.get("confidence_score") or probability),
+            model_version=prediction.get("model_version", MODEL_VERSION),
+            features_json=features_json,
         )
-
-    # ── Sets Handicap (if generated) ──────────────────────────────────────────
-    sets_h = prediction.get("sets_markets", {}).get("favourite_minus_1_5_sets")
-    if sets_h:
-        prob = float(sets_h["probability"]) / 100.0
-        conn.execute(
-            """
-            INSERT OR IGNORE INTO tennis_predictions
-              (match_id, prediction_time, market_type, selection,
-               predicted_probability, fair_odds, confidence_score,
-               model_version, features_json)
-            VALUES (?, ?, 'sets_handicap', ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                match_id, now,
-                sets_h["selection"],
-                prob,
-                float(sets_h["fair_odds"]),
-                prob,
-                MODEL_VERSION,
-                features_json,
-            )
-        )
-
-    # ── First Set Winner ──────────────────────────────────────────────────────
-    fsw = prediction.get("sets_markets", {}).get("first_set_winner")
-    if fsw:
-        for player_key, prob_key, odds_key in [
-            ("Player 1", "player_1_win", "fair_odds_p1"),
-            ("Player 2", "player_2_win", "fair_odds_p2"),
-        ]:
-            prob = float(fsw[prob_key]) / 100.0
-            conn.execute(
-                """
-                INSERT OR IGNORE INTO tennis_predictions
-                  (match_id, prediction_time, market_type, selection,
-                   predicted_probability, fair_odds, confidence_score,
-                   model_version, features_json)
-                VALUES (?, ?, 'first_set_winner', ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    match_id, now, player_key,
-                    prob,
-                    float(fsw[odds_key]),
-                    prob,
-                    MODEL_VERSION,
-                    features_json,
-                )
-            )
 
     conn.commit()
 
@@ -159,6 +132,8 @@ def predict_and_store(
         features   = build_features(
             conn, player_1, player_2, surface, tournament, rank_1, rank_2
         )
+        features["player_1"] = player_1
+        features["player_2"] = player_2
         prediction = predict_match(features)
 
         _store_predictions(conn, match_id, prediction, features)
@@ -172,7 +147,9 @@ def predict_and_store(
             "predictions": {
                 "match_winner": prediction["match_winner"],
                 "sets_markets": prediction["sets_markets"],
+                "market_groups": prediction.get("market_groups", {}),
             },
+            "all_picks":     prediction.get("all_picks", []),
             "top_picks":     prediction["top_picks"],
             "data_quality":  prediction["data_quality"],
             "model_version": MODEL_VERSION,

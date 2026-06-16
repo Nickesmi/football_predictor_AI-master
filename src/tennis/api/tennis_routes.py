@@ -108,16 +108,11 @@ def get_tennis_live(date: str = None):
 def get_tennis_prediction(match_id: str):
     """
     Return the full prediction card for a tennis match.
-    Generates prediction on-demand if not yet computed.
+    Generates a fresh prediction on-demand so old cached market rows do not
+    hide newly supported handicap, total, and player total picks.
     """
     _ensure_schema()
     conn = get_db()
-
-    # Check if prediction already exists
-    existing = conn.execute(
-        "SELECT * FROM tennis_predictions WHERE match_id = ? LIMIT 1",
-        (match_id,)
-    ).fetchone()
 
     # Fetch match record
     match_row = conn.execute(
@@ -130,44 +125,10 @@ def get_tennis_prediction(match_id: str):
 
     match = dict(match_row)
 
-    # Generate prediction if missing
-    if not existing:
-        result = predict_and_store(conn, match)
-        if not result:
-            raise HTTPException(status_code=422, detail="Prediction failed — insufficient data")
-        return result
-
-    # Return stored predictions for this match
-    pred_rows = conn.execute(
-        """
-        SELECT market_type, selection, predicted_probability, fair_odds, confidence_score
-        FROM tennis_predictions
-        WHERE match_id = ?
-        """,
-        (match_id,)
-    ).fetchall()
-
-    predictions = {}
-    for row in pred_rows:
-        market = row[0]
-        if market not in predictions:
-            predictions[market] = {}
-        predictions[market][row[1]] = {
-            "probability": round(float(row[2]) * 100, 1),
-            "fair_odds":   float(row[3]) if row[3] else None,
-            "confidence":  _confidence_from_score(float(row[4])) if row[4] else "LOW",
-        }
-
-    return {
-        "match_id":   match_id,
-        "player_1":   match["player_1"],
-        "player_2":   match["player_2"],
-        "tournament": match.get("tournament"),
-        "surface":    match.get("surface"),
-        "predictions": predictions,
-        "top_picks":  [],  # rebuilt on next full predict call
-        "warnings":   [],
-    }
+    result = predict_and_store(conn, match)
+    if not result:
+        raise HTTPException(status_code=422, detail="Prediction failed — insufficient data")
+    return result
 
 
 @router.get("/analytics/baseline")

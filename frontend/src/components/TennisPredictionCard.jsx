@@ -1,5 +1,5 @@
 import React from 'react';
-import { AlertCircle, TrendingUp, Zap } from 'lucide-react';
+import { AlertCircle, ListChecks, TrendingUp, Zap } from 'lucide-react';
 
 const confidenceColor = (c) => {
   if (c === 'HIGH')   return 'text-emerald-400 bg-emerald-500/15 border-emerald-500/30';
@@ -46,6 +46,67 @@ const ProbabilityBar = ({ p1, p2, label1, label2 }) => (
   </div>
 );
 
+const marketLabels = {
+  match_winner: 'Match Winner',
+  sets_handicap: 'Sets Handicap',
+  game_handicap: 'Game Handicap',
+  total_games: 'Total Games / Points',
+  player_games: 'Player Totals',
+  first_set_winner: 'First Set Winner',
+};
+
+const preferredMarketOrder = [
+  'sets_handicap',
+  'game_handicap',
+  'total_games',
+  'player_games',
+  'first_set_winner',
+];
+
+const fmt = (value, digits = 1) => (
+  Number.isFinite(Number(value)) ? Number(value).toFixed(digits) : '-'
+);
+
+const groupFlatPicks = (picks = []) => picks.reduce((acc, pick) => {
+  const key = pick.market_type || pick.market || 'other';
+  if (!acc[key]) acc[key] = [];
+  acc[key].push(pick);
+  return acc;
+}, {});
+
+const MarketTable = ({ title, picks }) => {
+  if (!picks?.length) return null;
+
+  return (
+    <div className="bg-white/[0.025] border border-white/5 rounded-lg overflow-hidden">
+      <div className="px-3 py-2 border-b border-white/5 text-[10px] font-bold uppercase tracking-wider text-slate-400">
+        {title}
+      </div>
+      <div className="divide-y divide-white/5">
+        {picks.map((pick, i) => (
+          <div key={`${pick.selection}-${i}`} className="grid grid-cols-[minmax(0,1fr)_54px_48px_56px] items-center gap-2 px-3 py-2">
+            <div className="min-w-0">
+              <div className="text-[12px] font-semibold text-slate-100 truncate">{pick.selection}</div>
+              {pick.market && pick.market !== title && (
+                <div className="text-[9px] text-slate-500 truncate">{pick.market}</div>
+              )}
+            </div>
+            <div className="text-right text-[11px] font-bold text-emerald-400 tabular-nums">
+              {fmt(pick.probability)}%
+            </div>
+            <div className="text-right text-[10px] font-semibold text-white tabular-nums">
+              @{fmt(pick.fair_odds, 2)}
+            </div>
+            <div className={`justify-self-end text-[8px] font-bold px-1.5 py-0.5 rounded border ${confidenceColor(pick.confidence)}`}>
+              {pick.confidence || 'LOW'}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+};
+
 const TennisPredictionCard = ({ match, prediction, loading, error }) => {
   if (loading) {
     return (
@@ -75,6 +136,7 @@ const TennisPredictionCard = ({ match, prediction, loading, error }) => {
 
   const mw = prediction.predictions?.match_winner || prediction.match_winner;
   const topPicks = prediction.top_picks || [];
+  const marketGroups = prediction.predictions?.market_groups || prediction.market_groups || groupFlatPicks(prediction.all_picks);
   const warnings = prediction.warnings || [];
   const dq = prediction.data_quality ?? 0;
 
@@ -98,7 +160,7 @@ const TennisPredictionCard = ({ match, prediction, loading, error }) => {
         <DataQualityBar score={dq} />
         {dq < 40 && (
           <p className="text-[9px] text-amber-400/80 mt-1">
-            Low quality — predictions strongly shrunk toward 50%
+            Low quality — markets are conservative and low confidence
           </p>
         )}
       </div>
@@ -150,13 +212,37 @@ const TennisPredictionCard = ({ match, prediction, loading, error }) => {
                   <div className="text-[13px] font-bold text-white truncate">{pick.selection}</div>
                 </div>
                 <div className="text-right shrink-0">
-                  <div className="text-[11px] font-bold text-emerald-400">{pick.probability?.toFixed(1)}%</div>
-                  <div className="text-[9px] text-slate-500">@ {pick.fair_odds?.toFixed(2)}</div>
+                  <div className="text-[11px] font-bold text-emerald-400">{fmt(pick.probability)}%</div>
+                  <div className="text-[9px] text-slate-500">@ {fmt(pick.fair_odds, 2)}</div>
                 </div>
                 <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded border ${confidenceColor(pick.confidence)}`}>
                   {pick.confidence}
                 </span>
               </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* ── All Markets ───────────────────────────────────── */}
+      {preferredMarketOrder.some((key) => marketGroups?.[key]?.length) && (
+        <div className="bg-[#111318] border border-white/5 rounded-xl p-4">
+          <div className="flex items-center justify-between gap-2 mb-3">
+            <div className="flex items-center gap-1.5">
+              <ListChecks className="w-3.5 h-3.5 text-sky-400" />
+              <span className="text-[11px] font-bold text-slate-300 uppercase tracking-wider">Available Odds & Picks</span>
+            </div>
+            <span className="text-[10px] text-slate-500">
+              {(prediction.all_picks?.length || Object.values(marketGroups).flat().length)} markets
+            </span>
+          </div>
+          <div className="space-y-3">
+            {preferredMarketOrder.map((key) => (
+              <MarketTable
+                key={key}
+                title={marketLabels[key] || key}
+                picks={marketGroups[key]}
+              />
             ))}
           </div>
         </div>

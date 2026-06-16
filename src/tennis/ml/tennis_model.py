@@ -114,7 +114,7 @@ def _safe_fair_odds(prob: float) -> float:
 def _confidence_label(prob: float, data_quality: float, elo_diff: float = 0.0, fatigue: int = 0) -> str:
     """Categorise confidence as HIGH / MEDIUM / LOW / NO PICK."""
     if data_quality < 40:
-        return "NO PICK"
+        return "LOW"
     if prob >= 0.70 and data_quality >= 90 and abs(elo_diff) >= 150 and fatigue <= 10:
         return "HIGH"
     if prob >= 0.60 and data_quality >= 70:
@@ -132,19 +132,6 @@ def predict_match(features: dict) -> dict:
     Invariant guarantee: player_1_win + player_2_win == 1.0
     """
     dq = float(features.get("data_quality_score", 50))
-
-    # ── Governance Rule: NO PICK for poor data ────────────────────────────────
-    if dq < 40:
-        return {
-            "model_version":  "v1.0-elo",
-            "data_quality":   dq,
-            "missing_features": features.get("missing_features", []),
-            "match_winner":   None,
-            "sets_markets":   {},
-            "top_picks":      [],
-            "warnings":       ["Data quality too low (< 40) — NO PICK. Model requires more historical data."],
-            "_signals":       None,
-        }
 
     # ── Layer 1: Elo ──────────────────────────────────────────────────────────
     elo_diff = float(features.get("elo_diff", 0.0))
@@ -218,17 +205,18 @@ def predict_match(features: dict) -> dict:
         "confidence":   mw_conf,
     }
 
-    # ── Sets markets (rule-based v1) ──────────────────────────────────────────
+    # ── Tennis markets (rule-based v1) ────────────────────────────────────────
     best_of = features.get("best_of", 3)
     sets_markets = _compute_sets_markets(p1_win, p2_win, dq, best_of, features)
+    market_groups, all_picks = _build_market_board(match_winner, sets_markets, p1_win, p2_win, dq, best_of, features)
 
     # ── Top picks assembly ────────────────────────────────────────────────────
-    top_picks = _build_top_picks(match_winner, sets_markets, features)
+    top_picks = _build_top_picks(all_picks, features)
 
     # ── Warnings ──────────────────────────────────────────────────────────────
     warnings = []
     if dq < 40:
-        warnings.append(f"Low data quality ({dq:.0f}/100) — predictions shrunk toward 50%")
+        warnings.append(f"Low data quality ({dq:.0f}/100) — showing conservative low-confidence markets")
     if "elo_p1_new_player" in features.get("missing_features", []):
         warnings.append("Player 1 has no Elo history — using default rating")
     if "elo_p2_new_player" in features.get("missing_features", []):
@@ -240,6 +228,8 @@ def predict_match(features: dict) -> dict:
         "missing_features": features.get("missing_features", []),
         "match_winner":   match_winner,
         "sets_markets":   sets_markets,
+        "market_groups":  market_groups,
+        "all_picks":      all_picks,
         "top_picks":      top_picks,
         "warnings":       warnings,
         # Raw signal components (for calibration / debugging)
@@ -301,45 +291,134 @@ def _compute_sets_markets(p1_win: float, p2_win: float, dq: float, best_of: int,
     return markets
 
 
-def _build_top_picks(match_winner: dict, sets_markets: dict, features: dict) -> list[dict]:
-    """Select highest-confidence picks to surface in the UI."""
-    picks = []
-    dq = features.get("data_quality_score", 50)
+def _market(market: str, market_type: str, selection: str, prob: float, dq: float) -> dict:
+    """Normalize one market row for API, storage, and frontend display."""
+    prob = max(0.03, min(0.97, prob))
+    return {
+        "market": market,
+        "market_type": market_type,
+        "selection": selection,
+        "probability": round(prob * 100, 1),
+        "fair_odds": _safe_fair_odds(prob),
+        "confidence": _confidence_label(prob, dq),
+        "confidence_score": round(prob, 4),
+    }
 
-    # Match winner pick
-    if match_winner["confidence"] in ("HIGH", "MEDIUM"):
-        if match_winner["player_1_win"] >= match_winner["player_2_win"]:
-            picks.append({
-                "market":      "Match Winner",
-                "selection":   "Player 1",
-                "probability": match_winner["player_1_win"],
-                "fair_odds":   match_winner["fair_odds_p1"],
-                "confidence":  match_winner["confidence"],
-                "data_quality": dq,
-            })
-        else:
-            picks.append({
-                "market":      "Match Winner",
-                "selection":   "Player 2",
-                "probability": match_winner["player_2_win"],
-                "fair_odds":   match_winner["fair_odds_p2"],
-                "confidence":  match_winner["confidence"],
-                "data_quality": dq,
-            })
 
-    # Sets handicap
+def _logistic_cover_probability(line: float, expected_margin: float, spread: float) -> float:
+    """Approximate cover probability from expected game margin."""
+    return 1.0 / (1.0 + math.exp(-(expected_margin + line) / spread))
+
+
+def _expected_game_profile(p1_win: float, best_of: int, features: dict) -> tuple[float, float, float]:
+    """Estimate total games and player game shares from match strength."""
+    closeness = 1.0 - abs(p1_win - 0.5) * 2.0
+    base_total = 22.0 if best_of == 3 else 38.5
+    expected_total = base_total + closeness * (3.0 if best_of == 3 else 6.0)
+
+    serve_gap = (
+        float(features.get("surface_win_rate_p1") or 0.5) -
+        float(features.get("surface_win_rate_p2") or 0.5)
+    )
+    p1_game_share = 0.5 + (p1_win - 0.5) * 0.44 + serve_gap * 0.08
+    p1_game_share = max(0.36, min(0.64, p1_game_share))
+    p1_games = expected_total * p1_game_share
+    p2_games = expected_total - p1_games
+    return expected_total, p1_games, p2_games
+
+
+def _total_over_probability(expected_total: float, line: float, best_of: int) -> float:
+    spread = 3.8 if best_of == 3 else 6.2
+    return 1.0 / (1.0 + math.exp(-(expected_total - line) / spread))
+
+
+def _build_market_board(
+    match_winner: dict,
+    sets_markets: dict,
+    p1_win: float,
+    p2_win: float,
+    dq: float,
+    best_of: int,
+    features: dict,
+) -> tuple[dict, list[dict]]:
+    """Build every tennis market currently supported by the model."""
+    p1_name = features.get("player_1") or "Player 1"
+    p2_name = features.get("player_2") or "Player 2"
+    expected_total, p1_games, p2_games = _expected_game_profile(p1_win, best_of, features)
+    expected_margin = p1_games - p2_games
+    spread = 4.2 if best_of == 3 else 7.0
+
+    groups = {
+        "match_winner": [
+            _market("Match Winner", "match_winner", p1_name, p1_win, dq),
+            _market("Match Winner", "match_winner", p2_name, p2_win, dq),
+        ],
+        "sets_handicap": [],
+        "game_handicap": [],
+        "total_games": [],
+        "player_games": [],
+        "first_set_winner": [],
+    }
+
     sets_h = sets_markets.get("favourite_minus_1_5_sets")
-    if sets_h and sets_h["confidence"] in ("HIGH", "MEDIUM"):
-        picks.append({
-            "market":      "Sets Handicap",
-            "selection":   sets_h["selection"],
+    if sets_h:
+        groups["sets_handicap"].append({
+            "market": "Sets Handicap",
+            "market_type": "sets_handicap",
+            "selection": sets_h["selection"].replace("player_1", p1_name).replace("player_2", p2_name),
             "probability": sets_h["probability"],
-            "fair_odds":   sets_h["fair_odds"],
-            "confidence":  sets_h["confidence"],
-            "data_quality": dq,
+            "fair_odds": sets_h["fair_odds"],
+            "confidence": sets_h["confidence"],
+            "confidence_score": round(float(sets_h["probability"]) / 100.0, 4),
         })
 
-    return picks
+    set_line = 1.5 if best_of == 3 else 2.5
+    groups["sets_handicap"].extend([
+        _market("Sets Handicap", "sets_handicap", f"{p1_name} +{set_line} sets", min(0.95, p1_win + 0.24), dq),
+        _market("Sets Handicap", "sets_handicap", f"{p2_name} +{set_line} sets", min(0.95, p2_win + 0.24), dq),
+    ])
+
+    handicap_lines = [1.5, 2.5, 3.5] if best_of == 3 else [2.5, 3.5, 4.5]
+    for line in handicap_lines:
+        p1_cover = _quality_shrinkage(_logistic_cover_probability(line, expected_margin, spread), dq)
+        p2_cover = _quality_shrinkage(_logistic_cover_probability(line, -expected_margin, spread), dq)
+        groups["game_handicap"].append(_market("Game Handicap", "game_handicap", f"{p1_name} +{line} games", p1_cover, dq))
+        groups["game_handicap"].append(_market("Game Handicap", "game_handicap", f"{p2_name} +{line} games", p2_cover, dq))
+
+    total_lines = [20.5, 21.5, 22.5, 23.5] if best_of == 3 else [35.5, 36.5, 37.5, 38.5]
+    for line in total_lines:
+        over_prob = _quality_shrinkage(_total_over_probability(expected_total, line, best_of), dq)
+        groups["total_games"].append(_market("Total Games / Points", "total_games", f"Over {line}", over_prob, dq))
+        groups["total_games"].append(_market("Total Games / Points", "total_games", f"Under {line}", 1.0 - over_prob, dq))
+
+    player_lines = [10.5, 11.5, 12.5] if best_of == 3 else [17.5, 18.5, 19.5]
+    for player_name, expected_games in [(p1_name, p1_games), (p2_name, p2_games)]:
+        for line in player_lines:
+            over_prob = _quality_shrinkage(_total_over_probability(expected_games, line, best_of), dq)
+            groups["player_games"].append(_market("Player Total Games", "player_games", f"{player_name} Over {line}", over_prob, dq))
+            groups["player_games"].append(_market("Player Total Games", "player_games", f"{player_name} Under {line}", 1.0 - over_prob, dq))
+
+    fsw = sets_markets.get("first_set_winner")
+    if fsw:
+        groups["first_set_winner"].extend([
+            _market("First Set Winner", "first_set_winner", p1_name, float(fsw["player_1_win"]) / 100.0, dq),
+            _market("First Set Winner", "first_set_winner", p2_name, float(fsw["player_2_win"]) / 100.0, dq),
+        ])
+
+    all_picks = [pick for picks in groups.values() for pick in picks]
+    all_picks.sort(key=lambda item: item.get("probability", 0), reverse=True)
+    return groups, all_picks
+
+
+def _build_top_picks(all_picks: list[dict], features: dict) -> list[dict]:
+    """Select highest-confidence picks to surface in the UI."""
+    dq = features.get("data_quality_score", 50)
+    ranked = [
+        {**pick, "data_quality": dq}
+        for pick in all_picks
+        if pick.get("confidence") in ("HIGH", "MEDIUM") or float(pick.get("probability", 0)) >= 58.0
+    ]
+    return ranked[:8]
 
 
 # ── Elo update (called after match settlement) ────────────────────────────────
