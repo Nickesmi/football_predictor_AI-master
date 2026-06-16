@@ -5,6 +5,7 @@ SQLite database connection and schema initialization.
 
 import sqlite3
 import logging
+import os
 from pathlib import Path
 from typing import Optional
 
@@ -14,7 +15,11 @@ import sys
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 
-if getattr(sys, 'frozen', False):
+_ENV_DB_PATH = os.getenv("FOOTBALL_PREDICTOR_DB_PATH")
+
+if _ENV_DB_PATH:
+    DB_PATH = Path(_ENV_DB_PATH).expanduser()
+elif getattr(sys, 'frozen', False):
     DB_PATH = Path.home() / ".football_predictor" / "engine.db"
 else:
     DB_PATH = _PROJECT_ROOT / "data" / "engine.db"

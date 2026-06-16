@@ -124,18 +124,24 @@ def render() -> None:
     _load_streamlit_secrets()
 
     st.set_page_config(
-        page_title="Football Predictor AI",
+        page_title="xGenius",
         page_icon="⚽",
         layout="wide",
     )
 
-    st.title("Football Predictor AI")
-    st.caption("Streamlit Cloud launcher for fixtures, scorelines, and settled results.")
+    st.title("xGenius")
+    st.caption("AI football predictions, scorelines, and settled result verification.")
 
     api_key_present = bool(os.getenv("APIFOOTBALL_API_KEY") or os.getenv("API_FOOTBALL_KEY"))
     if not api_key_present:
         st.error("Missing APIFOOTBALL_API_KEY. Add it in Streamlit Cloud: App settings → Secrets.")
-        st.code('APIFOOTBALL_API_KEY = "your_api_football_key"', language="toml")
+        st.code(
+            'APIFOOTBALL_API_KEY = "your_api_football_key"\n'
+            'API_FOOTBALL_KEY = "your_api_football_key"\n'
+            'RAPIDAPI_KEY = "your_rapidapi_key"\n'
+            'RAPIDAPI_HOST = "sofascore.p.rapidapi.com"',
+            language="toml",
+        )
         return
 
     today = date.today()
