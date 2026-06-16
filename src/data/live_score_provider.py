@@ -48,15 +48,6 @@ def normalize_live_payload(ev: dict) -> dict:
     elif status_type in ["canceled", "postponed"]:
         status_mapped = "CANC"
 
-    time_info = ev.get("time", {})
-    elapsed = time_info.get("currentPeriodStartTimestamp")
-    # For simplicity, if we have a current period, calculate roughly. But Sofascore gives 'played' or we just say LIVE.
-    minute = 0
-    if status_mapped == "LIVE" and elapsed:
-        minute = (int(time.time()) - elapsed) // 60
-        if description == "2nd half":
-            minute += 45
-    
     # In Sofascore, score is often in homeScore / awayScore
     home_score = ev.get("homeScore", {}).get("current", 0)
     away_score = ev.get("awayScore", {}).get("current", 0)
@@ -65,7 +56,7 @@ def normalize_live_payload(ev: dict) -> dict:
         "home_team": ev.get("homeTeam", {}).get("name", ""),
         "away_team": ev.get("awayTeam", {}).get("name", ""),
         "status": status_mapped,
-        "elapsed": minute,
+        "elapsed": None,
         "home_score": home_score,
         "away_score": away_score,
         "provider": "rapidapi_sofascore",

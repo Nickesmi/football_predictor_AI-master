@@ -129,10 +129,28 @@ def _fetch_espn_matches() -> tuple[list[dict], Optional[str], int]:
                         
                         m["status"] = _normalize_status(str(match.get("status", "")))
                         
-                        m["sets_1"] = len(p1.get("set_scores", []))
-                        m["sets_2"] = len(p2.get("set_scores", []))
-                        m["games_1"] = sum(s.get("games", 0) for s in p1.get("set_scores", []))
-                        m["games_2"] = sum(s.get("games", 0) for s in p2.get("set_scores", []))
+                        s1_won = 0
+                        s2_won = 0
+                        p1_sets = p1.get("set_scores", [])
+                        p2_sets = p2.get("set_scores", [])
+                        for i in range(min(len(p1_sets), len(p2_sets))):
+                            g1 = p1_sets[i].get("games", 0)
+                            g2 = p2_sets[i].get("games", 0)
+                            if g1 > g2:
+                                s1_won += 1
+                            elif g2 > g1:
+                                s2_won += 1
+                                
+                        # Handle retirements/walkovers where sets might be equal
+                        if p1.get("winner") and s1_won <= s2_won:
+                            s1_won = s2_won + 1
+                        elif p2.get("winner") and s2_won <= s1_won:
+                            s2_won = s1_won + 1
+
+                        m["sets_1"] = s1_won
+                        m["sets_2"] = s2_won
+                        m["games_1"] = sum(s.get("games", 0) for s in p1_sets)
+                        m["games_2"] = sum(s.get("games", 0) for s in p2_sets)
                         
                         m["last_live_update"] = datetime.now(timezone.utc).isoformat()
                         

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
-  Loader2, CheckCircle2, XCircle, HelpCircle, Trophy, TrendingUp,
+  Loader2, CheckCircle2, XCircle, Trophy, TrendingUp,
   BarChart3, ChevronDown, ChevronUp, Calendar, Target, ArrowLeft,
   AlertTriangle, ShieldCheck, Shield, Layers, Activity, Zap, Crown,
   Database, RefreshCw, Cpu
@@ -45,7 +45,7 @@ class ErrorBoundary extends React.Component {
 
 /* ─── Category style map ─────────────────────────────────── */
 const CATEGORY_STYLES = {
-  "Result":     { accent:'text-emerald-400', bg:'bg-emerald-500/10', border:'border-emerald-500/25', bar:'from-emerald-500 to-emerald-300', label:'Result' },
+  "Result":     { accent:'text-emerald-400', bg:'bg-emerald-500/10', border:'border-emerald-500/25', bar:'from-emerald-500 to-emerald-300', label:'Match Result' },
   "Goals":      { accent:'text-cyan-400',    bg:'bg-cyan-500/8',     border:'border-cyan-500/20',    bar:'from-cyan-500 to-cyan-300',       label:'Total Goals' },
   "Team Goals": { accent:'text-teal-400',    bg:'bg-teal-500/8',     border:'border-teal-500/20',    bar:'from-teal-500 to-teal-300',       label:'Team Goals' },
   "Handicaps":  { accent:'text-fuchsia-400', bg:'bg-fuchsia-500/5',  border:'border-fuchsia-500/15', bar:'from-fuchsia-500 to-fuchsia-300', label:'Handicaps' },
@@ -71,6 +71,66 @@ const ResultBadge = ({ result, isSettled }) => {
   if (result === true)  return <span className="flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[9px] font-bold text-emerald-400 bg-emerald-500/15 border border-emerald-500/30"><CheckCircle2 className="w-2.5 h-2.5" />WIN</span>;
   if (result === false) return <span className="flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[9px] font-bold text-red-400 bg-red-500/15 border border-red-500/30"><XCircle className="w-2.5 h-2.5" />LOSS</span>;
   return null;
+};
+
+const getActualScore = (fixture, actual) => {
+  const home = actual?.home_goals ?? fixture?.home_goals;
+  const away = actual?.away_goals ?? fixture?.away_goals;
+  const hasScore = home !== null && home !== undefined && away !== null && away !== undefined;
+  return {
+    home,
+    away,
+    hasScore,
+    total: actual?.total_goals ?? (hasScore ? home + away : null),
+    fhHome: actual?.fh_home_goals ?? fixture?.fh_home_goals,
+    fhAway: actual?.fh_away_goals ?? fixture?.fh_away_goals,
+  };
+};
+
+const outcomeLabel = (home, away) => {
+  if (home > away) return "Home Win";
+  if (home < away) return "Away Win";
+  return "Draw";
+};
+
+const MatchScorelineHeader = ({ fixture, actual }) => {
+  const score = getActualScore(fixture, actual);
+  const homeWon = score.hasScore && score.home > score.away;
+  const awayWon = score.hasScore && score.away > score.home;
+
+  const TeamLogo = ({ src }) => (
+    src ? (
+      <img src={src} alt="" className="w-6 h-6 object-contain shrink-0" onError={e => e.currentTarget.style.display = 'none'} />
+    ) : (
+      <div className="w-6 h-6 rounded-full bg-white/8 shrink-0" aria-hidden="true" />
+    )
+  );
+
+  return (
+    <div className="grid grid-cols-[minmax(0,1fr)_72px_minmax(0,1fr)] items-center gap-3 flex-1 min-w-0">
+      <div className="flex items-center justify-end gap-2 min-w-0">
+        <span className={`text-sm truncate ${homeWon ? 'text-white font-bold' : 'text-slate-300 font-medium'}`}>
+          {fixture?.home_team?.name || "Home"}
+        </span>
+        <TeamLogo src={fixture?.home_team?.logo} />
+      </div>
+
+      <div className="h-10 rounded-lg bg-black/30 border border-white/10 flex items-center justify-center tabular-nums font-mono">
+        {score.hasScore ? (
+          <span className="text-lg font-black text-white">{score.home} - {score.away}</span>
+        ) : (
+          <span className="text-[10px] font-bold tracking-widest text-slate-500">TBD</span>
+        )}
+      </div>
+
+      <div className="flex items-center justify-start gap-2 min-w-0">
+        <TeamLogo src={fixture?.away_team?.logo} />
+        <span className={`text-sm truncate ${awayWon ? 'text-white font-bold' : 'text-slate-300 font-medium'}`}>
+          {fixture?.away_team?.name || "Away"}
+        </span>
+      </div>
+    </div>
+  );
 };
 
 /* ─── Tier Accuracy Card (Layer 2 summary) ─────────── */
@@ -128,6 +188,7 @@ const TierAccuracyCard = ({ tierData }) => {
 const MatchResultCard = ({ match }) => {
   const [expanded, setExpanded] = useState(false);
   const { fixture, actual, categories = [], tiers = [], summary, picks = [] } = match || {};
+  const score = getActualScore(fixture, actual);
   const settled  = summary?.total || 0;
   const accuracy = settled > 0 ? Math.round(((summary?.correct || 0) / settled) * 100) : 0;
 
@@ -155,23 +216,7 @@ const MatchResultCard = ({ match }) => {
         {fixture?.league?.logo && (
           <img src={fixture.league.logo} alt="" className="w-5 h-5 object-contain shrink-0 opacity-70" onError={e => e.target.style.display='none'} />
         )}
-        <div className="flex items-center gap-3 flex-1 min-w-0">
-          <div className="flex items-center gap-2 min-w-0">
-            {fixture?.home_team?.logo && (
-              <img src={fixture.home_team.logo} alt="" className="w-5 h-5 object-contain shrink-0" onError={e => e.target.style.display='none'} />
-            )}
-            <span className="text-sm font-medium text-white truncate">{fixture?.home_team?.name || "Home"}</span>
-          </div>
-          <span className="text-lg font-mono font-black text-white shrink-0">
-            {actual?.home_goals ?? 0} – {actual?.away_goals ?? 0}
-          </span>
-          <div className="flex items-center gap-2 min-w-0">
-            <span className="text-sm font-medium text-white truncate">{fixture?.away_team?.name || "Away"}</span>
-            {fixture?.away_team?.logo && (
-              <img src={fixture.away_team.logo} alt="" className="w-5 h-5 object-contain shrink-0" onError={e => e.target.style.display='none'} />
-            )}
-          </div>
-        </div>
+        <MatchScorelineHeader fixture={fixture} actual={actual} />
 
         {/* Mini category accuracy row */}
         <div className="hidden md:flex items-center gap-2.5 shrink-0">
@@ -210,17 +255,19 @@ const MatchResultCard = ({ match }) => {
           {/* Actual Stats */}
           <div className="flex items-center gap-4 mb-4 text-[11px] text-slate-500 flex-wrap">
             <span>Outcome: <span className="text-white font-bold">
-              {(actual?.home_goals ?? 0) > (actual?.away_goals ?? 0) ? "Home Win" : 
-               (actual?.home_goals ?? 0) < (actual?.away_goals ?? 0) ? "Away Win" : "Draw"}
+              {score.hasScore ? outcomeLabel(score.home, score.away) : "Pending"}
             </span></span>
-            <span>Total Goals: <span className="text-white font-bold">{actual?.total_goals ?? 0}</span></span>
-            <span>Home Goals: <span className="text-emerald-400 font-bold">{actual?.home_goals ?? 0}</span></span>
-            <span>Away Goals: <span className="text-orange-400 font-bold">{actual?.away_goals ?? 0}</span></span>
+            <span>Total Goals: <span className="text-white font-bold">{score.total ?? "-"}</span></span>
+            <span>Home Goals: <span className="text-emerald-400 font-bold">{score.hasScore ? score.home : "-"}</span></span>
+            <span>Away Goals: <span className="text-orange-400 font-bold">{score.hasScore ? score.away : "-"}</span></span>
             <span>Goal Diff: <span className="text-fuchsia-400 font-bold">
-              {((actual?.home_goals ?? 0) - (actual?.away_goals ?? 0)) > 0 
-                ? `+${(actual?.home_goals ?? 0) - (actual?.away_goals ?? 0)}` 
-                : (actual?.home_goals ?? 0) - (actual?.away_goals ?? 0)}
+              {score.hasScore
+                ? `${score.home - score.away > 0 ? '+' : ''}${score.home - score.away}`
+                : "-"}
             </span></span>
+            {score.fhHome !== null && score.fhHome !== undefined && score.fhAway !== null && score.fhAway !== undefined && (
+              <span>HT: <span className="text-slate-300 font-bold">{score.fhHome} - {score.fhAway}</span></span>
+            )}
           </div>
 
           {/* Sorted Picks Chart */}
@@ -388,44 +435,6 @@ const ResultsTracker = ({ onBack, selectedDate }) => {
   }, []);
 
   useEffect(() => { fetchResults(date); }, [date, fetchResults]);
-
-  const [isTabVisible, setIsTabVisible] = useState(!document.hidden);
-  
-  useEffect(() => {
-    const handleVisibilityChange = () => {
-      const isVisible = !document.hidden;
-      setIsTabVisible(isVisible);
-      if (isVisible) {
-        fetchResults(date, true);
-      }
-    };
-    document.addEventListener("visibilitychange", handleVisibilityChange);
-    return () => document.removeEventListener("visibilitychange", handleVisibilityChange);
-  }, [date, fetchResults]);
-
-  const pollInterval = React.useMemo(() => {
-    if (!isTabVisible) return 300000; // 5 mins if tab is hidden
-    
-    let interval = 300000; // Default 5 minutes
-    const matches = data?.matches || [];
-    if (matches.length > 0) {
-      const statuses = matches.map(m => m.fixture?.status || "");
-      const isLive = statuses.some(s => s.includes("LIVE") || s.includes("1H") || s.includes("2H") || s.includes("ET") || s.includes("P"));
-      const isHalftime = statuses.some(s => s.includes("HT") || s.includes("BT"));
-      
-      if (isLive) interval = 15000;
-      else if (isHalftime) interval = 30000;
-    }
-    return interval;
-  }, [data, isTabVisible]);
-
-  // Adaptive background polling for live results updates
-  useEffect(() => {
-    const t = setInterval(() => {
-      fetchResults(date, true);
-    }, pollInterval);
-    return () => clearInterval(t);
-  }, [date, fetchResults, pollInterval]);
 
   const summary      = data?.summary      || {};
   const matches      = data?.matches      || [];
@@ -601,7 +610,11 @@ const ResultsTracker = ({ onBack, selectedDate }) => {
                 <span>
                   <span className="text-emerald-500">■</span> Correct
                   <span className="text-red-500 ml-2">■</span> Wrong
-                  {(summary?.na_excluded || 0) > 0 && <span className="text-slate-700 ml-2">| {summary.na_excluded} excluded (N/A)</span>}
+                  {(summary?.na_excluded || 0) > 0 && (
+                    <span className="text-slate-700 ml-2">
+                      | {summary.na_excluded} skipped (missing stats)
+                    </span>
+                  )}
                 </span>
               </div>
 

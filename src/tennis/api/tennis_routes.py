@@ -182,6 +182,108 @@ def get_tennis_baseline():
     return metrics
 
 
+@router.get("/results")
+def get_tennis_results(date: str = None):
+    """
+    Return all settled matches for a specific date with their resolved predictions.
+    """
+    _ensure_schema()
+    conn = get_db()
+    
+    if not date:
+        date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        
+    # Fetch FT matches for the date
+    matches_rows = conn.execute(
+        "SELECT * FROM tennis_matches WHERE date = ? AND status = 'FT' ORDER BY start_time",
+        (date,)
+    ).fetchall()
+    
+    if not matches_rows:
+        return {
+            "date": date,
+            "matches": [],
+            "summary": {"total_matches": 0, "accuracy_pct": 0, "total_correct": 0, "total_wrong": 0}
+        }
+        
+    match_ids = [m["match_id"] for m in matches_rows]
+    
+    # Fetch results for those matches
+    results_rows = conn.execute(
+        f"SELECT * FROM tennis_results WHERE match_id IN ({','.join(['?']*len(match_ids))})",
+        match_ids
+    ).fetchall()
+    
+    results_by_id = {r["match_id"]: dict(r) for r in results_rows}
+    
+    # Fetch predictions for those matches
+    preds_rows = conn.execute(
+        f"SELECT * FROM tennis_predictions WHERE match_id IN ({','.join(['?']*len(match_ids))})",
+        match_ids
+    ).fetchall()
+    
+    preds_by_match = {}
+    total_correct = 0
+    total_wrong = 0
+    
+    for p in preds_rows:
+        mid = p["match_id"]
+        if mid not in preds_by_match:
+            preds_by_match[mid] = []
+        pred_dict = dict(p)
+        preds_by_match[mid].append(pred_dict)
+        if pred_dict["result"] == 1:
+            total_correct += 1
+        elif pred_dict["result"] == 0:
+            total_wrong += 1
+            
+    clean_results = []
+    
+    for row in matches_rows:
+        match_dict = dict(row)
+        mid = match_dict["match_id"]
+        res = results_by_id.get(mid)
+        preds = preds_by_match.get(mid, [])
+        
+        match_correct = sum(1 for p in preds if p["result"] == 1)
+        match_wrong = sum(1 for p in preds if p["result"] == 0)
+        
+        clean_results.append({
+            "fixture": match_dict,
+            "result": res,
+            "picks": [
+                {
+                    "market": p["market_type"],
+                    "selection": p["selection"],
+                    "probability": round(float(p["predicted_probability"]) * 100, 1) if p["predicted_probability"] else 0,
+                    "result": True if p["result"] == 1 else (False if p["result"] == 0 else None),
+                    "isSettled": p["result"] is not None
+                }
+                for p in preds
+            ],
+            "summary": {
+                "correct": match_correct,
+                "wrong": match_wrong,
+                "total": len(preds)
+            }
+        })
+        
+    total_settled_picks = total_correct + total_wrong
+    accuracy = round((total_correct / total_settled_picks * 100), 1) if total_settled_picks > 0 else 0.0
+
+    return {
+        "date": date,
+        "matches": clean_results,
+        "summary": {
+            "total_matches": len(clean_results),
+            "total_picks": total_settled_picks,
+            "total_correct": total_correct,
+            "total_wrong": total_wrong,
+            "accuracy_pct": accuracy,
+        }
+    }
+
+
 @router.get("/debug/provider-status")
 def get_tennis_provider_status():
     """Return the last 20 provider health entries for tennis."""

@@ -12,9 +12,11 @@ from __future__ import annotations
 import json
 import math
 import os
+import re
 import ssl
 import certifi
 import time
+import unicodedata
 import urllib.request
 import asyncio
 from datetime import date, datetime, timedelta, timezone
@@ -30,11 +32,11 @@ def verify_admin_key(x_api_key: str = Header(None)):
         raise HTTPException(status_code=401, detail="Invalid or missing admin API key")
     return x_api_key
 
-from fastapi import FastAPI, HTTPException, BackgroundTasks, Depends
+from fastapi import FastAPI, HTTPException, BackgroundTasks, Depends, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
 from src.config import logger, APIFOOTBALL_API_KEY
-from src.data.emergency_backup_provider import APIFootballFetcher
+from src.data.sofascore_provider import fetch_daily_matches, fetch_live_matches
 from src.processing.pattern_analyzer import PatternAnalyzer
 from src.processing.factor_analyzer import FactorAnalyzer
 from src.reporting.report_formatter import ReportFormatter
@@ -64,10 +66,49 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# ── WebSocket Connection Manager ──────────────────────────────────────────────
+class ConnectionManager:
+    def __init__(self):
+        self.active_connections: list[WebSocket] = []
+
+    async def connect(self, websocket: WebSocket):
+        await websocket.accept()
+        self.active_connections.append(websocket)
+
+    def disconnect(self, websocket: WebSocket):
+        if websocket in self.active_connections:
+            self.active_connections.remove(websocket)
+
+    async def broadcast(self, message: dict):
+        dead_connections = []
+        for connection in self.active_connections:
+            try:
+                await connection.send_json(message)
+            except Exception:
+                dead_connections.append(connection)
+        
+        for dead in dead_connections:
+            self.disconnect(dead)
+
+manager = ConnectionManager()
+
 # ── Background Nightly Retrain Task ──────────────────────────────────────────
 @app.on_event("startup")
-async def start_nightly_retrain():
+async def start_background_tasks():
     asyncio.create_task(_nightly_retrain_loop())
+    asyncio.create_task(_broadcast_live_scores_loop())
+
+async def _broadcast_live_scores_loop():
+    from src.data.sofascore_provider import fetch_live_matches
+    while True:
+        try:
+            if manager.active_connections:
+                live_data, err = fetch_live_matches()
+                if live_data and not err:
+                    await manager.broadcast({"type": "LIVE_SCORE_UPDATE", "data": live_data})
+        except Exception as e:
+            logger.error(f"Error in live scores broadcast loop: {e}")
+        await asyncio.sleep(15)
 
 async def _nightly_retrain_loop():
     while True:
@@ -130,7 +171,7 @@ from src.tennis.api.tennis_routes import router as tennis_router
 app.include_router(tennis_router)
 
 # Pipeline components
-fetcher = APIFootballFetcher()
+# fetcher removed in favor of SofaScore
 pattern_analyzer = PatternAnalyzer()
 factor_analyzer = FactorAnalyzer()
 value_detector = ValueDetector()
@@ -687,6 +728,13 @@ def _compute_match_analysis(home_name: str, away_name: str, league_name: str = "
         if prob > 0:
             raw.append({"market": name, "probability": prob})
 
+    def _is_basic_1x2_market(name: str) -> bool:
+        return name in {
+            "Home Win", "Draw", "Away Win",
+            "FH Home Win", "FH Draw", "FH Away Win",
+            "SH Home Win", "SH Draw", "SH Away Win",
+        }
+
     def _handicap_probability(prob_pct: float) -> float:
         """Compress handicap lines into realistic tradable ranges.
 
@@ -1150,7 +1198,10 @@ def _compute_match_analysis(home_name: str, away_name: str, league_name: str = "
             
             # Bypassing isotonic calibration for pure Poisson distributions to prevent
             # double-calibration squashing (which makes Over 0.5 identical to Over 1.5).
-            if m["market_type"] not in ["corners", "cards", "goals", "team_goals", "half", "handicap"] and not _is_sparse_or_longshot_market(m["market"]):
+            if (
+                m["market_type"] not in ["corners", "cards", "goals", "team_goals", "half", "handicap", "result"]
+                and not _is_sparse_or_longshot_market(m["market"])
+            ):
                 m["probability"] = _iso_cal.calibrate(m["raw_probability"], m["market_type"])
     except Exception as iso_err:
         # Fallback: if isotonic fails, raw_probability == probability
@@ -1171,6 +1222,14 @@ def _compute_match_analysis(home_name: str, away_name: str, league_name: str = "
     # Fix: build an index, find pairs, clamp the subset to ≤ superset.
     #
     market_index = {m["market"]: m for m in raw}
+
+    def _renormalize_exclusive_group(group_names: list[str]):
+        group = [market_index[name] for name in group_names if name in market_index]
+        total = sum(float(item.get("probability", 0.0)) for item in group)
+        if not group or total <= 0:
+            return
+        for item in group:
+            item["probability"] = round(float(item["probability"]) / total * 100.0, 1)
 
     def _clamp_subset(subset_name: str, superset_name: str):
         """Ensure P(subset) ≤ P(superset). If violated, pull subset down."""
@@ -1235,6 +1294,11 @@ def _compute_match_analysis(home_name: str, away_name: str, league_name: str = "
         _clamp_subset(f"Over {t+1}.5 Corners", f"Over {t}.5 Corners")
     for t in range(5):
         _clamp_subset(f"Over {t+1}.5 Cards", f"Over {t}.5 Cards")
+
+    # ── Rule 6: mutually exclusive result groups must stay sum-to-100 ──
+    _renormalize_exclusive_group(["Home Win", "Draw", "Away Win"])
+    _renormalize_exclusive_group(["FH Home Win", "FH Draw", "FH Away Win"])
+    _renormalize_exclusive_group(["SH Home Win", "SH Draw", "SH Away Win"])
 
     section_order = ["Goals", "First Half", "Second Half", "Team Goals", "Result", "Handicaps", "Corners", "Cards"]
 
@@ -1305,6 +1369,27 @@ def _compute_match_analysis(home_name: str, away_name: str, league_name: str = "
         for m in raw
         if _is_basic_confident_pick(m)
     ]
+
+    def _dedupe_exclusive_1x2_picks(picks: list[dict]) -> list[dict]:
+        """Only expose the strongest direct 1X2 pick from each exclusive group."""
+        direct_groups = [
+            {"Home Win", "Draw", "Away Win"},
+            {"FH Home Win", "FH Draw", "FH Away Win"},
+            {"SH Home Win", "SH Draw", "SH Away Win"},
+        ]
+        filtered = list(picks)
+        for group in direct_groups:
+            group_picks = [p for p in filtered if p.get("market") in group]
+            if len(group_picks) <= 1:
+                continue
+            keep = max(group_picks, key=lambda p: p.get("probability", 0.0))
+            filtered = [
+                p for p in filtered
+                if p.get("market") not in group or p is keep
+            ]
+        return filtered
+
+    tier_candidates = _dedupe_exclusive_1x2_picks(tier_candidates)
     if data_quality < 55:
         for pick in tier_candidates:
             pick["bankroll_qualified"] = False
@@ -1547,6 +1632,31 @@ def _read_fixture_cache(date_str: str) -> Optional[list]:
         data = json.loads(path.read_text(encoding="utf-8"))
         if not isinstance(data, list):
             return None
+
+        # Do not let a fallback-only ESPN cache drive football fixture coverage.
+        # API-Football is the primary match universe; SofaScore is only a fallback/overlay.
+        if data and all(
+            isinstance(f, dict)
+            and (f.get("source") == "espn" or f.get("provider") == "espn")
+            for f in data
+        ):
+            logger.info(f"Ignoring ESPN-only fixture cache for {date_str}")
+            return None
+
+        filtered_data = [
+            f for f in data
+            if not (
+                isinstance(f, dict)
+                and (f.get("source") == "espn" or f.get("provider") == "espn")
+            )
+        ]
+        if len(filtered_data) != len(data):
+            logger.info(
+                "Filtered %s ESPN fallback rows from fixture cache for %s",
+                len(data) - len(filtered_data),
+                date_str,
+            )
+            data = filtered_data
             
         has_live = any(
             isinstance(f, dict) and "LIVE" in f.get("status", "") 
@@ -1564,8 +1674,7 @@ def _read_fixture_cache(date_str: str) -> Optional[list]:
                 return None
             return data
 
-        # Static Daily Fetch Mode: API-Football data is cached for 24 hours to preserve quota.
-        # Other providers (e.g., ESPN) will fallback if cache is missing.
+        # Static Daily Fetch Mode: provider data is cached for 24 hours to preserve quota.
         is_api_football = any(f.get("provider") == "api_football" or f.get("source") in ["api_football", "apifootball"] for f in data if isinstance(f, dict))
         if is_api_football:
             effective_ttl = 86400  # 24 hours!
@@ -1587,24 +1696,27 @@ def _read_fixture_cache(date_str: str) -> Optional[list]:
 def _write_fixture_cache(date_str: str, fixtures: list) -> None:
     """Write the processed fixture list to disk cache."""
     try:
-        _get_cache_path(date_str).write_text(
-            json.dumps(fixtures, ensure_ascii=False), encoding="utf-8"
-        )
+        path = _get_cache_path(date_str)
+        tmp_path = path.with_suffix(f"{path.suffix}.tmp.{os.getpid()}")
+        tmp_path.write_text(json.dumps(fixtures, ensure_ascii=False), encoding="utf-8")
+        os.replace(tmp_path, path)
     except Exception as e:
         logger.warning(f"Fixture cache write failed for {date_str}: {e}")
 
 
 # ─── API-Football v3 fetcher ────────────────────────────────────────────────
 
+_LAST_API_FOOTBALL_ERROR: Optional[str] = None
+
 
 def _fetch_api_football_fixtures(date_str: str) -> list[dict]:
-    """Fetch scheduled/live fixtures from API-Football v3 for *date_str* (YYYY-MM-DD).
+    """Fetch scheduled/live fixtures from API-Football v3 for a date."""
+    global _LAST_API_FOOTBALL_ERROR
+    _LAST_API_FOOTBALL_ERROR = None
 
-    Returns a list of raw API-Football fixture dicts.
-    Returns empty list on network error, API rate limit, or missing API key — NO mock data.
-    """
     if not APIFOOTBALL_API_KEY:
-        logger.warning("APIFOOTBALL_API_KEY not set – no fixture data available from API-Football")
+        _LAST_API_FOOTBALL_ERROR = "No API-Football key is configured."
+        logger.warning("APIFOOTBALL_API_KEY not set; API-Football fixture fetch unavailable")
         return []
 
     url = f"https://v3.football.api-sports.io/fixtures?date={date_str}&timezone=Europe/Istanbul"
@@ -1613,29 +1725,120 @@ def _fetch_api_football_fixtures(date_str: str) -> list[dict]:
         "Accept": "application/json",
     })
     try:
-        ctx = ssl.create_default_context()
+        ctx = ssl.create_default_context(cafile=certifi.where())
         resp = urllib.request.urlopen(req, timeout=20, context=ctx)
         data = json.loads(resp.read())
         errors = data.get("errors", {})
         if errors:
-            if isinstance(errors, dict) and len(errors) > 0:
-                err_summary = ", ".join(f"{k}: {v}" for k, v in errors.items())
-                logger.warning(f"API-Football Error: {err_summary}. Returning empty list.")
-                return []
-            elif isinstance(errors, list) and len(errors) > 0:
-                err_summary = ", ".join(str(e) for e in errors)
-                logger.warning(f"API-Football Error: {err_summary}. Returning empty list.")
-                return []
+            if isinstance(errors, dict):
+                if "access" in errors:
+                    _LAST_API_FOOTBALL_ERROR = str(errors["access"])
+                elif "requests" in errors:
+                    _LAST_API_FOOTBALL_ERROR = str(errors["requests"])
+                else:
+                    _LAST_API_FOOTBALL_ERROR = "; ".join(str(v) for v in errors.values())
+            else:
+                _LAST_API_FOOTBALL_ERROR = str(errors)
+            logger.warning(f"API-Football Error for {date_str}: {errors}. Returning empty list.")
+            return []
 
         fixtures = data.get("response", [])
         logger.info(f"API-Football returned {len(fixtures)} fixtures for {date_str}")
-        if not fixtures:
-            logger.warning(f"No fixtures returned from API-Football for {date_str}.")
         return fixtures
     except Exception as e:
+        _LAST_API_FOOTBALL_ERROR = str(e)
         logger.error(f"API-Football fetch failed for {date_str}: {e}. Returning empty list.")
         return []
 
+
+def _api_football_to_fixture(raw: dict) -> dict:
+    """Convert a single API-Football v3 fixture dict to the frontend shape."""
+    fix = raw.get("fixture", {})
+    league = raw.get("league", {})
+    teams = raw.get("teams", {})
+    goals = raw.get("goals", {})
+    score = raw.get("score", {})
+
+    api_date_iso = fix.get("date", "")
+    date_str = api_date_iso[:10]
+    time_str = api_date_iso[11:16] if len(api_date_iso) >= 16 else "TBD"
+
+    status_short = fix.get("status", {}).get("short", "")
+    if status_short in ("FT", "AET", "PEN"):
+        display_status = "FT"
+    elif status_short == "HT":
+        display_status = "HT"
+    elif status_short in ("1H", "2H", "ET", "P", "LIVE", "BT"):
+        display_status = "LIVE"
+    elif status_short == "NS":
+        display_status = "NS"
+    elif status_short in ("PST", "CANC", "ABD", "SUSP", "INT", "AWD", "WO"):
+        display_status = status_short
+    else:
+        display_status = status_short or "NS"
+
+    halftime = score.get("halftime") or {}
+    fulltime = score.get("fulltime") or {}
+    is_live = display_status == "LIVE"
+    is_finished = display_status == "FT"
+
+    if is_finished:
+        home_goals = fulltime.get("home") if fulltime.get("home") is not None else goals.get("home")
+        away_goals = fulltime.get("away") if fulltime.get("away") is not None else goals.get("away")
+    elif is_live:
+        home_goals = goals.get("home")
+        away_goals = goals.get("away")
+    else:
+        home_goals = None
+        away_goals = None
+
+    home = teams.get("home", {})
+    away = teams.get("away", {})
+    league_id = str(league.get("id", ""))
+    home_id = str(home.get("id", ""))
+    away_id = str(away.get("id", ""))
+
+    return {
+        "id": str(fix.get("id", "")),
+        "date": date_str,
+        "time": time_str,
+        "status": display_status,
+        "home_goals": home_goals,
+        "away_goals": away_goals,
+        "fh_home_goals": halftime.get("home") if display_status in ("LIVE", "HT", "FT") else None,
+        "fh_away_goals": halftime.get("away") if display_status in ("LIVE", "HT", "FT") else None,
+        "league": {
+            "id": league_id,
+            "name": league.get("name", "Unknown"),
+            "country": league.get("country", ""),
+            "logo": league.get("logo", ""),
+        },
+        "home_team": {
+            "id": home_id,
+            "name": home.get("name", "Unknown"),
+            "logo": home.get("logo") or _resolve_team_logo(home_id, home.get("name", ""), ""),
+        },
+        "away_team": {
+            "id": away_id,
+            "name": away.get("name", "Unknown"),
+            "logo": away.get("logo") or _resolve_team_logo(away_id, away.get("name", ""), ""),
+        },
+        "league_id_apifootball": league_id,
+        "season": league.get("season"),
+        "round": league.get("round", ""),
+        "source": "api_football",
+        "provider": "api_football",
+        "scoreline_source": "api_football" if home_goals is not None and away_goals is not None else None,
+    }
+
+
+def _fetch_sofascore_fixtures(date_str: str) -> list[dict]:
+    """Fetch scheduled fixtures from SofaScore for *date_str* (YYYY-MM-DD)."""
+    events, err = fetch_daily_matches(date_str)
+    if err:
+        logger.warning(f"SofaScore fetch failed for {date_str}: {err}")
+        return []
+    return events
 
 def _resolve_team_logo(team_id: str, team_name: str, fallback_url: str) -> str:
     """Check registry for highest quality logo; otherwise return fallback."""
@@ -1653,98 +1856,67 @@ def _resolve_team_logo(team_id: str, team_name: str, fallback_url: str) -> str:
         logger.error(f"Failed to resolve logo for {team_name}: {e}")
     return fallback_url
 
-def _api_football_to_fixture(f: dict) -> dict:
-    """Convert a single API-Football v3 fixture dict → frontend-ready fixture dict."""
-    fix     = f.get("fixture", {})
-    league  = f.get("league", {})
-    teams   = f.get("teams", {})
-    goals   = f.get("goals", {})
-    score   = f.get("score", {})
-
-    # ── Date & Time ──
-    # API-Football returns fixture.date as a full ISO datetime, e.g.
-    # "2026-06-03T21:00:00+00:00".  We use this directly (no timezone shift)
-    # so fixtures always appear on the correct calendar day.
-    api_date_iso = fix.get("date", "")
-    date_str = api_date_iso[:10]            # "2026-06-03"
-    time_str = api_date_iso[11:16] if len(api_date_iso) >= 16 else "TBD"  # "21:00"
-
-    # ── Status ──
-    status_short = fix.get("status", {}).get("short", "")
-    if status_short in ("FT", "AET", "PEN"):
-        display_status = "FT"
-    elif status_short == "HT":
-        display_status = "HT"
-    elif status_short in ("1H", "2H", "ET", "P", "LIVE", "BT"):
-        elapsed = fix.get("status", {}).get("elapsed")
-        display_status = f"LIVE {elapsed}\u2019" if elapsed else "LIVE"
-    elif status_short == "NS":
-        display_status = "NS"
-    elif status_short in ("PST", "CANC", "ABD", "SUSP", "INT", "AWD", "WO"):
-        display_status = status_short
-    else:
-        display_status = status_short or "NS"
-
-    is_live_or_finished = display_status not in ("NS",)
-
-    # ── Scores ──
-    ht = score.get("halftime", {})
-    ft = score.get("fulltime", {})
+def _sofascore_to_fixture(event: dict) -> dict:
+    """Convert a normalized SofaScore event dict -> frontend-ready fixture dict."""
+    status = event.get("status", "NS")
     
-    is_live = "LIVE" in display_status
-    is_finished = display_status == "FT"
+    # Extract goals (which can be integers or None)
+    home_goals = event.get("home_score")
+    away_goals = event.get("away_score")
     
-    if is_finished:
-        # Prioritize fulltime (90 mins) score to exclude overtime/penalties
-        if ft and ft.get("home") is not None:
-            home_goals = ft.get("home")
-            away_goals = ft.get("away")
-        else:
-            home_goals = goals.get("home")
-            away_goals = goals.get("away")
-    elif is_live:
-        home_goals = goals.get("home")
-        away_goals = goals.get("away")
-    else:
-        home_goals = None
-        away_goals = None
+    # In Sofascore, half-time scores aren't present in the basic normalized payload
+    # so we'll just set them to None for now to keep the frontend happy
+    fh_home_goals = None
+    fh_away_goals = None
+
+    league_id = event.get("league_id", "0")
+    home_id = event.get("home_team_id", "0")
+    away_id = event.get("away_team_id", "0")
 
     return {
-        "id":           str(fix.get("id", "")),
-        "date":         date_str,
-        "time":         time_str,
-        "status":       display_status,
+        "id":           str(event.get("event_id", "")),
+        "date":         event.get("date", ""),
+        "time":         event.get("kickoff", "TBD"),
+        "status":       status,
         "home_goals":   home_goals,
         "away_goals":   away_goals,
-        "fh_home_goals": ht.get("home") if is_live_or_finished else None,
-        "fh_away_goals": ht.get("away") if is_live_or_finished else None,
+        "fh_home_goals": fh_home_goals,
+        "fh_away_goals": fh_away_goals,
         "league": {
-            "id":      str(league.get("id", "")),
-            "name":    league.get("name", ""),
-            "country": league.get("country", ""),
-            # Use API-Football's own CDN logo — always resolves, no proxy needed
-            "logo":    league.get("logo") or f"/api/image/tournament/{league.get('id', 0)}",
+            "id":      league_id,
+            "name":    event.get("league", ""),
+            "country": event.get("country", ""),
+            "logo":    f"https://api.sofascore.app/api/v1/unique-tournament/{league_id}/image",
         },
         "home_team": {
-            "id":   str(teams.get("home", {}).get("id", "")),
-            "name": teams.get("home", {}).get("name", ""),
-            "logo": _resolve_team_logo(str(teams.get("home", {}).get("id", "")), teams.get("home", {}).get("name", ""), teams.get("home", {}).get("logo") or f"/api/image/team/{teams.get('home', {}).get('id', 0)}")
+            "id":   home_id,
+            "name": event.get("home_team", ""),
+            "logo": _resolve_team_logo(home_id, event.get("home_team", ""), f"https://api.sofascore.app/api/v1/team/{home_id}/image")
         },
         "away_team": {
-            "id":   str(teams.get("away", {}).get("id", "")),
-            "name": teams.get("away", {}).get("name", ""),
-            "logo": _resolve_team_logo(str(teams.get("away", {}).get("id", "")), teams.get("away", {}).get("name", ""), teams.get("away", {}).get("logo") or f"/api/image/team/{teams.get('away', {}).get('id', 0)}")
+            "id":   away_id,
+            "name": event.get("away_team", ""),
+            "logo": _resolve_team_logo(away_id, event.get("away_team", ""), f"https://api.sofascore.app/api/v1/team/{away_id}/image")
         },
-        # Extra metadata useful for analysis/live ingestion
-        "league_id_apifootball": league.get("id"),
-        "season":    league.get("season"),
-        "round":     league.get("round", ""),
-        "source":    "apifootball",
+        "league_id_apifootball": league_id,
+        "season":    "",
+        "round":     "",
+        "source":    "sofascore",
     }
 
 # ── Endpoints ──────────────────────────
 
 from fastapi.responses import Response
+
+@app.websocket("/ws/live-scores")
+async def websocket_live_scores(websocket: WebSocket):
+    await manager.connect(websocket)
+    try:
+        while True:
+            # Keep connection alive, wait for client to disconnect
+            data = await websocket.receive_text()
+    except WebSocketDisconnect:
+        manager.disconnect(websocket)
 
 @app.get("/api/image/team/{team_id}")
 def get_team_image(team_id: str):
@@ -2060,6 +2232,324 @@ def _sofascore_to_fixture(ev: dict, requested_date: str) -> dict:
     }
 
 
+def _normalize_team_for_scoreline_match(name: str) -> str:
+    """Normalize provider team names for cross-provider scoreline matching."""
+    normalized = unicodedata.normalize("NFKD", name).encode("ascii", "ignore").decode("ascii")
+    normalized = normalized.lower()
+    normalized = normalized.replace("&", "and")
+    normalized = normalized.replace("turkiye", "turkey")
+    normalized = normalized.replace("caboverde", "capeverde")
+    normalized = normalized.replace("united", "utd")
+    normalized = re.sub(r"\b(fc|cf|afc|sc|club|de|the)\b", "", normalized)
+    normalized = re.sub(r"[^a-z0-9]+", "", normalized)
+    return normalized
+
+
+def _fixture_scoreline_key(home_name: str, away_name: str) -> str:
+    return (
+        f"{_normalize_team_for_scoreline_match(home_name)}|"
+        f"{_normalize_team_for_scoreline_match(away_name)}"
+    )
+
+
+def _build_sofascore_scoreline_map(date_str: str) -> dict[str, dict]:
+    """
+    Fetch the day's SofaScore schedule and return frontend-shaped fixtures by
+    normalized home/away names. Used as the scoreline authority for daily rows.
+    """
+    raw_sofa = _fetch_sofascore_fixtures(date_str)
+    scorelines = {}
+
+    for ev in raw_sofa:
+        fixture = _sofascore_to_fixture(ev, date_str)
+        if fixture.get("date") != date_str:
+            continue
+
+        key = _fixture_scoreline_key(
+            fixture.get("home_team", {}).get("name", ""),
+            fixture.get("away_team", {}).get("name", ""),
+        )
+        if key != "|":
+            scorelines[key] = fixture
+
+    logger.info(f"SofaScore scoreline map built for {date_str}: {len(scorelines)} matches")
+    return scorelines
+
+
+def _fixture_has_scoreline(fixture: dict) -> bool:
+    return (
+        fixture.get("home_goals") is not None
+        and fixture.get("away_goals") is not None
+    )
+
+
+def _apply_sofascore_scoreline(base: dict, sofa: dict) -> dict:
+    """
+    Merge only score/status fields from SofaScore while preserving the base
+    fixture identity, league/team logos, and analysis-facing metadata.
+    """
+    if not sofa or (sofa.get("status") == "NS" and not _fixture_has_scoreline(sofa)):
+        return base
+
+    base["status"] = sofa.get("status", base.get("status"))
+    if _fixture_has_scoreline(sofa):
+        base["home_goals"] = sofa.get("home_goals")
+        base["away_goals"] = sofa.get("away_goals")
+    if sofa.get("fh_home_goals") is not None:
+        base["fh_home_goals"] = sofa.get("fh_home_goals")
+    if sofa.get("fh_away_goals") is not None:
+        base["fh_away_goals"] = sofa.get("fh_away_goals")
+    base["provider"] = "sofascore"
+    base["scoreline_source"] = "sofascore"
+    base["last_live_update"] = datetime.utcnow().isoformat() + "Z"
+    base["is_stale"] = False
+    base["provider_error"] = None
+    return base
+
+
+def _build_espn_scoreline_map(date_str: str) -> dict[str, dict]:
+    """
+    ESPN public scoreboard fallback for settled/live scorelines.
+    It is not the primary fixture universe, but it gives resilient FT results
+    when API-Football quota or SofaScore challenge/rate limits block updates.
+    """
+    raw_espn = _fetch_espn_fixtures(date_str)
+    scorelines = {}
+
+    for ev in raw_espn:
+        fixture = _espn_to_fixture(ev, date_str)
+        if not fixture:
+            continue
+        # ESPN's daily schedule is already grouped by the selected calendar
+        # date. Keep that grouping for the UI instead of dropping late-night
+        # matches that convert to the next local timezone date.
+        fixture["date"] = date_str
+
+        key = _fixture_scoreline_key(
+            fixture.get("home_team", {}).get("name", ""),
+            fixture.get("away_team", {}).get("name", ""),
+        )
+        if key != "|":
+            scorelines[key] = fixture
+
+    logger.info(f"ESPN scoreline map built for {date_str}: {len(scorelines)} matches")
+    return scorelines
+
+
+def _merge_supplemental_fixtures(base_fixtures: list[dict], supplemental: dict[str, dict]) -> list[dict]:
+    """Append provider fallback fixtures that are missing from the base universe."""
+    if not supplemental:
+        return base_fixtures
+
+    seen_ids = {str(f.get("id")) for f in base_fixtures if f.get("id")}
+    seen_keys = {
+        _fixture_scoreline_key(
+            f.get("home_team", {}).get("name", ""),
+            f.get("away_team", {}).get("name", ""),
+        )
+        for f in base_fixtures
+    }
+    merged = list(base_fixtures)
+
+    for key, fixture in supplemental.items():
+        fixture_id = str(fixture.get("id", ""))
+        if fixture_id and fixture_id in seen_ids:
+            continue
+        if key and key in seen_keys:
+            continue
+        merged.append(fixture)
+        if fixture_id:
+            seen_ids.add(fixture_id)
+        if key:
+            seen_keys.add(key)
+
+    merged.sort(key=lambda x: x.get("time") or "TBD")
+    return merged
+
+
+def _apply_espn_scoreline(base: dict, espn: dict) -> dict:
+    """Overlay score/status fields from ESPN while preserving base fixture IDs."""
+    if not espn or (espn.get("status") == "NS" and not _fixture_has_scoreline(espn)):
+        return base
+
+    base["status"] = espn.get("status", base.get("status"))
+    if _fixture_has_scoreline(espn):
+        base["home_goals"] = espn.get("home_goals")
+        base["away_goals"] = espn.get("away_goals")
+    base["provider"] = "espn"
+    base["scoreline_source"] = "espn"
+    base["last_live_update"] = datetime.utcnow().isoformat() + "Z"
+    base["is_stale"] = False
+    base["provider_error"] = None
+    return base
+
+
+def _persist_finished_fixture_result(fixture: dict) -> bool:
+    """Persist a finished fixture result to matches and match_history."""
+    if fixture.get("status") not in ("FT", "AET", "PEN") or not _fixture_has_scoreline(fixture):
+        return False
+
+    try:
+        from src.db.database import get_db
+        from src.engine.live_updater import on_match_finished
+
+        conn = get_db()
+        match_id = str(fixture.get("id", ""))
+        league = fixture.get("league", {})
+        home = fixture.get("home_team", {})
+        away = fixture.get("away_team", {})
+        home_goals = int(fixture.get("home_goals"))
+        away_goals = int(fixture.get("away_goals"))
+
+        conn.execute(
+            """INSERT INTO matches (
+                   id, date, kickoff, home_team, away_team, league_name, league_id,
+                   status, home_goals, away_goals, provider, is_stale,
+                   provider_error, last_live_update
+               )
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, NULL, ?)
+               ON CONFLICT(id) DO UPDATE SET
+                   status = excluded.status,
+                   home_goals = excluded.home_goals,
+                   away_goals = excluded.away_goals,
+                   provider = excluded.provider,
+                   is_stale = 0,
+                   provider_error = NULL,
+                   last_live_update = excluded.last_live_update""",
+            (
+                match_id,
+                fixture.get("date"),
+                fixture.get("time"),
+                home.get("name", "Unknown"),
+                away.get("name", "Unknown"),
+                league.get("name", "Unknown"),
+                league.get("id") or fixture.get("league_id_apifootball"),
+                fixture.get("status"),
+                home_goals,
+                away_goals,
+                fixture.get("scoreline_source") or fixture.get("provider") or fixture.get("source") or "live",
+                datetime.utcnow().isoformat() + "Z",
+            ),
+        )
+        conn.commit()
+
+        on_match_finished(
+            conn,
+            match_id=match_id,
+            match_date=fixture.get("date"),
+            league=league.get("name", "Unknown"),
+            home_team=home.get("name", "Unknown"),
+            away_team=away.get("name", "Unknown"),
+            home_goals=home_goals,
+            away_goals=away_goals,
+        )
+        return True
+    except Exception as e:
+        logger.warning(
+            "Failed to persist finished fixture result for %s: %s",
+            fixture.get("id"),
+            e,
+        )
+        return False
+
+
+def _persist_finished_fixture_results(fixtures: list[dict]) -> int:
+    persisted = 0
+    for fixture in fixtures:
+        if _persist_finished_fixture_result(fixture):
+            persisted += 1
+    if persisted:
+        logger.info(f"Persisted {persisted} finished fixture results")
+    return persisted
+
+
+def _db_match_to_fixture(row) -> dict:
+    """Convert a persisted match row into the frontend fixture shape."""
+    return {
+        "id": str(row["id"]),
+        "date": row["date"],
+        "time": row["kickoff"] or "TBD",
+        "status": row["status"] or "FT",
+        "home_goals": row["home_goals"],
+        "away_goals": row["away_goals"],
+        "fh_home_goals": None,
+        "fh_away_goals": None,
+        "league": {
+            "id": str(row["league_id"] or ""),
+            "name": row["league_name"] or "Unknown",
+            "country": "",
+            "logo": f"/api/image/tournament/{row['league_id']}" if row["league_id"] else "",
+        },
+        "home_team": {
+            "id": "",
+            "name": row["home_team"] or "Unknown",
+            "logo": "",
+        },
+        "away_team": {
+            "id": "",
+            "name": row["away_team"] or "Unknown",
+            "logo": "",
+        },
+        "league_id_apifootball": None,
+        "season": None,
+        "source": row["provider"] or "db",
+        "scoreline_source": "matches_db",
+    }
+
+
+def _build_db_scoreline_maps(date_str: str) -> tuple[dict[str, dict], dict[str, dict]]:
+    """Load finished scorelines persisted in the matches table."""
+    try:
+        from src.db.database import get_db
+
+        conn = get_db()
+        rows = conn.execute(
+            """SELECT id, date, kickoff, home_team, away_team, league_name, league_id,
+                      status, home_goals, away_goals, provider
+               FROM matches
+               WHERE date = ?
+                 AND status IN ('FT', 'AET', 'PEN')
+                 AND home_goals IS NOT NULL
+                 AND away_goals IS NOT NULL
+                 AND COALESCE(provider, '') != 'espn'
+               ORDER BY kickoff""",
+            (date_str,),
+        ).fetchall()
+    except Exception as e:
+        logger.warning(f"Finished match DB overlay failed for {date_str}: {e}")
+        return {}, {}
+
+    by_id = {}
+    by_key = {}
+    for row in rows:
+        fixture = _db_match_to_fixture(row)
+        by_id[fixture["id"]] = fixture
+        key = _fixture_scoreline_key(
+            fixture["home_team"]["name"],
+            fixture["away_team"]["name"],
+        )
+        if key != "|":
+            by_key[key] = fixture
+
+    logger.info(f"Finished match DB overlay built for {date_str}: {len(by_id)} matches")
+    return by_id, by_key
+
+
+def _apply_finished_db_scoreline(base: dict, persisted: dict) -> dict:
+    """Overlay persisted finished result fields onto a frontend fixture."""
+    if not persisted:
+        return base
+
+    base["status"] = persisted.get("status", base.get("status"))
+    base["home_goals"] = persisted.get("home_goals")
+    base["away_goals"] = persisted.get("away_goals")
+    base["scoreline_source"] = persisted.get("scoreline_source", "matches_db")
+    base["provider"] = persisted.get("source") or base.get("provider") or base.get("source")
+    base["is_stale"] = False
+    base["provider_error"] = None
+    return base
+
+
 def _fetch_espn_fixtures(date_str: str) -> list[dict]:
     """Fetch unauthenticated JSON from ESPN Scoreboard API.
     ESPN is exceptionally resilient and never blocks.
@@ -2182,9 +2672,9 @@ def _espn_to_fixture(ev: dict, requested_date: str) -> dict:
 def get_fixtures_by_date(date_str: str, background_tasks: BackgroundTasks, force_refresh: bool = False):
     """
     Live Data Provider Split Architecture
-    1. Base fixtures loaded from API-Football (cached 12 hours)
-    2. Live updates fetched from RapidAPI SofaScore
-    3. Strict merge of live fields only
+    1. Base fixtures loaded from API-Football
+    2. SofaScore fills scorelines/live data only when available
+    3. Persist finished scores so past dates keep visible results
     """
     try:
         datetime.strptime(date_str, "%Y-%m-%d")
@@ -2195,18 +2685,12 @@ def get_fixtures_by_date(date_str: str, background_tasks: BackgroundTasks, force
 
     # ── 1. Fetch Base Fixtures (API-Football) ──
     cached = _read_fixture_cache(date_str)
-    is_api_football = False
     base_fixtures = []
-    
-    if cached is not None:
-        is_api_football = any(f.get("provider") == "api_football" or f.get("source") in ["api_football", "apifootball"] for f in cached)
 
-    if not force_refresh or is_api_football:
-        if cached is not None:
-            base_fixtures = [f for f in cached if f.get("date") == date_str]
+    if cached is not None and not force_refresh:
+        base_fixtures = [f for f in cached if f.get("date") == date_str]
     
     if not base_fixtures:
-        # Cache miss or forced bypass -> Hit API-Football
         logger.info(f"[API-FOOTBALL REQUEST] Fetching base fixtures for {date_str}")
         try:
             raw_api = _fetch_api_football_fixtures(date_str)
@@ -2222,7 +2706,25 @@ def get_fixtures_by_date(date_str: str, background_tasks: BackgroundTasks, force
                 _write_fixture_cache(date_str, base_fixtures)
                 _track_competitions_from_fixtures(base_fixtures)
         except Exception as e:
-            logger.error(f"API-Football fetch failed: {e}")
+            logger.error(f"API-Football base fixture fetch failed: {e}")
+
+    if not base_fixtures:
+        logger.info(f"[SOFASCORE FALLBACK] Fetching daily fixtures for {date_str}")
+        try:
+            raw_sofa = _fetch_sofascore_fixtures(date_str)
+            seen_ids = set()
+            for raw in raw_sofa:
+                f = _sofascore_to_fixture(raw, date_str)
+                if f["date"] == date_str and f["id"] not in seen_ids:
+                    seen_ids.add(f["id"])
+                    base_fixtures.append(f)
+
+            if base_fixtures:
+                base_fixtures.sort(key=lambda x: x["time"])
+                _write_fixture_cache(date_str, base_fixtures)
+                _track_competitions_from_fixtures(base_fixtures)
+        except Exception as e:
+            logger.error(f"SofaScore daily fixture fetch failed: {e}")
 
     if not base_fixtures:
         # Extreme fallback to stale cache if API-Football is down and no cache exists
@@ -2230,25 +2732,59 @@ def get_fixtures_by_date(date_str: str, background_tasks: BackgroundTasks, force
         if stale_cache_path.exists():
             try:
                 stale_data = json.loads(stale_cache_path.read_text(encoding="utf-8"))
+                if stale_data and all(
+                    isinstance(f, dict)
+                    and (f.get("source") == "espn" or f.get("provider") == "espn")
+                    for f in stale_data
+                ):
+                    logger.info(f"Ignoring ESPN-only stale fixture cache for {date_str}")
+                    stale_data = []
+                else:
+                    stale_data = [
+                        f for f in stale_data
+                        if not (
+                            isinstance(f, dict)
+                            and (f.get("source") == "espn" or f.get("provider") == "espn")
+                        )
+                    ]
                 base_fixtures = [f for f in stale_data if f.get("date") == date_str]
             except Exception:
                 pass
                 
-    if not base_fixtures:
-        return {"fixtures": [], "message": "No base fixtures available for this date."}
+    db_scorelines_by_id, db_scorelines_by_key = _build_db_scoreline_maps(date_str)
 
-    # ── 2. Fetch Live Updates (RapidAPI SofaScore) ──
+    if not base_fixtures and db_scorelines_by_id:
+        base_fixtures = sorted(db_scorelines_by_id.values(), key=lambda x: x.get("time") or "TBD")
+
+    # ESPN is intentionally not used for the football match list or score settlement.
+    espn_scorelines = {}
+
+    if not base_fixtures:
+        message = "No matches found for this date."
+        if _LAST_API_FOOTBALL_ERROR:
+            message = f"Football API unavailable: {_LAST_API_FOOTBALL_ERROR}"
+        return {
+            "fixtures": [],
+            "message": message,
+            "provider_status": {
+                "api_football": "unavailable" if _LAST_API_FOOTBALL_ERROR else "empty",
+                "api_football_error": _LAST_API_FOOTBALL_ERROR,
+            },
+        }
+
+    # ── 2. Fetch Daily + Live Updates (SofaScore when available) ──
+    logger.info(f"[SOFASCORE SCORELINES] Fetching daily scorelines for {date_str}")
+    sofa_scorelines = _build_sofascore_scoreline_map(date_str)
+
     from src.data.live_score_provider import fetch_live_scores
     logger.info(f"[LIVE SCORES] Fetching live updates from RapidAPI SofaScore for {date_str}")
     live_updates = fetch_live_scores(date_str)
     
     # ── 3. Merge Strategy ──
     # Strict matching by home_team and away_team (normalized)
-    def norm_team(t): return t.lower().replace(" ", "").replace("fc", "").replace("united", "utd")
-    
     live_map = {}
     for lu in live_updates:
-        key = f"{norm_team(lu['home_team'])}|{norm_team(lu['away_team'])}"
+        key = _fixture_scoreline_key(lu["home_team"], lu["away_team"])
         live_map[key] = lu
 
     merged_fixtures = []
@@ -2257,21 +2793,32 @@ def get_fixtures_by_date(date_str: str, background_tasks: BackgroundTasks, force
     base_age = time.time() - cache_path.stat().st_mtime if cache_path.exists() else 0
 
     for f in base_fixtures:
-        f_key = f"{norm_team(f['home_team']['name'])}|{norm_team(f['away_team']['name'])}"
+        f_key = _fixture_scoreline_key(f["home_team"]["name"], f["away_team"]["name"])
+        db_data = db_scorelines_by_id.get(str(f.get("id"))) or db_scorelines_by_key.get(f_key)
+        if db_data:
+            f = _apply_finished_db_scoreline(f, db_data)
+
+        sofa_data = sofa_scorelines.get(f_key)
+        if sofa_data:
+            f = _apply_sofascore_scoreline(f, sofa_data)
+
         live_data = live_map.get(f_key)
         
         # Determine if match should be live
-        is_match_today = (date_str == datetime.utcnow().strftime("%Y-%m-%d"))
+        is_match_today = (date_str == _get_istanbul_today())
         needs_live = is_match_today and f["status"] not in ["FT", "AET", "PEN", "CANC", "PST", "NS"]
         
-        if live_data:
+        if live_data and live_data.get("status") != "NS":
             # Apply STRICT merge rules
             f["status"] = live_data["status"]
-            if live_data["elapsed"] > 0:
+            if live_data.get("elapsed", 0) > 0:
                 f["elapsed"] = live_data["elapsed"]
+            f["home_goals"] = live_data["home_score"]
+            f["away_goals"] = live_data["away_score"]
             f["home_team"]["score"] = live_data["home_score"]
             f["away_team"]["score"] = live_data["away_score"]
             f["provider"] = live_data["provider"]
+            f["scoreline_source"] = live_data["provider"]
             f["last_live_update"] = live_data["last_live_update"]
             f["is_stale"] = False
             f["provider_error"] = None
@@ -2279,7 +2826,8 @@ def get_fixtures_by_date(date_str: str, background_tasks: BackgroundTasks, force
             # Stale Protection
             f["provider"] = f.get("source", "api_football")
             f["last_live_update"] = None
-            if "LIVE" in f.get("status", "") or "HT" in f.get("status", "") or needs_live:
+            has_external_scoreline = f.get("scoreline_source") in ("matches_db", "sofascore")
+            if (not has_external_scoreline) and ("LIVE" in f.get("status", "") or "HT" in f.get("status", "") or needs_live):
                 f["is_stale"] = True
                 f["status"] = "STALE"
                 f["provider_error"] = "RapidAPI SofaScore timeout or unmapped"
@@ -2290,6 +2838,8 @@ def get_fixtures_by_date(date_str: str, background_tasks: BackgroundTasks, force
                 
         merged_fixtures.append(f)
 
+    _persist_finished_fixture_results(merged_fixtures)
+    _write_fixture_cache(date_str, merged_fixtures)
     return merged_fixtures
 
 
@@ -3436,6 +3986,16 @@ def _evaluate_prediction(pick: dict, home_name: str, away_name: str, home_goals:
     }
 
 
+def _is_match_result_audit_market(market: str) -> bool:
+    """Markets counted in the Results audit's match-result bucket."""
+    m = (market or "").lower()
+    return (
+        m in {"home win", "draw", "away win", "12 (any team to win)"}
+        or m.startswith("1x ")
+        or m.startswith("x2 ")
+    )
+
+
 @app.get("/api/results/{date_str}")
 def get_results_verification(date_str: str, background_tasks: BackgroundTasks):
     """
@@ -3463,8 +4023,10 @@ def get_results_verification(date_str: str, background_tasks: BackgroundTasks):
     seen_ids = set()
 
     for fixture in all_fixtures:
-        # Only evaluate finished matches
-        if fixture.get("status") not in ("FT", "AET", "PEN"):
+        status_str = str(fixture.get("status", ""))
+        is_finished = status_str in ("FT", "AET", "PEN")
+        
+        if not is_finished:
             continue
 
         if fixture["id"] in seen_ids:
@@ -3516,7 +4078,9 @@ def get_results_verification(date_str: str, background_tasks: BackgroundTasks):
                 evaluated["tier_rank"] = evaluated.get("tier_rank")
                 tier_picks_evaluated.append(evaluated)
                 all_evaluated_picks.append(evaluated)
-                if evaluated.get("section") in category_pick_map:
+                if evaluated.get("section") == "Result" and not _is_match_result_audit_market(evaluated.get("market")):
+                    pass
+                elif evaluated.get("section") in category_pick_map:
                     category_pick_map[evaluated["section"]].append(evaluated)
 
             settled = [p for p in tier_picks_evaluated if p["isSettled"]]
@@ -3852,10 +4416,10 @@ def run_investment_pipeline(date_str: str):
     """Run the full investment pipeline for a date → returns graded picks."""
     fixtures = _read_fixture_cache(date_str)
     if not fixtures:
-        raw_api = _fetch_api_football_fixtures(date_str)
+        raw_api = _fetch_sofascore_fixtures(date_str)
         if not raw_api:
             return {"date": date_str, "error": "No events found", "picks": []}
-        fixtures = [_api_football_to_fixture(f) for f in raw_api]
+        fixtures = [_sofascore_to_fixture(f) for f in raw_api]
 
     conn = get_db()
     result = _run_pipeline(date_str, fixtures, conn)
@@ -4994,10 +5558,17 @@ def debug_api_football_status():
         status["connected"] = True
         
         errors = data.get("errors", {})
-        if errors and isinstance(errors, dict) and "requests" in errors:
-            status["quota_exceeded"] = True
-            status["error"] = "API_FOOTBALL_QUOTA_EXCEEDED"
-            status["last_failure"] = errors["requests"]
+        if errors and isinstance(errors, dict):
+            if "access" in errors:
+                status["error"] = "API_FOOTBALL_ACCESS_ERROR"
+                status["last_failure"] = errors["access"]
+            elif "requests" in errors:
+                status["quota_exceeded"] = True
+                status["error"] = "API_FOOTBALL_QUOTA_EXCEEDED"
+                status["last_failure"] = errors["requests"]
+            elif errors:
+                status["error"] = "API_FOOTBALL_ERROR"
+                status["last_failure"] = errors
             
         response_data = data.get("response", {})
         if response_data and isinstance(response_data, dict):
@@ -5015,52 +5586,6 @@ def debug_api_football_status():
         
     return status
 
-@app.get("/api/debug/api-football-coverage")
-def debug_api_football_coverage(date: str):
-    from src.data.api_client import APIFootballClient
-    from src.data.emergency_backup_provider import APIFootballFetcher
-    from src.db.database import get_db
-    
-    client = APIFootballClient()
-    fetcher = APIFootballFetcher(client)
-    
-    try:
-        raw = client.get("fixtures", date=date)
-        fixtures = raw.get("response", [])
-        raw_provider_count = len(fixtures)
-        
-        mapped = fetcher._parse_fixtures(raw)
-        after_mapping_count = len(mapped)
-    except Exception as e:
-        return {
-            "date": date,
-            "error": str(e)
-        }
-    
-    stored_count = 0
-    try:
-        conn = get_db()
-        cur = conn.cursor()
-        cur.execute("SELECT COUNT(*) FROM fixtures_master WHERE date(match_date) = ?", (date,))
-        row = cur.fetchone()
-        if row:
-            stored_count = row[0]
-        conn.close()
-    except Exception:
-        pass
-        
-    return {
-        "date": date,
-        "raw_provider_count": raw_provider_count,
-        "after_mapping_count": after_mapping_count,
-        "stored_count": stored_count,
-        "rendered_count": stored_count,
-        "dropped_count": raw_provider_count - after_mapping_count,
-        "drop_reasons": {"not_finished": "matches not FT/AET/PEN"},
-        "countries": len(set(f.get("league", {}).get("country", "") for f in fixtures)),
-        "leagues": len(set(f.get("league", {}).get("name", "") for f in fixtures)),
-        "sample_fixtures": [f.get("fixture", {}).get("id") for f in fixtures[:5]]
-    }
 
 # ── DEBUG API ROUTES ─────────────────────────────────────────────────────────
 

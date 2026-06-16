@@ -59,8 +59,15 @@ const StatusBadge = ({ status, time, is_stale }) => {
   );
 };
 
-const MatchRow = ({ match, isSelected, onClick }) => {
-  const hasScore = match.home_goals !== null && match.home_goals !== undefined;
+const MatchRow = ({ match, isSelected, onClick, selectedDate, todayDate }) => {
+  const hasScore =
+    match.home_goals !== null &&
+    match.home_goals !== undefined &&
+    match.away_goals !== null &&
+    match.away_goals !== undefined;
+  const showScoreline = hasScore || (selectedDate && todayDate && selectedDate < todayDate);
+  const homeScore = hasScore ? match.home_goals : '–';
+  const awayScore = hasScore ? match.away_goals : '–';
 
   return (
     <button
@@ -85,12 +92,13 @@ const MatchRow = ({ match, isSelected, onClick }) => {
             <span className={`text-[13px] truncate leading-tight flex-1 ${isSelected ? 'text-white font-medium' : 'text-slate-200'}`}>
               {match.home_team.name}
             </span>
-            {hasScore && (
-              <span className={`text-[13px] font-bold tabular-nums ml-auto pl-1 ${
+            {showScoreline && (
+              <span className={`w-6 text-right text-[13px] font-bold tabular-nums ml-auto pl-1 ${
+                !hasScore ? 'text-slate-600' :
                 isSelected ? 'text-gold-400' :
                 match.home_goals > match.away_goals ? 'text-white' : 'text-slate-400'
               }`}>
-                {match.home_goals}
+                {homeScore}
               </span>
             )}
           </div>
@@ -101,12 +109,13 @@ const MatchRow = ({ match, isSelected, onClick }) => {
             <span className={`text-[13px] truncate leading-tight flex-1 ${isSelected ? 'text-white font-medium' : 'text-slate-300'}`}>
               {match.away_team.name}
             </span>
-            {hasScore && (
-              <span className={`text-[13px] font-bold tabular-nums ml-auto pl-1 ${
+            {showScoreline && (
+              <span className={`w-6 text-right text-[13px] font-bold tabular-nums ml-auto pl-1 ${
+                !hasScore ? 'text-slate-600' :
                 isSelected ? 'text-gold-400' :
                 match.away_goals > match.home_goals ? 'text-white' : 'text-slate-400'
               }`}>
-                {match.away_goals}
+                {awayScore}
               </span>
             )}
           </div>

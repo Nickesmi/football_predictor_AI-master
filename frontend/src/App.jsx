@@ -4,6 +4,7 @@ import MatchRow from './components/MatchRow';
 import MatchDetail from './components/MatchDetail';
 import DatePicker from './components/DatePicker';
 import ResultsTracker from './components/ResultsTracker';
+import TennisResultsTracker from './components/TennisResultsTracker';
 import TennisView from './views/TennisView';
 
 const API = import.meta.env.VITE_API_URL || "/api";
@@ -39,23 +40,7 @@ const isActiveStatus = (status = '') => (
 const getLiveClockStatus = (fixture, nowMs) => {
   const status = fixture?.status || '';
   if (!isActiveStatus(status) || status === 'HT' || status.includes('BT')) return status;
-
-  const explicitMinute = Number((status.match(/(\d{1,3})/) || [])[1]);
-  const kickoff = parseMatchDateTime(fixture);
-  let minute = Number.isFinite(explicitMinute) ? explicitMinute : null;
-
-  if (kickoff) {
-    const elapsed = Math.floor((nowMs - kickoff.getTime()) / 60000);
-    if (elapsed > 0) {
-      minute = minute === null ? elapsed : Math.max(minute, elapsed);
-    }
-  } else if (Number.isFinite(explicitMinute) && fixture._client_received_at) {
-    minute = explicitMinute + Math.floor((nowMs - fixture._client_received_at) / 60000);
-  }
-
-  if (!Number.isFinite(minute) || minute <= 0) return 'LIVE';
-  if (minute > 90) return 'LIVE 90+’';
-  return `LIVE ${minute}’`;
+  return 'LIVE';
 };
 
 const withRealtimeStatus = (fixture, nowMs) => ({
@@ -247,19 +232,51 @@ function App() {
     return null; // FT -> never refresh
   }, [fixtures, isTabVisible, selectedDate, todayDate]);
 
-  // Adaptive background polling for real-time scores
+  // Connect to WebSocket for real-time live scores
   useEffect(() => {
-    if (pollInterval === null) return;
+    // Only connect if we are viewing today's matches
+    if (selectedDate !== todayDate) return;
     
-    const t = setInterval(() => {
-      fetchFixtures(selectedDate, {
-        isBackground: true,
-        forceRefresh: selectedDate === todayDate || fixtures.some((fixture) => isActiveStatus(fixture.status || '')),
-      });
-    }, pollInterval);
-    return () => clearInterval(t);
-  }, [selectedDate, todayDate, fixtures, fetchFixtures, pollInterval]);
-
+    // Construct ws url from VITE_API_URL or window.location
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    let wsUrl = API.startsWith('http') 
+      ? API.replace(/^http/, 'ws') + '/ws/live-scores'
+      : `${protocol}//${window.location.host}${API}/ws/live-scores`;
+      
+    const ws = new WebSocket(wsUrl);
+    
+    ws.onmessage = (event) => {
+      try {
+        const msg = JSON.parse(event.data);
+        if (msg.type === "LIVE_SCORE_UPDATE") {
+          setFixtures(prevFixtures => {
+            const liveMatches = msg.data;
+            let changed = false;
+            const updatedFixtures = prevFixtures.map(f => {
+              const liveData = liveMatches.find(lm => lm.event_id == f.id);
+              if (liveData) {
+                if (f.home_goals !== liveData.home_score || f.away_goals !== liveData.away_score || f.status !== liveData.status) {
+                  changed = true;
+                  return {
+                    ...f,
+                    home_goals: liveData.home_score,
+                    away_goals: liveData.away_score,
+                    status: liveData.status,
+                  };
+                }
+              }
+              return f;
+            });
+            return changed ? updatedFixtures : prevFixtures;
+          });
+        }
+      } catch (e) {
+        console.error("WebSocket message parse error:", e);
+      }
+    };
+    
+    return () => ws.close();
+  }, [selectedDate, todayDate]);
   // Poll prediction statuses every few seconds if there are pending items
   useEffect(() => {
     if (!coverage || coverage.predicted_pending === 0) return;
@@ -318,10 +335,17 @@ function App() {
           </button>
         </header>
         <div className="flex-1 overflow-hidden bg-surface-0">
-          <ResultsTracker
-            onBack={() => setViewMode('predictions')}
-            selectedDate={selectedDate}
-          />
+          {sport === 'tennis' ? (
+            <TennisResultsTracker
+              onBack={() => setViewMode('predictions')}
+              selectedDate={selectedDate}
+            />
+          ) : (
+            <ResultsTracker
+              onBack={() => setViewMode('predictions')}
+              selectedDate={selectedDate}
+            />
+          )}
         </div>
       </div>
     );
@@ -508,6 +532,8 @@ function App() {
                             match={match}
                             isSelected={match.id === selectedFixtureId}
                             onClick={() => handleMatchSelect(match)}
+                            selectedDate={selectedDate}
+                            todayDate={todayDate}
                           />
                         ))}
                       </div>

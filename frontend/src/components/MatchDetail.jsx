@@ -55,6 +55,22 @@ const CATEGORY_STYLES = {
 };
 
 /* ── Score Prediction Card ──────────────────── */
+const resultLabelFromProbabilities = (result = {}) => {
+  const outcomes = [
+    { label: "Home Win", probability: Number(result.home_win) || 0 },
+    { label: "Draw", probability: Number(result.draw) || 0 },
+    { label: "Away Win", probability: Number(result.away_win) || 0 },
+  ];
+  return outcomes.sort((a, b) => b.probability - a.probability)[0]?.label || "Pending";
+};
+
+const resultLabelFromScore = (home, away) => {
+  if (home === null || home === undefined || away === null || away === undefined) return "Pending";
+  if (home > away) return "Home Win";
+  if (home < away) return "Away Win";
+  return "Draw";
+};
+
 const ScorePrediction = ({ scorePrediction, dominance, homeName, awayName, poisson, actual, status }) => {
   if (!scorePrediction) return null;
 
@@ -127,14 +143,13 @@ const ScorePrediction = ({ scorePrediction, dominance, homeName, awayName, poiss
               <div className="flex justify-between items-center mb-1">
                 <span className="text-xs text-slate-500">Predicted:</span>
                 <span className="text-xs text-slate-300">
-                  {(poisson?.result?.home_win ?? 0) > (poisson?.result?.away_win ?? 0) ? "Home Win" : "Away Win"}
+                  {resultLabelFromProbabilities(poisson?.result)}
                 </span>
               </div>
               <div className="flex justify-between items-center">
                 <span className="text-xs text-emerald-400 font-bold">Actual:</span>
                 <span className="text-xs font-bold text-white">
-                  {(actual?.home_goals ?? 0) > (actual?.away_goals ?? 0) ? "Home Win" : 
-                   (actual?.home_goals ?? 0) < (actual?.away_goals ?? 0) ? "Away Win" : "Draw"}
+                  {resultLabelFromScore(actual?.home_goals, actual?.away_goals)}
                 </span>
               </div>
             </div>
