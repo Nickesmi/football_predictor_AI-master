@@ -134,6 +134,7 @@ def predict_and_store(
         )
         features["player_1"] = player_1
         features["player_2"] = player_2
+        features["allow_low_quality_markets"] = True
         prediction = predict_match(features)
 
         _store_predictions(conn, match_id, prediction, features)

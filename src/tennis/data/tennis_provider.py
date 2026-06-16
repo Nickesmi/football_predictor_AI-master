@@ -53,11 +53,22 @@ _EMPTY_MATCH: dict = {
 
 def _normalize_status(raw: str) -> str:
     raw = raw.lower().strip()
-    if raw in ("closed", "final"):
+    if raw in ("closed", "final", "finished", "ft", "ended"):
         return "FT"
-    if raw in ("in_progress", "live", "playing"):
+    if raw in ("in_progress", "inprogress", "live", "playing"):
         return "LIVE"
     return "NS"
+
+
+def _normalize_surface(raw: Optional[str]) -> str:
+    raw = (raw or "").lower().strip()
+    if "clay" in raw:
+        return "clay"
+    if "grass" in raw:
+        return "grass"
+    if "hard" in raw or "indoor" in raw:
+        return "hard"
+    return "unknown"
 
 
 def _safe_int(val) -> Optional[int]:
@@ -65,6 +76,37 @@ def _safe_int(val) -> Optional[int]:
         return int(val) if val is not None else None
     except (TypeError, ValueError):
         return None
+
+
+def _normalize_match(raw: dict) -> dict:
+    """Normalize a generic tennis event into the internal match schema."""
+    match = dict(_EMPTY_MATCH)
+    match["match_id"] = str(raw.get("id") or "")
+
+    home = raw.get("homeTeam") or raw.get("home_team") or {}
+    away = raw.get("awayTeam") or raw.get("away_team") or {}
+    status = raw.get("status") or {}
+
+    match["player_1"] = str(home.get("name") or "")
+    match["player_2"] = str(away.get("name") or "")
+    match["rank_1"] = _safe_int(home.get("ranking") or home.get("rank") or home.get("seed"))
+    match["rank_2"] = _safe_int(away.get("ranking") or away.get("rank") or away.get("seed"))
+    match["tournament"] = raw.get("tournament") or raw.get("competition") or ""
+    match["surface"] = _normalize_surface(raw.get("surface"))
+
+    raw_status = status.get("type") if isinstance(status, dict) else status
+    match["status"] = _normalize_status(str(raw_status or ""))
+
+    ts = raw.get("startTimestamp")
+    if ts:
+        parsed_ts = _safe_int(ts)
+        if parsed_ts is not None:
+            dt = datetime.fromtimestamp(parsed_ts, tz=timezone.utc)
+            match["date"] = dt.strftime("%Y-%m-%d")
+            match["start_time"] = dt.strftime("%H:%M")
+
+    match["last_live_update"] = datetime.now(timezone.utc).isoformat()
+    return match
 
 
 def _fetch_espn_matches() -> tuple[list[dict], Optional[str], int]:

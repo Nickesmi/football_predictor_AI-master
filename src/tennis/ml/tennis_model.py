@@ -132,6 +132,23 @@ def predict_match(features: dict) -> dict:
     Invariant guarantee: player_1_win + player_2_win == 1.0
     """
     dq = float(features.get("data_quality_score", 50))
+    allow_low_quality_markets = bool(features.get("allow_low_quality_markets", False))
+
+    # ── Governance Rule: NO PICK for poor data unless UI explicitly asks for
+    # conservative display markets.
+    if dq < 40 and not allow_low_quality_markets:
+        return {
+            "model_version":  "v1.0-elo",
+            "data_quality":   dq,
+            "missing_features": features.get("missing_features", []),
+            "match_winner":   None,
+            "sets_markets":   {},
+            "market_groups":  {},
+            "all_picks":      [],
+            "top_picks":      [],
+            "warnings":       ["NO PICK: data quality too low (< 40). Model requires more historical data."],
+            "_signals":       None,
+        }
 
     # ── Layer 1: Elo ──────────────────────────────────────────────────────────
     elo_diff = float(features.get("elo_diff", 0.0))

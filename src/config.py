@@ -50,12 +50,18 @@ RAPIDAPI_KEY: str = os.getenv("RAPIDAPI_KEY", "")
 RAPIDAPI_HOST: str = os.getenv("RAPIDAPI_HOST", "")
 
 if not APIFOOTBALL_API_KEY:
-    print("FATAL ERROR: APIFOOTBALL_API_KEY or API_FOOTBALL_KEY is missing from environment variables.", file=sys.stderr)
-    sys.exit(1)
+    print(
+        "WARNING: APIFOOTBALL_API_KEY or API_FOOTBALL_KEY is missing. "
+        "Live API-Football calls will be disabled until a key is configured.",
+        file=sys.stderr,
+    )
 
 if not RAPIDAPI_KEY or not RAPIDAPI_HOST:
-    print("FATAL ERROR: RAPIDAPI_KEY and RAPIDAPI_HOST must be provided in environment variables for SofaScore fallback.", file=sys.stderr)
-    sys.exit(1)
+    print(
+        "WARNING: RAPIDAPI_KEY and RAPIDAPI_HOST are not fully configured. "
+        "SofaScore fallback calls will be disabled until both values are configured.",
+        file=sys.stderr,
+    )
 API_RATE_LIMIT_PER_MINUTE: int = int(_settings.get("api_rate_limit") or os.getenv("API_RATE_LIMIT_PER_MINUTE", "10"))
 
 # ---------------------------------------------------------------------------
