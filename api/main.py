@@ -2283,6 +2283,15 @@ def _fixture_has_scoreline(fixture: dict) -> bool:
     )
 
 
+def _coerce_fixture_list(payload) -> list[dict]:
+    """Normalize fixture endpoint responses into a clean list of fixture dicts."""
+    if isinstance(payload, dict):
+        payload = payload.get("fixtures", [])
+    if not isinstance(payload, list):
+        return []
+    return [fixture for fixture in payload if isinstance(fixture, dict)]
+
+
 def _apply_sofascore_scoreline(base: dict, sofa: dict) -> dict:
     """
     Merge only score/status fields from SofaScore while preserving the base
@@ -4014,6 +4023,8 @@ def get_results_verification(date_str: str, background_tasks: BackgroundTasks):
         all_fixtures = get_fixtures_by_date(date_str, background_tasks)
     except ValueError as ve:
         raise HTTPException(status_code=400, detail=str(ve))
+
+    all_fixtures = _coerce_fixture_list(all_fixtures)
 
     if not all_fixtures:
         return {"date": date_str, "matches": [], "summary": {}}

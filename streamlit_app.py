@@ -39,16 +39,22 @@ def _score_text(fixture: dict[str, Any]) -> str:
     return f"{home} - {away}"
 
 
+def _clean_fixture_list(payload: Any) -> list[dict[str, Any]]:
+    if isinstance(payload, dict):
+        if payload.get("message"):
+            st.warning(payload["message"])
+        payload = payload.get("fixtures", [])
+    if not isinstance(payload, list):
+        return []
+    return [fixture for fixture in payload if isinstance(fixture, dict)]
+
+
 @st.cache_data(ttl=180, show_spinner=False)
 def _fetch_fixtures(date_str: str, force_refresh: bool = False) -> list[dict[str, Any]]:
     from api.main import get_fixtures_by_date
 
     response = get_fixtures_by_date(date_str, BackgroundTasks(), force_refresh=force_refresh)
-    if isinstance(response, dict):
-        if response.get("message"):
-            st.warning(response["message"])
-        return response.get("fixtures", [])
-    return response
+    return _clean_fixture_list(response)
 
 
 @st.cache_data(ttl=300, show_spinner=False)
@@ -59,20 +65,24 @@ def _fetch_results(date_str: str) -> dict[str, Any]:
 
 
 def _render_fixture_table(fixtures: list[dict[str, Any]]) -> None:
+    fixtures = _clean_fixture_list(fixtures)
     if not fixtures:
         st.info("No matches available for this date.")
         return
 
     rows = []
     for fixture in fixtures:
+        home_team = fixture.get("home_team") if isinstance(fixture.get("home_team"), dict) else {}
+        away_team = fixture.get("away_team") if isinstance(fixture.get("away_team"), dict) else {}
+        league = fixture.get("league") if isinstance(fixture.get("league"), dict) else {}
         rows.append({
             "Time": fixture.get("time") or "TBD",
             "Status": fixture.get("status") or "NS",
-            "Home": fixture.get("home_team", {}).get("name", "Home"),
+            "Home": home_team.get("name", "Home"),
             "Score": _score_text(fixture),
-            "Away": fixture.get("away_team", {}).get("name", "Away"),
-            "League": fixture.get("league", {}).get("name", ""),
-            "Country": fixture.get("league", {}).get("country", ""),
+            "Away": away_team.get("name", "Away"),
+            "League": league.get("name", ""),
+            "Country": league.get("country", ""),
         })
     st.dataframe(rows, use_container_width=True, hide_index=True)
 
