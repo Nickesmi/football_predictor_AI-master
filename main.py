@@ -22,15 +22,21 @@ import json
 import sys
 from textwrap import dedent
 
-from src.config import logger, APIFOOTBALL_API_KEY
-from src.data.api_football_fetcher import APIFootballFetcher
-from src.processing.pattern_analyzer import PatternAnalyzer
-from src.processing.factor_analyzer import FactorAnalyzer
-from src.reporting.report_formatter import ReportFormatter
-from src.reporting.llm_formatter import LLMReportFormatter
-
 
 def main():
+    if len(sys.argv) == 1:
+        try:
+            from streamlit_app import render
+        except ImportError:
+            print(
+                "This file is a CLI tool and requires arguments.\n\n"
+                "For Streamlit Cloud, set the app entrypoint to streamlit_app.py.\n"
+                "For CLI usage, run: python main.py --help\n"
+            )
+            return
+        render()
+        return
+
     parser = argparse.ArgumentParser(
         description="Football Predictor AI – Statistical Pattern Analyzer",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -84,6 +90,13 @@ def main():
     )
 
     args = parser.parse_args()
+
+    from src.config import APIFOOTBALL_API_KEY
+    from src.data.api_football_fetcher import APIFootballFetcher
+    from src.processing.pattern_analyzer import PatternAnalyzer
+    from src.processing.factor_analyzer import FactorAnalyzer
+    from src.reporting.report_formatter import ReportFormatter
+    from src.reporting.llm_formatter import LLMReportFormatter
 
     # ---- Validate API key ----
     if not APIFOOTBALL_API_KEY:
