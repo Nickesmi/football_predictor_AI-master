@@ -317,7 +317,7 @@ function App() {
         <header className="shrink-0 h-14 bg-surface-1 border-b border-border flex items-center px-5 gap-3 z-30">
           <Trophy className="w-5 h-5 text-gold-500" />
           <span className="text-base font-bold tracking-widest text-white">
-            FOOTBALL<span className="text-gold-500">PREDICT</span>
+            x<span className="text-gold-500">Genius</span>
           </span>
           <div className="flex-1" />
           <button
@@ -328,7 +328,7 @@ function App() {
             Predictions
           </button>
           <button
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-500/15 border border-amber-500/30 text-amber-400 text-xs font-bold"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gold-500/15 border border-gold-500/30 text-gold-500 text-xs font-bold"
           >
             <Target className="w-3.5 h-3.5" />
             Results
@@ -374,7 +374,7 @@ function App() {
       <header className="shrink-0 h-14 bg-surface-1 border-b border-border flex items-center px-5 gap-3 z-30">
         <Trophy className="w-5 h-5 text-gold-500" />
         <span className="text-base font-bold tracking-widest text-white">
-          FOOTBALL<span className="text-gold-500">PREDICT</span>
+          x<span className="text-gold-500">Genius</span>
         </span>
 
         {/* Sport Tabs */}
@@ -407,7 +407,7 @@ function App() {
         <button
           onClick={handleScanLiveOdds}
           disabled={isScanning || sport === 'tennis'}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-500/15 border border-blue-500/30 text-blue-400 hover:bg-blue-500/25 transition-all text-xs font-bold disabled:opacity-50"
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gold-500/10 border border-gold-500/25 text-gold-500 hover:bg-gold-500/20 hover:border-gold-500/40 transition-all text-xs font-bold disabled:opacity-50"
         >
           {isScanning ? (
             <Loader2 className="w-3.5 h-3.5 animate-spin" />
@@ -424,7 +424,7 @@ function App() {
         </button>
         <button
           onClick={() => setViewMode('results')}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/5 border border-white/10 text-slate-400 hover:text-amber-400 hover:border-amber-500/30 transition-all text-xs"
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/5 border border-white/10 text-slate-400 hover:text-gold-500 hover:border-gold-500/30 transition-all text-xs"
         >
           <Target className="w-3.5 h-3.5" />
           Results

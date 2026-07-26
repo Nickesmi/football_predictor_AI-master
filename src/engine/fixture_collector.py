@@ -7,8 +7,8 @@ Extracts odds from SofaScore event data when available.
 
 import logging
 import sqlite3
-from src.db.match_repo import upsert_match
-from src.db.odds_repo import insert_odds
+from src.db.match_repo import upsert_match, upsert_matches_batch
+from src.db.odds_repo import insert_odds, insert_odds_batch
 
 logger = logging.getLogger("football_predictor")
 
@@ -47,6 +47,7 @@ def collect_fixtures(
     """
     fixtures = []
     skipped = 0
+    odds_snapshots = []
 
     for ev in events:
         # Filter by league
@@ -76,12 +77,15 @@ def collect_fixtures(
             "away_goals": away_score.get("current"),
         }
 
-        upsert_match(conn, match)
+        fixtures.append(match)
 
         # Extract odds if present in SofaScore data
-        _extract_odds(ev, match["id"], conn)
+        _extract_odds(ev, match["id"], odds_snapshots)
 
-        fixtures.append(match)
+    if fixtures:
+        upsert_matches_batch(conn, fixtures)
+    if odds_snapshots:
+        insert_odds_batch(conn, odds_snapshots)
 
     logger.info(
         f"Fixture collector: {len(fixtures)} tracked, {skipped} skipped for {date_str}"
@@ -99,7 +103,7 @@ def _map_status(status_info: dict) -> str:
     return "NS"
 
 
-def _extract_odds(ev: dict, match_id: str, conn: sqlite3.Connection) -> None:
+def _extract_odds(ev: dict, match_id: str, snapshots: list[dict]) -> None:
     """Extract odds from SofaScore vote/odds data if available."""
     # SofaScore sometimes includes vote percentages as a proxy
     vote = ev.get("vote", {})
@@ -120,7 +124,7 @@ def _extract_odds(ev: dict, match_id: str, conn: sqlite3.Connection) -> None:
         pct = vote_count / total
         if pct > 0.01:
             pseudo_odds = round(1.0 / pct, 3)
-            insert_odds(conn, {
+            snapshots.append({
                 "match_id": match_id,
                 "market": "1X2",
                 "selection": selection,
@@ -128,3 +132,4 @@ def _extract_odds(ev: dict, match_id: str, conn: sqlite3.Connection) -> None:
                 "bookmaker": "sofascore_vote",
                 "is_opening": True,
             })
+

@@ -16,7 +16,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 from src.config import logger
 from src.db.database import get_db
 from src.data.sofascore_provider import fetch_daily_matches
-from src.data.emergency_backup_provider import APIFootballFetcher
+
 from api.main import _compute_match_analysis
 
 def run_collection():
@@ -32,17 +32,7 @@ def run_collection():
     
     if err and not fixtures:
         logger.error(f"SofaScore completely failed: {err}")
-        logger.warning("Triggering EMERGENCY BACKUP: API-Football")
-        backup = APIFootballFetcher()
-        try:
-            raw_fixtures = backup.fetch_fixtures(today)
-            # Normalization logic for backup would go here.
-            # But the requirement was "sleeps silently". So we just log it for now.
-            logger.error("API-Football backup triggered. Manual intervention or normalization needed.")
-            return
-        except Exception as e:
-            logger.error(f"Emergency Backup ALSO failed: {e}")
-            return
+        return
 
     logger.info(f"Fetched {len(fixtures)} main fixtures for {today}")
     

@@ -227,14 +227,25 @@ def estimate_probabilities(match: dict) -> dict:
 
     # Normalize 1X2 to sum to 1.0
     total = sum(probs_1x2.values())
-    if total > 0 and abs(total - 1.0) > 0.01:
+    if total > 0:
         probs_1x2 = {k: v / total for k, v in probs_1x2.items()}
 
+    h_rnd = round(probs_1x2["home"], 4)
+    d_rnd = round(probs_1x2["draw"], 4)
+    a_rnd = round(1.0 - h_rnd - d_rnd, 4)
+
+    ou_over_rnd = round(probs_ou["over"], 4)
+    ou_under_rnd = round(1.0 - ou_over_rnd, 4)
+
+    btts_yes_rnd = round(probs_btts["yes"], 4)
+    btts_no_rnd = round(1.0 - btts_yes_rnd, 4)
+
     return {
-        "1X2": {k: round(v, 4) for k, v in probs_1x2.items()},
-        "O/U 2.5": {k: round(v, 4) for k, v in probs_ou.items()},
-        "BTTS": {k: round(v, 4) for k, v in probs_btts.items()},
+        "1X2": {"home": h_rnd, "draw": d_rnd, "away": a_rnd},
+        "O/U 2.5": {"over": ou_over_rnd, "under": ou_under_rnd},
+        "BTTS": {"yes": btts_yes_rnd, "no": btts_no_rnd},
         "goals": {"exp_home": round(exp_home, 2), "exp_away": round(exp_away, 2)},
         "source": source,
         "data_quality": round(data_quality, 1),
     }
+

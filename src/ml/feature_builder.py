@@ -168,6 +168,19 @@ class FeatureBuilder:
         from src.db.competition_tracker import _infer_category
         cat = _infer_category(league_name, country)
         
+        # Fallback: detect international from league name when country is empty
+        # (the API calls this without country, so _infer_category returns 'men')
+        if cat == 'men' and not country:
+            league_lower = league_name.lower()
+            if any(t in league_lower for t in ('friendly', 'friendlies')):
+                cat = 'friendly'
+            elif any(t in league_lower for t in (
+                'world cup', 'international', 'nations league', 'euro',
+                'copa america', 'qualification', 'asian cup', 'africa cup',
+                'gold cup', 'afcon', 'concacaf',
+            )):
+                cat = 'international'
+        
         if cat == 'friendly':
             score -= 40
         elif cat == 'youth':
@@ -175,7 +188,25 @@ class FeatureBuilder:
         elif cat == 'women':
             score -= 15  # often fewer historical matches available consistently
         elif cat == 'international':
-            score -= 20  # International teams play infrequently
+            # Tier-aware penalty: elite tournaments have well-known teams with
+            # excellent data coverage; friendlies and minor competitions do not.
+            league_lower = league_name.lower()
+            if any(t in league_lower for t in ('world cup', 'fifa world cup', 'euro championship',
+                                                'copa america', 'european championship')):
+                # Elite tournaments — top-tier data, well-known teams
+                score -= 5
+            elif any(t in league_lower for t in ('qualification', 'nations league',
+                                                  'asian cup', 'africa cup', 'gold cup',
+                                                  'afcon')):
+                # Qualifiers — good data but some mismatches possible
+                score -= 10
+            elif 'friendly' in league_lower:
+                # Friendlies — unreliable, rotated squads
+                score -= 25
+            else:
+                # Other international — default moderate penalty
+                score -= 15
 
         # Ensure bounds
         return max(0.0, min(100.0, score))
+

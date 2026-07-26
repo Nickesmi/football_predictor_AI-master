@@ -45,8 +45,12 @@ IDEAL_SAMPLES = 500
 # ── Output bounds ──────────────────────────────────────────────────
 # Nothing in sports is 0% or 100%.  Cap outputs to prevent
 # downstream Kelly blowups and false certainty.
-CALIBRATED_FLOOR = 2.0   # minimum calibrated probability (%)
-CALIBRATED_CEILING = 85.0  # maximum calibrated probability (%) - reduced to reduce overconfidence
+CALIBRATED_FLOOR = 2.0    # minimum calibrated probability (%)
+CALIBRATED_CEILING = 92.0  # maximum calibrated probability (%)
+# 92% allows genuinely confident markets (e.g. Over 0.5 Goals, strong favorites)
+# to be represented accurately. The isotonic fit + Laplace smoothing already
+# prevent overconfidence — this ceiling only blocks extreme outliers.
+
 
 # Per-market-type ceilings. Handicap +spread markets are near-certain by
 # Poisson math but are NOT that reliable in practice — cap them more tightly.

@@ -1,13 +1,13 @@
 import urllib.request
 import json
 import os
-
 from dotenv import load_dotenv
+
 load_dotenv('.env')
 key = os.getenv("RAPIDAPI_KEY")
 
 host = "sofasport.p.rapidapi.com"
-url = f"https://{host}/v1/events/schedule/date?date=2026-06-15&sport=tennis"
+url = f"https://{host}/v1/events/schedule/date?date=2026-06-15&sport=football"
 
 req = urllib.request.Request(url, headers={
     "X-RapidAPI-Key": key,
@@ -17,6 +17,6 @@ req = urllib.request.Request(url, headers={
 try:
     resp = urllib.request.urlopen(req, timeout=5)
     data = json.loads(resp.read().decode("utf-8"))
-    print(f"SUCCESS")
+    print(f"SUCCESS: {len(data.get('data', []))} events")
 except Exception as e:
     print(f"FAILED: {e}")

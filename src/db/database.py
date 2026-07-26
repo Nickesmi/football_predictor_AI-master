@@ -6,8 +6,11 @@ SQLite database connection and schema initialization.
 import sqlite3
 import logging
 import os
+import time
+import random
+from functools import wraps
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Callable, Any
 
 logger = logging.getLogger("football_predictor")
 
@@ -27,14 +30,75 @@ else:
 _connection: Optional[sqlite3.Connection] = None
 
 
+def retry_on_db_lock(max_retries: int = 5, base_delay: float = 0.1) -> Callable:
+    """
+    Decorator to retry a database function if SQLite is locked or busy.
+    Uses exponential backoff with jitter.
+    """
+    def decorator(func: Callable) -> Callable:
+        @wraps(func)
+        def wrapper(*args, **kwargs) -> Any:
+            retries = 0
+            while True:
+                try:
+                    return func(*args, **kwargs)
+                except sqlite3.OperationalError as e:
+                    err_msg = str(e).lower()
+                    if ("locked" in err_msg or "busy" in err_msg) and retries < max_retries:
+                        retries += 1
+                        sleep_time = (base_delay * (2 ** (retries - 1))) + random.uniform(0.01, 0.05)
+                        logger.warning(f"Database locked/busy in {func.__name__} (attempt {retries}/{max_retries}). Retrying in {sleep_time:.2f}s...")
+                        time.sleep(sleep_time)
+                    else:
+                        raise
+        return wrapper
+    return decorator
+
+
+class db_transaction_retry:
+    """
+    Context manager for executing SQLite transactions with retry-on-lock protection.
+    """
+    def __init__(self, conn: sqlite3.Connection, max_retries: int = 5, base_delay: float = 0.1):
+        self.conn = conn
+        self.max_retries = max_retries
+        self.base_delay = base_delay
+
+    def __enter__(self):
+        return self.conn
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if exc_type is None:
+            retries = 0
+            while True:
+                try:
+                    self.conn.commit()
+                    break
+                except sqlite3.OperationalError as e:
+                    err_msg = str(e).lower()
+                    if ("locked" in err_msg or "busy" in err_msg) and retries < self.max_retries:
+                        retries += 1
+                        sleep_time = (self.base_delay * (2 ** (retries - 1))) + random.uniform(0.01, 0.05)
+                        logger.warning(f"Database locked/busy during commit (attempt {retries}/{self.max_retries}). Retrying in {sleep_time:.2f}s...")
+                        time.sleep(sleep_time)
+                    else:
+                        self.conn.rollback()
+                        raise
+        else:
+            self.conn.rollback()
+        return False
+
+
 def get_db() -> sqlite3.Connection:
     """Get or create a SQLite connection (singleton per process)."""
     global _connection
     if _connection is None:
         DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-        _connection = sqlite3.connect(str(DB_PATH), check_same_thread=False)
+        _connection = sqlite3.connect(str(DB_PATH), timeout=30.0, check_same_thread=False)
         _connection.row_factory = sqlite3.Row
         _connection.execute("PRAGMA journal_mode=WAL")
+        _connection.execute("PRAGMA synchronous=NORMAL")
+        _connection.execute("PRAGMA busy_timeout=30000")
         _connection.execute("PRAGMA foreign_keys=ON")
         init_db(_connection)
         logger.info(f"SQLite database initialized at {DB_PATH}")

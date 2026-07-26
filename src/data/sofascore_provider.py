@@ -19,7 +19,14 @@ PROVIDER_NAME = "sofascore"
 TIER_1_LEAGUES = {
     "Premier League", "LaLiga", "Serie A", "Bundesliga", "Ligue 1",
     "UEFA Champions League", "UEFA Europa League", "UEFA Europa Conference League",
-    "Champions League", "Europa League", "Europa Conference League"
+    "Champions League", "Europa League", "Europa Conference League",
+    # International Tournaments
+    "World Cup", "FIFA World Cup",
+    "World Cup Qualification (Europe)", "World Cup Qualification (CONMEBOL)",
+    "World Cup Qualification (Africa)", "World Cup Qualification (Asia)",
+    "World Cup Qualification (CONCACAF)",
+    "UEFA Nations League", "Euro Championship", "Copa America",
+    "AFC Asian Cup Qual.",
 }
 
 TIER_2_LEAGUES = {

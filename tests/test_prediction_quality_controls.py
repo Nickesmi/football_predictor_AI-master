@@ -78,12 +78,9 @@ def test_risk_filter_rejects_low_quality_longshot_edges():
 
 
 def test_main_analysis_keeps_realistic_probability_spread():
-    module_path = Path(__file__).resolve().parents[1] / "api" / "main.py"
-    spec = importlib.util.spec_from_file_location("football_predictor_api_main", module_path)
-    api_main = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(api_main)
+    from api.services.match_analysis_service import _compute_match_analysis
 
-    analysis = api_main._compute_match_analysis(
+    analysis = _compute_match_analysis(
         "Arsenal",
         "Chelsea",
         "Premier League",
@@ -131,7 +128,12 @@ def test_main_analysis_keeps_realistic_probability_spread():
         if market.get("section") == "Handicaps"
     ]
     assert handicap_markets
-    assert max(market["probability"] for market in handicap_markets) <= 78.0
+    # Business Rule: Handicap markets are capped at 88.0% (rather than legacy 78.0%).
+    # Why? If capped at 78%, safer lines like AH +1.5 or +2.5 would be artificially
+    # flattened below riskier Double Chance (1X/X2) markets which scale up to 96%,
+    # causing mathematical incoherence. Furthermore, a 78% cap caused distinct
+    # spreads (+1.5 and +2.5) to compress to identical confidence values.
+    assert max(market["probability"] for market in handicap_markets) <= 88.0
     assert all("fair_odds" in market for market in handicap_markets)
 
 

@@ -49,8 +49,16 @@ LEAGUE_PROFILES = {
     "Süper Lig":         LeagueProfile(1.48, 1.25, 2.73),
     "Eredivisie":        LeagueProfile(1.70, 1.40, 3.10),
     "Liga Profesional":  LeagueProfile(1.13, 0.82, 1.95),
+    # International profiles — SYMMETRIC for neutral venue tournaments.
+    # World Cup group/knockout stages average ~2.7 goals/game.
+    # Because these are played at neutral venues, "Home" and "Away" are purely
+    # administrative — so avg_home_goals == avg_away_goals (50/50 split of total).
+    "International":     LeagueProfile(1.325, 1.325, 2.65),
+    "World Cup":         LeagueProfile(1.375, 1.375, 2.75),  # symmetric neutral
+    "FIFA World Cup":    LeagueProfile(1.375, 1.375, 2.75),  # alias
     "default":           LeagueProfile(1.50, 1.15, 2.65),
 }
+
 
 
 @dataclass
@@ -174,6 +182,15 @@ def _poisson_pmf(k: int, lam: float) -> float:
     return math.exp(-lam) * (lam ** k) / math.factorial(k)
 
 
+def rank_scorelines_by_outcome(matrix: dict) -> list[tuple[tuple[int, int], float]]:
+    """
+    Sort scorelines strictly by highest confidence percentage (probability descending).
+    """
+    if not matrix:
+        return []
+    return sorted(matrix.items(), key=lambda x: x[1], reverse=True)
+
+
 class PoissonGoalModel:
     """
     Classical Poisson goal prediction model.
@@ -183,7 +200,7 @@ class PoissonGoalModel:
     produces a VERY different λ than Bournemouth 1.1 vs Brentford 1.0.
     """
 
-    MAX_GOALS = 8  # Compute PMF up to this many goals
+    MAX_GOALS = 12  # Compute PMF up to this many goals — 12 ensures <0.01% tail loss even at λ=3.5
 
     def __init__(self, league: str = "default"):
         self.profile = LEAGUE_PROFILES.get(league, LEAGUE_PROFILES["default"])
@@ -221,15 +238,19 @@ class PoissonGoalModel:
         away_conceded: float,
         home_team: str = "Home",
         away_team: str = "Away",
+        regress_factor: float = 0.15,
     ) -> PoissonPrediction:
         """
         Compute full Poisson prediction for a match.
 
         Args:
-            home_scored: Home team's average goals scored at home
-            home_conceded: Home team's average goals conceded at home
-            away_scored: Away team's average goals scored away
-            away_conceded: Away team's average goals conceded away
+            home_scored:    Home team's average goals scored at home
+            home_conceded:  Home team's average goals conceded at home
+            away_scored:    Away team's average goals scored away
+            away_conceded:  Away team's average goals conceded away
+            regress_factor: Regression-to-mean strength (default 0.15).
+                            Pass 0.25 for low data-quality matches to pull
+                            unknown teams closer to league average.
         """
         # Step 1: Calculate strength ratios
         home_str = self.compute_strengths(home_scored, home_conceded, "home")
@@ -240,17 +261,17 @@ class PoissonGoalModel:
         lambda_home = home_str.attack_strength * away_str.defense_weakness * self.profile.avg_home_goals
         lambda_away = away_str.attack_strength * home_str.defense_weakness * self.profile.avg_away_goals
 
-        # Clamp to reasonable range — no single team realistically scores 3+ or 0.3 on average
+        # Clamp to reasonable range — no single team realistically averages 3.5+ or sub-0.3
         lambda_home = max(0.4, min(lambda_home, 3.5))
         lambda_away = max(0.3, min(lambda_away, 3.0))
 
-        # Regression to mean: pull extreme lambdas toward league average (prevents
-        # lopsided stats from producing 3%/88% result probabilities)
-        REGRESS_FACTOR = 0.15  # 15% pull toward league mean
+        # Regression to mean: pull extreme lambdas toward league average.
+        # regress_factor=0.15 (default) is calibrated for known teams.
+        # Use 0.25 for unknown/low-quality-data teams to avoid extreme outputs.
         mean_home = self.profile.avg_home_goals
         mean_away = self.profile.avg_away_goals
-        lambda_home = lambda_home * (1 - REGRESS_FACTOR) + mean_home * REGRESS_FACTOR
-        lambda_away = lambda_away * (1 - REGRESS_FACTOR) + mean_away * REGRESS_FACTOR
+        lambda_home = lambda_home * (1 - regress_factor) + mean_home * regress_factor
+        lambda_away = lambda_away * (1 - regress_factor) + mean_away * regress_factor
 
         # Step 3: Build probability matrix
         matrix = {}
@@ -288,7 +309,7 @@ class PoissonGoalModel:
         away_cs = sum(matrix[(0, a)] for a in range(self.MAX_GOALS + 1)) * 100
 
         # Top scorelines & All scorelines with ranks
-        scorelines_sorted = sorted(matrix.items(), key=lambda x: x[1], reverse=True)
+        scorelines_sorted = rank_scorelines_by_outcome(matrix)
         top_scores = [
             {"score": f"{h}-{a}", "probability": round(p * 100, 1)}
             for (h, a), p in scorelines_sorted[:6]

@@ -5,7 +5,7 @@ import urllib.request
 import sqlite3
 from datetime import datetime, timezone
 from typing import Optional, List, Dict
-from src.db.odds_repo import insert_odds
+from src.db.odds_repo import insert_odds, insert_odds_batch
 from src.data.odds_provider import OddsProvider
 
 logger = logging.getLogger("football_predictor")
@@ -85,6 +85,7 @@ class TheOddsAPIProvider(OddsProvider):
 
     def _store_snapshots(self, events: List[Dict]):
         """Parse raw events and store in odds_snapshots table."""
+        snapshots = []
         for event in events:
             match_id = event.get("id")
             for bookmaker in event.get("bookmakers", []):
@@ -113,7 +114,10 @@ class TheOddsAPIProvider(OddsProvider):
                                 "implied_probability": implied_prob,
                                 "timestamp": ts
                             }
-                            insert_odds(self.db_conn, snapshot)
+                            snapshots.append(snapshot)
+        if snapshots:
+            insert_odds_batch(self.db_conn, snapshots)
+
 
     def get_normalized_odds_for_match(self, sport_key: str, home_team: str, away_team: str, preferred_bookmakers: list[str] = None) -> list[dict]:
         if preferred_bookmakers is None:
@@ -170,3 +174,18 @@ class TheOddsAPIProvider(OddsProvider):
                                 best_odds[norm_market] = {"odds": price, "bookmaker": bm_key}
 
         return [{"market": k, "odds": v["odds"], "bookmaker": v["bookmaker"]} for k, v in best_odds.items()]
+
+
+def fetch_normalized_odds_for_match(
+    sport_key: str, home_team: str, away_team: str, preferred_bookmakers: list[str] = None
+) -> list[dict]:
+    """
+    Helper function to instantiate TheOddsAPIProvider and fetch normalized odds for a match.
+    """
+    from src.db.database import get_db
+
+    conn = get_db()
+    provider = TheOddsAPIProvider(conn)
+    return provider.get_normalized_odds_for_match(
+        sport_key, home_team, away_team, preferred_bookmakers
+    )

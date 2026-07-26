@@ -76,6 +76,7 @@ const ScorePrediction = ({ scorePrediction, dominance, homeName, awayName, poiss
 
   const ftScores = poisson?.top_scorelines || scorePrediction.full_time || [];
   const fhScores = scorePrediction.first_half || [];
+  const shScores = scorePrediction.second_half || [];
   const allScorelines = poisson?.all_scorelines || [];
   const expectedGoals = scorePrediction.expected_goals || {};
   const corners = dominance?.corners || {};
@@ -180,9 +181,53 @@ const ScorePrediction = ({ scorePrediction, dominance, homeName, awayName, poiss
         </div>
       )}
 
-      {/* FT & FH Scores */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        {[{ scores: ftScores, label: "Full Time", color: "cyan" }, { scores: fhScores, label: "First Half", color: "violet" }].map(({ scores, label, color }) => (
+      {/* ── Match & Half-by-Half Outcome Probabilities Chart ── */}
+      {(poisson?.result || scorePrediction.fh_result || scorePrediction.sh_result) && (
+        <div className="bg-[#111318] border border-white/5 rounded-xl p-4 mb-4">
+          <div className="flex items-center gap-2 mb-3">
+            <Trophy className="w-4 h-4 text-emerald-400" />
+            <h4 className="text-xs font-bold text-white uppercase tracking-wider">Match & Half-by-Half Outcome Probabilities</h4>
+          </div>
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+            {[
+              { title: "Full Time Result", data: poisson?.result, color: "cyan" },
+              { title: "First Half Result", data: scorePrediction.fh_result, color: "violet" },
+              { title: "Second Half Result", data: scorePrediction.sh_result, color: "emerald" }
+            ].map(({ title, data, color }) => data ? (
+              <div key={title} className="space-y-2.5 bg-black/30 p-3.5 rounded-xl border border-white/[0.04]">
+                <div className="flex items-center justify-between border-b border-white/5 pb-2">
+                  <span className={`text-xs font-bold uppercase tracking-wider text-${color}-400`}>{title}</span>
+                  <span className="text-[10px] text-slate-500 font-mono">Poisson Model</span>
+                </div>
+                {[
+                  { label: "Home Win", key: "home_win", barColor: "bg-cyan-400", textColor: "text-cyan-400" },
+                  { label: "Draw", key: "draw", barColor: "bg-amber-400", textColor: "text-amber-400" },
+                  { label: "Away Win", key: "away_win", barColor: "bg-orange-400", textColor: "text-orange-400" }
+                ].map(({ label, key, barColor, textColor }) => {
+                  const val = data[key] || 0;
+                  return (
+                    <div key={key} className="flex items-center justify-between gap-3 text-xs">
+                      <span className="text-slate-400 font-medium w-20">{label}</span>
+                      <div className="flex-1 h-2 bg-black/60 rounded-full overflow-hidden">
+                        <div className={`h-full ${barColor} rounded-full transition-all duration-500`} style={{ width: `${Math.min(val, 100)}%` }} />
+                      </div>
+                      <span className={`font-mono font-bold ${textColor} w-12 text-right`}>{val.toFixed(1)}%</span>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : null)}
+          </div>
+        </div>
+      )}
+
+      {/* FT, FH & SH Scores */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        {[
+          { scores: ftScores, label: "Full Time", color: "cyan" },
+          { scores: fhScores, label: "First Half", color: "violet" },
+          { scores: shScores, label: "Second Half", color: "emerald" }
+        ].map(({ scores, label, color }) => (
           <div key={label} className="bg-[#111318] border border-white/5 rounded-xl overflow-hidden">
             <div className="px-4 py-3 border-b border-white/5 flex items-center gap-2">
               <div className={`w-2 h-2 rounded-full bg-${color}-400`} />
@@ -264,10 +309,10 @@ const ScorePrediction = ({ scorePrediction, dominance, homeName, awayName, poiss
       {/* Dominance Insights */}
       {dominance && (
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          {[{ data: { home_pct: poisson?.result?.home_win || 0, away_pct: poisson?.result?.away_win || 0, expected_home: "Win", expected_total: `Draw: ${poisson?.result?.draw || 0}%`, expected_away: "Win" }, label: "Win Probability", icon: <Trophy className="w-4 h-4 text-emerald-400" />, colorA: "bg-emerald-400", colorB: "bg-purple-400", accent: "text-emerald-400" },
+          {[{ data: { home_pct: poisson?.result?.home_win || 0, away_pct: poisson?.result?.away_win || 0, draw_pct: poisson?.result?.draw || 0, expected_home: "Win", expected_total: `Draw: ${poisson?.result?.draw || 0}%`, expected_away: "Win" }, label: "Win Probability", icon: <Trophy className="w-4 h-4 text-emerald-400" />, colorA: "bg-emerald-400", colorB: "bg-purple-400", colorC: "bg-amber-400", accent: "text-emerald-400" },
             { data: corners, label: "Corner Dominance", icon: <CornerUpRight className="w-4 h-4 text-blue-400" />, colorA: "bg-blue-400", colorB: "bg-orange-400", accent: "text-blue-400" },
             { data: cards, label: "Card Dominance", icon: <CreditCard className="w-4 h-4 text-amber-400" />, colorA: "bg-amber-400", colorB: "bg-rose-400", accent: "text-amber-400" }
-          ].map(({ data, label, icon, colorA, colorB, accent }) => (
+          ].map(({ data, label, icon, colorA, colorB, colorC, accent }) => (
             <div key={label} className="bg-[#111318] border border-white/5 rounded-xl p-4 relative overflow-hidden">
               <div className="flex items-center gap-2 mb-3">
                 {icon}
@@ -285,8 +330,18 @@ const ScorePrediction = ({ scorePrediction, dominance, homeName, awayName, poiss
                 </div>
               </div>
               <div className="w-full h-2 bg-black/30 rounded-full overflow-hidden flex">
-                <div className={`h-full ${colorA} rounded-l-full`} style={{ width: `${data.home_pct}%` }} />
-                <div className={`h-full ${colorB} rounded-r-full`} style={{ width: `${data.away_pct}%` }} />
+                {data.draw_pct !== undefined ? (
+                  <>
+                    <div className={`h-full ${colorA}`} style={{ width: `${data.home_pct}%` }} title={`Home Win: ${data.home_pct}%`} />
+                    <div className={`h-full ${colorC}`} style={{ width: `${data.draw_pct}%` }} title={`Draw: ${data.draw_pct}%`} />
+                    <div className={`h-full ${colorB}`} style={{ width: `${data.away_pct}%` }} title={`Away Win: ${data.away_pct}%`} />
+                  </>
+                ) : (
+                  <>
+                    <div className={`h-full ${colorA} rounded-l-full`} style={{ width: `${data.home_pct}%` }} />
+                    <div className={`h-full ${colorB} rounded-r-full`} style={{ width: `${data.away_pct}%` }} />
+                  </>
+                )}
               </div>
               <div className="flex justify-between mt-2">
                 <span className="text-[9px] text-slate-600 font-mono">{typeof data.expected_home === 'string' ? data.expected_home : `Exp: ${data.expected_home}`}</span>

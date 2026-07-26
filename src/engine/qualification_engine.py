@@ -805,7 +805,10 @@ def qualify_picks(
         pass
 
     # League reliability
-    league_reliability = 50.0  # default
+    # Default 65: leagues with no settled history are unknown, not bad.
+    # The Layer 3 hard-gate rejects < 60, so defaulting to 50 (the old value)
+    # caused EVERY new/international league to be permanently rejected.
+    league_reliability = 65.0
     calibration_gap = 0.0
     try:
         if conn:

@@ -17,6 +17,7 @@ Usage:
 import sqlite3
 import logging
 from datetime import datetime
+from src.db.database import retry_on_db_lock
 
 logger = logging.getLogger("football_predictor")
 
@@ -72,6 +73,7 @@ def _classify_market_type(market_name: str) -> str:
     return "goals"
 
 
+@retry_on_db_lock()
 def log_predictions(
     conn: sqlite3.Connection,
     match_id: str,
@@ -108,8 +110,16 @@ def log_predictions(
     except:
         pass  # If date parsing fails, proceed (unlikely)
     
-    count = 0
     logged_markets = set()  # Track which (match_id, market_type) we log in this request
+    
+    # Query existing market types for this match once to avoid N SELECT queries in loop
+    existing_rows = conn.execute(
+        "SELECT market_type FROM prediction_log WHERE match_id = ?",
+        (match_id,),
+    ).fetchall()
+    existing_markets = {row[0] for row in existing_rows}
+    
+    rows_to_insert = []
     
     for pick in evaluated_picks:
         market = pick.get("market", "")
@@ -127,41 +137,36 @@ def log_predictions(
 
         market_type = _classify_market_type(market)
         
-        # DEDUPLICATION: Skip if we already logged this (match, market_type) today
+        # DEDUPLICATION: Skip if we already logged this (match, market_type) today or in DB
         market_key = (match_id, market_type)
-        if market_key in logged_markets:
-            logger.debug(f"Skipping duplicate {market_type} for match {match_id}")
+        if market_key in logged_markets or market_type in existing_markets:
+            logger.debug(f"Skipping duplicate/already-logged {market_type} for match {match_id}")
             continue
         
-        # Also check if this (match_id, market_type) exists in DB from earlier
-        existing = conn.execute(
-            "SELECT COUNT(*) FROM prediction_log WHERE match_id = ? AND market_type = ?",
-            (match_id, market_type),
-        ).fetchone()[0]
-        
-        if existing > 0:
-            # Market already logged for this match - skip it
-            logger.debug(f"Skipping already-logged {market_type} for match {match_id}")
-            continue
-
-        conn.execute(
-            """INSERT INTO prediction_log
-               (match_id, match_date, home_team, away_team, league_name,
-                market, market_type, predicted_prob, actual_outcome, tier)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (match_id, match_date, home_team, away_team, league_name,
-             market, market_type, prob, outcome, tier),
-        )
-        count += 1
+        rows_to_insert.append((
+            match_id, match_date, home_team, away_team, league_name,
+            market, market_type, prob, outcome, tier
+        ))
         logged_markets.add(market_key)
 
-    conn.commit()
+    if rows_to_insert:
+        with conn:
+            conn.executemany(
+                """INSERT INTO prediction_log
+                   (match_id, match_date, home_team, away_team, league_name,
+                    market, market_type, predicted_prob, actual_outcome, tier)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                rows_to_insert,
+            )
+            
+    count = len(rows_to_insert)
     if count > 0:
         logger.info(
             f"Logged {count} predictions for {home_team} vs {away_team} "
             f"(match {match_id}, {match_date})"
         )
     return count
+
 
 
 def get_calibration_data(
@@ -298,6 +303,7 @@ def get_competition_type_analysis(conn: sqlite3.Connection) -> list[dict]:
     return results
 
 
+@retry_on_db_lock()
 def update_daily_performance(conn: sqlite3.Connection, date_str: str) -> dict:
     """Compute and store daily performance stats."""
     row = conn.execute(
@@ -323,17 +329,18 @@ def update_daily_performance(conn: sqlite3.Connection, date_str: str) -> dict:
     accuracy = round(correct / settled * 100, 1) if settled > 0 else 0
     cal_gap = round(avg_prob - avg_actual, 1) if settled > 0 else 0
 
-    conn.execute(
-        """INSERT OR REPLACE INTO daily_performance
-           (date, total_predictions, total_settled, total_correct, total_wrong,
-            accuracy_pct, avg_predicted_prob, avg_actual_rate, calibration_gap)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-        (date_str, total, settled, correct, wrong, accuracy,
-         round(avg_prob, 1), round(avg_actual, 1), cal_gap),
-    )
-    conn.commit()
+    with conn:
+        conn.execute(
+            """INSERT OR REPLACE INTO daily_performance
+               (date, total_predictions, total_settled, total_correct, total_wrong,
+                accuracy_pct, avg_predicted_prob, avg_actual_rate, calibration_gap)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (date_str, total, settled, correct, wrong, accuracy,
+             round(avg_prob, 1), round(avg_actual, 1), cal_gap),
+        )
 
     return {
+
         "date": date_str,
         "total_predictions": total,
         "settled": settled,

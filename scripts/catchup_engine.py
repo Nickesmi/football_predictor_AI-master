@@ -16,7 +16,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.db.database import get_db
-from api.main import fetcher
+from src.data.sofascore_provider import fetch_daily_matches
 
 # Setup Logging
 log_file = PROJECT_ROOT / "logs" / "catchup_engine.log"
@@ -89,21 +89,20 @@ def run_catchup():
         logger.info(f"Fetching historical results for {match_date}...")
         
         try:
-            fixtures = fetcher.fetch_fixtures(match_date)
+            fixtures, err = fetch_daily_matches(match_date)
+            if err:
+                logger.error(f"SofaScore fetch failed for {match_date}: {err}")
+                continue
         except Exception as e:
-            err_str = str(e).lower()
-            if "quota" in err_str or "limit" in err_str:
-                logger.error("CRITICAL: API-Football quota exceeded. Stopping catch-up immediately.")
-                break
             logger.error(f"Failed to fetch data for {match_date}: {e}")
             continue
             
         # Build dictionary of finished matches for this date
         finished_map = {}
         for fix in fixtures:
-            status = fix.get("fixture", {}).get("status", {}).get("short", "")
+            status = fix.get("status", "")
             if status in ("FT", "AET", "PEN"):
-                fix_id = str(fix["fixture"]["id"])
+                fix_id = str(fix.get("event_id", ""))
                 finished_map[fix_id] = fix
                 
         # Get pending predictions for this date
@@ -121,9 +120,9 @@ def run_catchup():
                 continue
                 
             fix = finished_map[match_id]
-            home_goals = fix.get("goals", {}).get("home")
-            away_goals = fix.get("goals", {}).get("away")
-            league_name = fix.get("league", {}).get("name", "Unknown")
+            home_goals = fix.get("home_score")
+            away_goals = fix.get("away_score")
+            league_name = fix.get("league", "Unknown")
             
             if home_goals is None or away_goals is None:
                 continue

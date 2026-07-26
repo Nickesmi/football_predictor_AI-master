@@ -48,6 +48,7 @@ APIFOOTBALL_API_KEY: str = _settings.get("api_key") or os.getenv("APIFOOTBALL_AP
 APIFOOTBALL_HOST: str = _settings.get("api_host") or os.getenv("APIFOOTBALL_HOST", "v3.football.api-sports.io")
 RAPIDAPI_KEY: str = os.getenv("RAPIDAPI_KEY", "")
 RAPIDAPI_HOST: str = os.getenv("RAPIDAPI_HOST", "")
+ADMIN_API_KEY: str = os.getenv("ADMIN_API_KEY", "dev-admin-secret")
 
 if not APIFOOTBALL_API_KEY:
     print(
@@ -97,3 +98,56 @@ try:
     logger.addHandler(fh)
 except Exception:
     pass
+
+# ── Tracked leagues (SofaScore uniqueTournament IDs) ──────
+# Includes top European club leagues + active international competitions
+# that run during the European off-season (qualifiers, friendlies, etc.)
+TOP_LEAGUES = {
+    # ── European Club Leagues (Aug–May) ──
+    17:  "Premier League",
+    8:   "LaLiga",
+    23:  "Serie A",
+    35:  "Bundesliga",
+    34:  "Ligue 1",
+    37:  "Eredivisie",
+    238: "Primeira Liga",
+    244: "Scottish Premiership",
+    180: "Turkish Süper Lig",
+    155: "Russian Premier League",
+    203: "Pro League (Belgium)",
+    # ── UEFA Club Competitions ──
+    7:   "Champions League",
+    679: "Europa League",
+    931: "UEFA Conference League",
+    # ── National Team / International ──
+    1:   "World Cup",
+    16:  "Euro Championship",
+    28:  "AFC Asian Cup Qual.",
+    36:  "Copa America",
+    44:  "FIFA World Cup",
+    68:  "World Cup Qualification (Europe)",
+    69:  "World Cup Qualification (CONMEBOL)",
+    70:  "World Cup Qualification (Africa)",
+    71:  "World Cup Qualification (Asia)",
+    80:  "World Cup Qualification (CONCACAF)",
+    851: "International Friendly Games",
+    852: "International Friendly Games Women",
+    854: "U21 Friendly Games",
+    429: "U17 European Championship",
+    132: "U21 European Championship",
+    480: "UEFA Nations League",
+    2084: "U23 Toulon Tournament",
+    # ── Active Non-European Leagues ──
+    196: "J1 League",
+    402: "J2 League",
+    325: "Brasileirão",
+    390: "Brasileirão Série B",
+    162: "MLS",
+    18641: "MLS Next Pro",
+    777: "K League",
+    937: "Botola Pro",
+    841: "Algerian Ligue 1",
+    1024: "Copa Argentina",
+    278: "Liga AUF Uruguaya",
+    703: "Primera Nacional (Argentina)",
+}

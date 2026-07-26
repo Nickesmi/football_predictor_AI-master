@@ -4,21 +4,40 @@ Repository for pick CRUD and analytics queries.
 
 import sqlite3
 from typing import Optional
+from src.db.database import retry_on_db_lock
 
 
+@retry_on_db_lock()
 def insert_pick(conn: sqlite3.Connection, pick: dict) -> int:
     """Insert a pick and return its ID."""
-    cursor = conn.execute(
-        """INSERT INTO picks
-           (match_id, market, selection, model_prob, implied_prob, edge,
-            odds_at_pick, confidence, league_reliability, grade, stake_units)
-           VALUES (:match_id, :market, :selection, :model_prob, :implied_prob,
-                   :edge, :odds_at_pick, :confidence, :league_reliability,
-                   :grade, :stake_units)""",
-        pick,
-    )
-    conn.commit()
-    return cursor.lastrowid
+    with conn:
+        cursor = conn.execute(
+            """INSERT INTO picks
+               (match_id, market, selection, model_prob, implied_prob, edge,
+                odds_at_pick, confidence, league_reliability, grade, stake_units)
+               VALUES (:match_id, :market, :selection, :model_prob, :implied_prob,
+                       :edge, :odds_at_pick, :confidence, :league_reliability,
+                       :grade, :stake_units)""",
+            pick,
+        )
+        return cursor.lastrowid
+
+
+@retry_on_db_lock()
+def insert_picks_batch(conn: sqlite3.Connection, picks: list[dict]) -> None:
+    """Insert multiple picks atomically in a single transaction."""
+    if not picks:
+        return
+    with conn:
+        conn.executemany(
+            """INSERT INTO picks
+               (match_id, market, selection, model_prob, implied_prob, edge,
+                odds_at_pick, confidence, league_reliability, grade, stake_units)
+               VALUES (:match_id, :market, :selection, :model_prob, :implied_prob,
+                       :edge, :odds_at_pick, :confidence, :league_reliability,
+                       :grade, :stake_units)""",
+            picks,
+        )
 
 
 def get_picks_by_date(conn: sqlite3.Connection, date: str) -> list[dict]:
@@ -47,6 +66,7 @@ def get_unsettled_picks(conn: sqlite3.Connection) -> list[dict]:
     return [dict(r) for r in rows]
 
 
+@retry_on_db_lock()
 def settle_pick(
     conn: sqlite3.Connection,
     pick_id: int,
@@ -55,14 +75,15 @@ def settle_pick(
     clv: Optional[float] = None,
 ) -> None:
     """Mark a pick as won/lost/void with P&L."""
-    conn.execute(
-        """UPDATE picks SET result = ?, pnl_units = ?, clv = ?
-           WHERE id = ?""",
-        (result, pnl_units, clv, pick_id),
-    )
-    conn.commit()
+    with conn:
+        conn.execute(
+            """UPDATE picks SET result = ?, pnl_units = ?, clv = ?
+               WHERE id = ?""",
+            (result, pnl_units, clv, pick_id),
+        )
 
 
+@retry_on_db_lock()
 def update_closing_odds(
     conn: sqlite3.Connection,
     pick_id: int,
@@ -70,12 +91,13 @@ def update_closing_odds(
     clv_pct: float,
 ) -> None:
     """Update closing odds and computed CLV percentage before match start."""
-    conn.execute(
-        """UPDATE picks SET closing_odds = ?, clv_pct = ?
-           WHERE id = ?""",
-        (closing_odds, clv_pct, pick_id),
-    )
-    conn.commit()
+    with conn:
+        conn.execute(
+            """UPDATE picks SET closing_odds = ?, clv_pct = ?
+               WHERE id = ?""",
+            (closing_odds, clv_pct, pick_id),
+        )
+
 
 
 def get_portfolio_summary(conn: sqlite3.Connection) -> dict:

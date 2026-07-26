@@ -59,7 +59,7 @@ const DatePicker = ({ selectedDate, onDateChange, today = fmtDate(new Date()) })
                 onClick={() => onDateChange(key)}
                 className={`flex flex-col items-center px-4 py-1.5 rounded-lg text-center transition-all duration-200 min-w-[72px] ${
                   selected
-                    ? 'bg-gold-500 text-surface-0 shadow-[0_0_15px_rgba(234,179,8,0.25)]'
+                    ? 'bg-gold-500 text-surface-0 shadow-[0_0_15px_rgba(183,240,0,0.28)]'
                     : isToday(d)
                       ? 'text-gold-500 hover:bg-white/5'
                       : 'text-slate-400 hover:text-slate-200 hover:bg-white/5'

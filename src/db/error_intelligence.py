@@ -794,3 +794,8 @@ def _interpret_health(accuracy: float, brier: float, cal_gap: float) -> dict:
             "Underconfident"
         ),
     }
+
+
+# Alias for backward compatibility
+get_model_health_report = get_model_health
+
