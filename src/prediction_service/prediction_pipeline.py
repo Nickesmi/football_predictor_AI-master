@@ -34,6 +34,7 @@ from typing import Optional
 import pandas as pd
 
 from src.ml.model_provenance import real_data_model_provenance
+from src.prediction_service.data_contract import DataMode
 from src.prediction_service import champion_registry, live_models, model_agreement, ood_detection
 from src.prediction_service import confidence_engine as confidence_engine_mod
 from src.prediction_service import thresholds as thresholds_mod
@@ -88,6 +89,8 @@ class PredictionResult:
     meets_confidence_threshold: bool
     threshold_used: Optional[float]
     betting_recommendation: BettingRecommendation
+    data_mode: DataMode = DataMode.REPLAY
+    version: int = 1
     pipeline_version: str = PIPELINE_VERSION
 
 
@@ -109,10 +112,18 @@ def predict(
     odds_timestamp: Optional[str] = None,
     lineup_info: Optional[LineupInfo] = None,
     conn: Optional[sqlite3.Connection] = None,
+    data_mode: DataMode = DataMode.REPLAY,
 ) -> PredictionResult:
     """The real-time prediction service entrypoint (Phase 3 §13). Raises
     PredictionRefused on any stage failure — callers MUST catch it and
-    treat it as "no prediction", never substitute a default."""
+    treat it as "no prediction", never substitute a default.
+
+    data_mode (Phase 4 §3): defaults to REPLAY because that is what this
+    environment can honestly produce — historical_matches is always a
+    static snapshot here, never a live feed (see AUDIT_REPORT.md). A
+    caller wiring a real LiveProvider MUST pass data_mode=DataMode.LIVE
+    explicitly; nothing in this function infers LIVE on its own, so a
+    replay can never accidentally get mislabeled as live."""
     conn = conn or snapshot_db.get_connection()
     pred_ts_str = str(prediction_timestamp)
 
@@ -239,7 +250,29 @@ def predict(
         )
 
     prediction_id = _deterministic_prediction_id(snapshot.match_id, market, pred_ts)
-    result = PredictionResult(
+
+    version = snapshot_db.save_prediction(conn, {
+        "prediction_id": prediction_id, "match_id": snapshot.match_id,
+        "home_team": home_team, "away_team": away_team, "league": league, "market": market,
+        "prediction_timestamp": snapshot.prediction_timestamp,
+        "feature_snapshot_timestamp": snapshot.feature_snapshot_timestamp,
+        "feature_snapshot_json": _json_dumps(snapshot.features),
+        "champion_model": champion,
+        "model_provenance": ("REAL_DATA_TRAINED" if live_key == "xgboost_real_data" else "BASELINE_MODEL"),
+        "calibration_version": calibration_version,
+        "raw_probability": round(raw_p, 4), "calibrated_probability": round(calibrated_p, 4),
+        "confidence_score": confidence.score, "confidence_tier": confidence.tier,
+        "confidence_components_json": _json_dumps(confidence.components),
+        "data_sufficiency": snapshot.data_sufficiency,
+        "model_agreement_level": agreement.agreement_level, "model_agreement_spread": agreement.max_pairwise_spread,
+        "ood_severity": ood.severity, "ood_reasons_json": _json_dumps(ood.reasons),
+        "meets_confidence_threshold": int(meets_threshold), "threshold_used": threshold,
+        "betting_status": betting.status, "betting_reason": betting.reason,
+        "pipeline_version": PIPELINE_VERSION, "data_mode": data_mode.value,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    })
+
+    return PredictionResult(
         prediction_id=prediction_id, match_id=snapshot.match_id,
         home_team=home_team, away_team=away_team, league=league, market=market,
         prediction_timestamp=snapshot.prediction_timestamp, kickoff_timestamp=kickoff_ts.isoformat(),
@@ -250,30 +283,8 @@ def predict(
         confidence=confidence, data_sufficiency=snapshot.data_sufficiency,
         agreement=agreement, ood=ood,
         meets_confidence_threshold=meets_threshold, threshold_used=threshold,
-        betting_recommendation=betting,
+        betting_recommendation=betting, data_mode=data_mode, version=version,
     )
-
-    snapshot_db.save_prediction(conn, {
-        "prediction_id": prediction_id, "match_id": snapshot.match_id,
-        "home_team": home_team, "away_team": away_team, "league": league, "market": market,
-        "prediction_timestamp": snapshot.prediction_timestamp,
-        "feature_snapshot_timestamp": snapshot.feature_snapshot_timestamp,
-        "feature_snapshot_json": _json_dumps(snapshot.features),
-        "champion_model": champion, "model_provenance": result.model_provenance,
-        "calibration_version": calibration_version,
-        "raw_probability": result.raw_probability, "calibrated_probability": result.calibrated_probability,
-        "confidence_score": confidence.score, "confidence_tier": confidence.tier,
-        "confidence_components_json": _json_dumps(confidence.components),
-        "data_sufficiency": snapshot.data_sufficiency,
-        "model_agreement_level": agreement.agreement_level, "model_agreement_spread": agreement.max_pairwise_spread,
-        "ood_severity": ood.severity, "ood_reasons_json": _json_dumps(ood.reasons),
-        "meets_confidence_threshold": int(meets_threshold), "threshold_used": threshold,
-        "betting_status": betting.status, "betting_reason": betting.reason,
-        "pipeline_version": PIPELINE_VERSION,
-        "created_at": datetime.now(timezone.utc).isoformat(),
-    })
-
-    return result
 
 
 def _json_dumps(obj) -> str:

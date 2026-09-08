@@ -30,7 +30,9 @@ _DB_PATH = _PROJECT_ROOT / "data" / "real_historical" / "predictions.db"
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS predictions (
-    prediction_id TEXT PRIMARY KEY,
+    prediction_id TEXT NOT NULL,
+    version INTEGER NOT NULL,
+    is_latest INTEGER NOT NULL DEFAULT 1,
     match_id TEXT NOT NULL,
     home_team TEXT NOT NULL,
     away_team TEXT NOT NULL,
@@ -57,7 +59,9 @@ CREATE TABLE IF NOT EXISTS predictions (
     betting_status TEXT,
     betting_reason TEXT,
     pipeline_version TEXT NOT NULL,
-    created_at TEXT NOT NULL
+    data_mode TEXT NOT NULL DEFAULT 'REPLAY',
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (prediction_id, version)
 );
 
 CREATE TABLE IF NOT EXISTS no_prediction_log (
@@ -73,7 +77,8 @@ CREATE TABLE IF NOT EXISTS no_prediction_log (
 );
 
 CREATE TABLE IF NOT EXISTS post_match_evaluations (
-    prediction_id TEXT PRIMARY KEY REFERENCES predictions(prediction_id),
+    prediction_id TEXT PRIMARY KEY,
+    version_evaluated INTEGER NOT NULL,
     actual_outcome INTEGER NOT NULL,
     correct INTEGER NOT NULL,
     brier_contribution REAL NOT NULL,
@@ -109,9 +114,28 @@ def get_connection() -> sqlite3.Connection:
     return conn
 
 
-def save_prediction(conn: sqlite3.Connection, record: dict) -> None:
+def save_prediction(conn: sqlite3.Connection, record: dict) -> int:
+    """Phase 4 §12: NEVER overwrites a previous prediction. Every call for
+    the same logical prediction_id inserts a brand-new, higher-numbered
+    version row (plain INSERT — no REPLACE), and only flips the OLD
+    version's `is_latest` flag to 0 (a marker update, not a content
+    mutation: every column of the original row stays exactly as it was
+    written). Returns the version number just written."""
+    prediction_id = record["prediction_id"]
+    row = conn.execute(
+        "SELECT COALESCE(MAX(version), 0) AS max_version FROM predictions WHERE prediction_id = ?",
+        (prediction_id,),
+    ).fetchone()
+    next_version = int(row["max_version"]) + 1
+
+    if next_version > 1:
+        conn.execute(
+            "UPDATE predictions SET is_latest = 0 WHERE prediction_id = ? AND is_latest = 1",
+            (prediction_id,),
+        )
+
     columns = [
-        "prediction_id", "match_id", "home_team", "away_team", "league", "market",
+        "prediction_id", "version", "is_latest", "match_id", "home_team", "away_team", "league", "market",
         "prediction_timestamp", "feature_snapshot_timestamp", "feature_snapshot_json",
         "champion_model", "model_provenance", "calibration_version",
         "raw_probability", "calibrated_probability",
@@ -119,14 +143,16 @@ def save_prediction(conn: sqlite3.Connection, record: dict) -> None:
         "data_sufficiency", "model_agreement_level", "model_agreement_spread",
         "ood_severity", "ood_reasons_json",
         "meets_confidence_threshold", "threshold_used",
-        "betting_status", "betting_reason", "pipeline_version", "created_at",
+        "betting_status", "betting_reason", "pipeline_version", "data_mode", "created_at",
     ]
+    values = {**record, "version": next_version, "is_latest": 1, "data_mode": record.get("data_mode") or "REPLAY"}
     placeholders = ", ".join("?" for _ in columns)
     conn.execute(
-        f"INSERT OR REPLACE INTO predictions ({', '.join(columns)}) VALUES ({placeholders})",
-        [record.get(c) for c in columns],
+        f"INSERT INTO predictions ({', '.join(columns)}) VALUES ({placeholders})",
+        [values.get(c) for c in columns],
     )
     conn.commit()
+    return next_version
 
 
 def log_refusal(conn: sqlite3.Connection, record: dict) -> None:
@@ -141,7 +167,7 @@ def log_refusal(conn: sqlite3.Connection, record: dict) -> None:
 
 
 def save_post_match_evaluation(conn: sqlite3.Connection, record: dict) -> None:
-    columns = ["prediction_id", "actual_outcome", "correct", "brier_contribution",
+    columns = ["prediction_id", "version_evaluated", "actual_outcome", "correct", "brier_contribution",
                "log_loss_contribution", "evaluated_at"]
     placeholders = ", ".join("?" for _ in columns)
     conn.execute(
@@ -152,8 +178,25 @@ def save_post_match_evaluation(conn: sqlite3.Connection, record: dict) -> None:
 
 
 def get_prediction(conn: sqlite3.Connection, prediction_id: str) -> Optional[dict]:
-    row = conn.execute("SELECT * FROM predictions WHERE prediction_id = ?", (prediction_id,)).fetchone()
+    """Returns the LATEST version of this logical prediction."""
+    row = conn.execute(
+        "SELECT * FROM predictions WHERE prediction_id = ? AND is_latest = 1", (prediction_id,)
+    ).fetchone()
     return dict(row) if row else None
+
+
+def get_prediction_version(conn: sqlite3.Connection, prediction_id: str, version: int) -> Optional[dict]:
+    row = conn.execute(
+        "SELECT * FROM predictions WHERE prediction_id = ? AND version = ?", (prediction_id, version)
+    ).fetchone()
+    return dict(row) if row else None
+
+
+def get_all_prediction_versions(conn: sqlite3.Connection, prediction_id: str) -> list[dict]:
+    rows = conn.execute(
+        "SELECT * FROM predictions WHERE prediction_id = ? ORDER BY version", (prediction_id,)
+    ).fetchall()
+    return [dict(r) for r in rows]
 
 
 def save_shadow_prediction(conn: sqlite3.Connection, record: dict) -> None:

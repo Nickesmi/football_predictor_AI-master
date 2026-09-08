@@ -30,6 +30,7 @@ import numpy as np
 import pandas as pd
 
 from src.ml.point_in_time import build_point_in_time_features, FEATURE_COLUMNS
+from src.prediction_service.data_contract import FeatureProvenance, FeatureStatus, now_iso
 
 
 class FeatureGenerationError(Exception):
@@ -53,11 +54,63 @@ class FeatureSnapshot:
     n_history_matches_used: int
     n_future_rows_rejected: int        # matches in the source table at/after prediction_timestamp — must be 0
     raw_row: dict = field(default_factory=dict)  # full row incl. non-feature columns (elo, rolling splits) for audit
+    provenance: list = field(default_factory=list)  # list[FeatureProvenance] — Phase 4 §5
 
 
 def _deterministic_match_id(home_team: str, away_team: str, prediction_timestamp: pd.Timestamp) -> str:
     key = f"live|{home_team}|{away_team}|{prediction_timestamp.isoformat()}"
     return "live_" + hashlib.sha1(key.encode()).hexdigest()[:16]
+
+
+def _last_match_date(history: pd.DataFrame, team: str) -> Optional[str]:
+    mask = (history["home_team"] == team) | (history["away_team"] == team)
+    team_history = history[mask]
+    if len(team_history) == 0:
+        return None
+    return str(team_history["date"].max())
+
+
+def _build_provenance(
+    feature_values: dict, history: pd.DataFrame, home_team: str, away_team: str,
+    home_is_cold_start: bool, away_is_cold_start: bool,
+) -> list:
+    """§5: per-feature provenance. Every feature in FEATURE_COLUMNS traces
+    back to either (a) the relevant team's most recent prior match date —
+    the freshest real evidence backing that number, or (b) a genuine
+    cold-start situation, marked UNKNOWN rather than given a fake
+    timestamp. Every KNOWN record's source_timestamp is, by construction,
+    a real historical match date strictly before prediction_timestamp —
+    build_point_in_time_features()'s own leakage guarantee is what makes
+    this provenance trustworthy, not a separate check re-deriving it."""
+    computed_ts = now_iso()
+    home_last = _last_match_date(history, home_team)
+    away_last = _last_match_date(history, away_team)
+
+    records = []
+    for col, value in feature_values.items():
+        if col == "data_sufficiency":
+            # Depends on both teams; UNKNOWN if either has never played.
+            if home_is_cold_start or away_is_cold_start:
+                records.append(FeatureProvenance(col, value, "team_match_history", None, computed_ts, FeatureStatus.UNKNOWN))
+            else:
+                src_ts = min(home_last, away_last)  # the less-recent of the two — the binding constraint
+                records.append(FeatureProvenance(col, value, "team_match_history", src_ts, computed_ts, FeatureStatus.KNOWN))
+            continue
+
+        is_home_feature = col.startswith("home_")
+        team = home_team if is_home_feature else away_team
+        cold_start = home_is_cold_start if is_home_feature else away_is_cold_start
+        last_date = home_last if is_home_feature else away_last
+
+        if cold_start or last_date is None:
+            records.append(FeatureProvenance(
+                col, value, "league_wide_cold_start_prior", None, computed_ts, FeatureStatus.UNKNOWN,
+            ))
+        else:
+            records.append(FeatureProvenance(
+                col, value, "team_match_history", last_date, computed_ts, FeatureStatus.KNOWN,
+            ))
+    return records
 
 
 def generate_features(
@@ -156,6 +209,15 @@ def generate_features(
 
     feature_values = {col: float(row[col]) for col in FEATURE_COLUMNS}
 
+    home_is_cold_start = bool(row["home_is_cold_start"])
+    away_is_cold_start = bool(row["away_is_cold_start"])
+    provenance = _build_provenance(feature_values, history, home_team, away_team, home_is_cold_start, away_is_cold_start)
+
+    # §5's hard rule, self-checked before this snapshot is ever handed out:
+    # every KNOWN feature's source_timestamp must be <= prediction_timestamp.
+    for record in provenance:
+        record.assert_available_before(pred_ts.isoformat())
+
     return FeatureSnapshot(
         match_id=match_id,
         home_team=home_team,
@@ -164,10 +226,11 @@ def generate_features(
         prediction_timestamp=pred_ts.isoformat(),
         feature_snapshot_timestamp=datetime.utcnow().isoformat() + "Z",
         features=feature_values,
-        home_is_cold_start=bool(row["home_is_cold_start"]),
-        away_is_cold_start=bool(row["away_is_cold_start"]),
+        home_is_cold_start=home_is_cold_start,
+        away_is_cold_start=away_is_cold_start,
         data_sufficiency=int(row["data_sufficiency"]),
         n_history_matches_used=int(len(history)),
         n_future_rows_rejected=n_rejected,
         raw_row={k: (v.item() if hasattr(v, "item") else v) for k, v in row.to_dict().items()},
+        provenance=provenance,
     )
