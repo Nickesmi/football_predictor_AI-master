@@ -36,7 +36,7 @@ _PREDICTION_STATUS: dict[str, dict] = {}
 # loads, and we avoid burning through the daily API quota.
 
 _FIXTURE_CACHE_DIR = Path(".cache")
-_FIXTURE_CACHE_TTL = 5 * 60   # 5 minutes — fast refresh for live scores
+_FIXTURE_CACHE_TTL = 0   # 0 minutes — no cache limit
 
 
 def _get_cache_path(date_str: str) -> Path:

@@ -7,9 +7,9 @@ set -euo pipefail
 
 cd "$(dirname "$0")"
 
-API_PORT="${API_PORT:-8001}"
-WEB_PORT="${WEB_PORT:-5173}"
-OPEN_BROWSER="${OPEN_BROWSER:-1}"
+export API_PORT="${API_PORT:-8001}"
+export WEB_PORT="${WEB_PORT:-5173}"
+export OPEN_BROWSER="${OPEN_BROWSER:-1}"
 WEB_URL="http://localhost:${WEB_PORT}"
 PIDS=()
 

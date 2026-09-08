@@ -14,6 +14,7 @@ CIRCUIT_BREAKER_TIMEOUT_SEC = 15 * 60  # 15 minutes
 
 def is_circuit_open(provider: str) -> bool:
     """Check if the provider's circuit is currently open (bypassed) based on historical logs."""
+    return False
     try:
         conn = get_db()
         rows = conn.execute(
