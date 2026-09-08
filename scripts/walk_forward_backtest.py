@@ -102,7 +102,16 @@ def market_probs_to_arrays(preds, market: str) -> np.ndarray:
         return np.array([p.p_over_3_5 for p in preds])
     if market == "btts":
         return np.array([p.p_btts_yes for p in preds])
+    if market == "home_over_0_5":
+        vals = [p.p_home_over_0_5 for p in preds]
+        return None if any(v is None for v in vals) else np.array(vals)
+    if market == "away_over_0_5":
+        vals = [p.p_away_over_0_5 for p in preds]
+        return None if any(v is None for v in vals) else np.array(vals)
     raise ValueError(market)
+
+
+LIGHT_MARKETS = ["home_over_0_5", "away_over_0_5"]
 
 
 def run_fold(feats: pd.DataFrame, train_seasons, val_season, test_season, is_final: bool) -> dict:
@@ -118,12 +127,20 @@ def run_fold(feats: pd.DataFrame, train_seasons, val_season, test_season, is_fin
     }
 
     # ── Baselines: fit on TRAIN only, evaluate on TEST only ──
+    # MARKETS gets the full XGBoost-comparable treatment; LIGHT_MARKETS
+    # (home/away team over 0.5 goals) are only modeled by the
+    # frequency/Poisson/Dixon-Coles baselines (see MarketProbs docstring
+    # in src/ml/baselines.py) — a None prediction means "not covered by
+    # this baseline", so it's skipped for that market rather than scored
+    # as if it were a real (and wrong) 0% prediction.
     for cls in ALL_BASELINES:
         model = cls().fit(train)
         preds = model.predict(test)
         market_metrics = {}
-        for market in MARKETS:
+        for market in MARKETS + LIGHT_MARKETS:
             p = market_probs_to_arrays(preds, market)
+            if p is None:
+                continue
             y = _binary_target(test, market)
             m = _binary_metrics(p, y)
             m["ece"] = round(_ece(p, y), 4)

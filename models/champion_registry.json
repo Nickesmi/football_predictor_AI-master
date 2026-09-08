@@ -1,0 +1,393 @@
+{
+  "markets": {
+    "home_win": {
+      "market": "home_win",
+      "champion": "elo",
+      "method": "frozen_holdout_best_with_stability_confirmed",
+      "frozen_holdout_best_model": "elo",
+      "frozen_holdout_brier": 0.2095,
+      "per_fold_rank_of_frozen_best": [
+        1,
+        1,
+        1,
+        1
+      ],
+      "top2_fold_count_of_4": 4,
+      "stable": true,
+      "margin_to_runner_up_brier": 0.0132,
+      "selection_confidence": "clear_margin",
+      "all_models_frozen_holdout_ranking": [
+        [
+          "elo",
+          0.2095
+        ],
+        [
+          "poisson_real_data",
+          0.2227
+        ],
+        [
+          "dixon_coles",
+          0.2238
+        ],
+        [
+          "frequency",
+          0.2416
+        ],
+        [
+          "home_baseline",
+          0.6019
+        ]
+      ]
+    },
+    "draw": {
+      "market": "draw",
+      "champion": "elo",
+      "method": "fallback_best_average_rank_frozen_holdout_was_unstable",
+      "frozen_holdout_best_model": "dixon_coles",
+      "frozen_holdout_brier": 0.1929,
+      "per_fold_rank_of_frozen_best": [
+        3,
+        4,
+        1,
+        1
+      ],
+      "top2_fold_count_of_4": 2,
+      "stable": false,
+      "margin_to_runner_up_brier": 0.0004,
+      "selection_confidence": "low_margin_is_noise_level",
+      "all_models_frozen_holdout_ranking": [
+        [
+          "dixon_coles",
+          0.1929
+        ],
+        [
+          "frequency",
+          0.1933
+        ],
+        [
+          "elo",
+          0.1933
+        ],
+        [
+          "poisson_real_data",
+          0.1935
+        ],
+        [
+          "home_baseline",
+          0.261
+        ]
+      ]
+    },
+    "away_win": {
+      "market": "away_win",
+      "champion": "elo",
+      "method": "frozen_holdout_best_with_stability_confirmed",
+      "frozen_holdout_best_model": "elo",
+      "frozen_holdout_brier": 0.1934,
+      "per_fold_rank_of_frozen_best": [
+        1,
+        1,
+        1,
+        1
+      ],
+      "top2_fold_count_of_4": 4,
+      "stable": true,
+      "margin_to_runner_up_brier": 0.0186,
+      "selection_confidence": "clear_margin",
+      "all_models_frozen_holdout_ranking": [
+        [
+          "elo",
+          0.1934
+        ],
+        [
+          "dixon_coles",
+          0.212
+        ],
+        [
+          "poisson_real_data",
+          0.2134
+        ],
+        [
+          "frequency",
+          0.2253
+        ],
+        [
+          "home_baseline",
+          0.3408
+        ]
+      ]
+    },
+    "over_1_5": {
+      "market": "over_1_5",
+      "champion": "elo",
+      "method": "frozen_holdout_best_with_stability_confirmed",
+      "frozen_holdout_best_model": "elo",
+      "frozen_holdout_brier": 0.1686,
+      "per_fold_rank_of_frozen_best": [
+        2,
+        1,
+        1,
+        1
+      ],
+      "top2_fold_count_of_4": 4,
+      "stable": true,
+      "margin_to_runner_up_brier": 0.0002,
+      "selection_confidence": "low_margin_is_noise_level",
+      "all_models_frozen_holdout_ranking": [
+        [
+          "elo",
+          0.1686
+        ],
+        [
+          "frequency",
+          0.1688
+        ],
+        [
+          "dixon_coles",
+          0.1785
+        ],
+        [
+          "poisson_real_data",
+          0.1792
+        ],
+        [
+          "home_baseline",
+          0.215
+        ]
+      ]
+    },
+    "over_2_5": {
+      "market": "over_2_5",
+      "champion": "elo",
+      "method": "frozen_holdout_best_with_stability_confirmed",
+      "frozen_holdout_best_model": "elo",
+      "frozen_holdout_brier": 0.247,
+      "per_fold_rank_of_frozen_best": [
+        2,
+        1,
+        1,
+        1
+      ],
+      "top2_fold_count_of_4": 4,
+      "stable": true,
+      "margin_to_runner_up_brier": 0.0002,
+      "selection_confidence": "low_margin_is_noise_level",
+      "all_models_frozen_holdout_ranking": [
+        [
+          "elo",
+          0.247
+        ],
+        [
+          "xgboost_real_data_calibrated",
+          0.2472
+        ],
+        [
+          "frequency",
+          0.2479
+        ],
+        [
+          "poisson_real_data",
+          0.2599
+        ],
+        [
+          "dixon_coles",
+          0.2599
+        ],
+        [
+          "home_baseline",
+          0.4545
+        ]
+      ]
+    },
+    "over_3_5": {
+      "market": "over_3_5",
+      "champion": "elo",
+      "method": "frozen_holdout_best_with_stability_confirmed",
+      "frozen_holdout_best_model": "elo",
+      "frozen_holdout_brier": 0.2221,
+      "per_fold_rank_of_frozen_best": [
+        1,
+        1,
+        1,
+        1
+      ],
+      "top2_fold_count_of_4": 4,
+      "stable": true,
+      "margin_to_runner_up_brier": 0.002,
+      "selection_confidence": "clear_margin",
+      "all_models_frozen_holdout_ranking": [
+        [
+          "elo",
+          0.2221
+        ],
+        [
+          "frequency",
+          0.2241
+        ],
+        [
+          "xgboost_real_data_calibrated",
+          0.226
+        ],
+        [
+          "poisson_real_data",
+          0.2356
+        ],
+        [
+          "dixon_coles",
+          0.2356
+        ],
+        [
+          "home_baseline",
+          0.338
+        ]
+      ]
+    },
+    "btts": {
+      "market": "btts",
+      "champion": "elo",
+      "method": "fallback_best_average_rank_frozen_holdout_was_unstable",
+      "frozen_holdout_best_model": "frequency",
+      "frozen_holdout_brier": 0.2474,
+      "per_fold_rank_of_frozen_best": [
+        2,
+        1,
+        2,
+        1
+      ],
+      "top2_fold_count_of_4": 4,
+      "stable": false,
+      "margin_to_runner_up_brier": 0.0003,
+      "selection_confidence": "low_margin_is_noise_level",
+      "all_models_frozen_holdout_ranking": [
+        [
+          "frequency",
+          0.2474
+        ],
+        [
+          "elo",
+          0.2477
+        ],
+        [
+          "xgboost_real_data_calibrated",
+          0.249
+        ],
+        [
+          "dixon_coles",
+          0.2572
+        ],
+        [
+          "poisson_real_data",
+          0.2579
+        ],
+        [
+          "home_baseline",
+          0.4479
+        ]
+      ]
+    },
+    "home_over_0_5": {
+      "market": "home_over_0_5",
+      "champion": "frequency",
+      "method": "fallback_best_average_rank_frozen_holdout_was_unstable",
+      "frozen_holdout_best_model": "poisson_real_data",
+      "frozen_holdout_brier": 0.1859,
+      "per_fold_rank_of_frozen_best": [
+        2,
+        2,
+        2,
+        1
+      ],
+      "top2_fold_count_of_4": 4,
+      "stable": false,
+      "margin_to_runner_up_brier": 0.0,
+      "selection_confidence": "low_margin_is_noise_level",
+      "all_models_frozen_holdout_ranking": [
+        [
+          "poisson_real_data",
+          0.1859
+        ],
+        [
+          "dixon_coles",
+          0.1859
+        ],
+        [
+          "frequency",
+          0.1887
+        ]
+      ]
+    },
+    "away_over_0_5": {
+      "market": "away_over_0_5",
+      "champion": "poisson_real_data",
+      "method": "frozen_holdout_best_with_stability_confirmed",
+      "frozen_holdout_best_model": "poisson_real_data",
+      "frozen_holdout_brier": 0.1926,
+      "per_fold_rank_of_frozen_best": [
+        1,
+        2,
+        1,
+        1
+      ],
+      "top2_fold_count_of_4": 4,
+      "stable": true,
+      "margin_to_runner_up_brier": 0.0,
+      "selection_confidence": "low_margin_is_noise_level",
+      "all_models_frozen_holdout_ranking": [
+        [
+          "poisson_real_data",
+          0.1926
+        ],
+        [
+          "dixon_coles",
+          0.1926
+        ],
+        [
+          "frequency",
+          0.1937
+        ]
+      ]
+    },
+    "under_1_5": {
+      "market": "under_1_5",
+      "champion": "elo",
+      "method": "complement_of_over_1_5 (P(under) = 1 - P(over), same model)",
+      "derived_from": "over_1_5"
+    },
+    "under_2_5": {
+      "market": "under_2_5",
+      "champion": "elo",
+      "method": "complement_of_over_2_5 (P(under) = 1 - P(over), same model)",
+      "derived_from": "over_2_5"
+    },
+    "under_3_5": {
+      "market": "under_3_5",
+      "champion": "elo",
+      "method": "complement_of_over_3_5 (P(under) = 1 - P(over), same model)",
+      "derived_from": "over_3_5"
+    }
+  },
+  "data_summary": {
+    "n_real_matches": 10657,
+    "leagues": [
+      "Deutsche Bundesliga",
+      "English Premier League",
+      "Italian Serie A"
+    ],
+    "seasons": [
+      "2015-16",
+      "2016-17",
+      "2017-18",
+      "2018-19",
+      "2019-20",
+      "2020-21",
+      "2021-22",
+      "2022-23",
+      "2023-24",
+      "2024-25"
+    ],
+    "date_range": [
+      "2015-08-08",
+      "2025-05-25"
+    ]
+  }
+}

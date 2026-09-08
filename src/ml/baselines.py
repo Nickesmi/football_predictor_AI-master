@@ -61,12 +61,24 @@ def add_outcome_columns(df: pd.DataFrame) -> pd.DataFrame:
     df["over_2_5"] = df["total_goals"] > 2
     df["over_3_5"] = df["total_goals"] > 3
     df["btts"] = (df["home_goals"] > 0) & (df["away_goals"] > 0)
+    df["home_over_0_5"] = df["home_goals"] > 0
+    df["away_over_0_5"] = df["away_goals"] > 0
     return df
 
 
 @dataclass
 class MarketProbs:
-    """Probabilities for every covered market, for one match."""
+    """Probabilities for every covered market, for one match.
+
+    p_home_over_0_5 / p_away_over_0_5 are Optional because only the
+    Poisson-family and frequency-family baselines model them (Elo's
+    diff-based logistic mapping isn't a natural fit for team-specific
+    scoring markets, and the real-data XGBoost trainer was not extended to
+    these two markets in this pass — see PRODUCTION_ARCHITECTURE_REPORT.md
+    limitations). A None here means "this model does not cover this
+    market", not "0% probability" — champion selection must skip it, never
+    silently treat it as zero.
+    """
     p_home: float
     p_draw: float
     p_away: float
@@ -74,6 +86,8 @@ class MarketProbs:
     p_over_2_5: float
     p_over_3_5: float
     p_btts_yes: float
+    p_home_over_0_5: Optional[float] = None
+    p_away_over_0_5: Optional[float] = None
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -96,6 +110,8 @@ class FrequencyBaseline:
         self.p_over_2_5 = float(train["over_2_5"].mean())
         self.p_over_3_5 = float(train["over_3_5"].mean())
         self.p_btts_yes = float(train["btts"].mean())
+        self.p_home_over_0_5 = float(train["home_over_0_5"].mean())
+        self.p_away_over_0_5 = float(train["away_over_0_5"].mean())
         self.n_train = n
         return self
 
@@ -103,6 +119,7 @@ class FrequencyBaseline:
         row = MarketProbs(
             self.p_home, self.p_draw, self.p_away,
             self.p_over_1_5, self.p_over_2_5, self.p_over_3_5, self.p_btts_yes,
+            self.p_home_over_0_5, self.p_away_over_0_5,
         )
         return [row for _ in range(len(test))]
 
@@ -334,8 +351,13 @@ class _PoissonFamilyBaseline:
             p_o25 = sum(p for (h, a), p in matrix.items() if h + a > 2)
             p_o35 = sum(p for (h, a), p in matrix.items() if h + a > 3)
             p_btts = sum(p for (h, a), p in matrix.items() if h > 0 and a > 0)
+            p_home_o05 = sum(p for (h, a), p in matrix.items() if h > 0)
+            p_away_o05 = sum(p for (h, a), p in matrix.items() if a > 0)
 
-            out.append(MarketProbs(p_home, p_draw, p_away, p_o15, p_o25, p_o35, p_btts))
+            out.append(MarketProbs(
+                p_home, p_draw, p_away, p_o15, p_o25, p_o35, p_btts,
+                p_home_over_0_5=p_home_o05, p_away_over_0_5=p_away_o05,
+            ))
         return out
 
 
