@@ -35,7 +35,8 @@ import pandas as pd
 
 from src.ml.model_provenance import real_data_model_provenance
 from src.prediction_service.data_contract import DataMode
-from src.prediction_service import champion_registry, live_models, model_agreement, ood_detection
+from src.prediction_service.data_freshness import check_freshness
+from src.prediction_service import champion_registry, live_models, model_agreement, ood_detection, observability
 from src.prediction_service import confidence_engine as confidence_engine_mod
 from src.prediction_service import thresholds as thresholds_mod
 from src.prediction_service import snapshot_db
@@ -128,12 +129,14 @@ def predict(
     pred_ts_str = str(prediction_timestamp)
 
     def refuse(stage: str, reason: str):
+        request_id = _deterministic_prediction_id(match_id or f"{home_team}|{away_team}", market, pd.Timestamp(prediction_timestamp))
         snapshot_db.log_refusal(conn, {
-            "request_id": _deterministic_prediction_id(match_id or f"{home_team}|{away_team}", market, pd.Timestamp(prediction_timestamp)),
+            "request_id": request_id,
             "home_team": home_team, "away_team": away_team, "league": league, "market": market,
             "prediction_timestamp": pred_ts_str, "stage_failed": stage, "reason": reason,
             "created_at": datetime.now(timezone.utc).isoformat(),
         })
+        observability.log_prediction_refused(request_id, stage, reason, market)
         raise PredictionRefused(stage, reason)
 
     # ── STAGE 1: absolute timestamp rule (§14) ──
@@ -149,6 +152,15 @@ def predict(
     # ── STAGE 2: data availability ──
     if historical_matches is None or len(historical_matches) == 0:
         refuse("data_availability", "no historical match data available")
+
+    # ── STAGE 2b: data freshness (§10) — only meaningful for LIVE; a
+    # REPLAY/MANUAL dataset is deliberately a fixed snapshot. ──
+    freshness = check_freshness(historical_matches, prediction_timestamp, data_mode)
+    if freshness.checked and freshness.is_stale:
+        refuse("stale_data",
+               f"STALE_DATA: dataset's latest match is {freshness.dataset_latest_date} "
+               f"({freshness.age_days:.1f} days before prediction_timestamp, "
+               f"max allowed {freshness.max_staleness_days}) — refusing a LIVE prediction on stale data")
 
     # ── STAGE 3: champion lookup + provenance gate ──
     try:
@@ -271,6 +283,10 @@ def predict(
         "pipeline_version": PIPELINE_VERSION, "data_mode": data_mode.value,
         "created_at": datetime.now(timezone.utc).isoformat(),
     })
+
+    observability.log_prediction_generated(
+        prediction_id, market, champion, f"v{version}", "point_in_time_v1", data_mode.value,
+    )
 
     return PredictionResult(
         prediction_id=prediction_id, match_id=snapshot.match_id,

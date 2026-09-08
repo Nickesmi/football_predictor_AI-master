@@ -13,6 +13,8 @@ from __future__ import annotations
 import sqlite3
 from typing import Optional
 
+from src.prediction_service import observability
+
 
 def compute_period_metrics(conn: sqlite3.Connection, start: str, end: str) -> dict:
     """start/end: ISO date/datetime strings, inclusive start, exclusive end,
@@ -111,6 +113,8 @@ def detect_drift(conn: sqlite3.Connection, recent_start: str, recent_end: str,
 
     delta = recent["brier_score"] - baseline["brier_score"]
     drift_detected = delta > brier_drift_threshold
+    if drift_detected:
+        observability.log_drift_detected("all_markets_pooled", round(delta, 4), brier_drift_threshold)
     return {
         "drift_detected": drift_detected,
         "brier_delta": round(delta, 4),

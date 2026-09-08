@@ -20,7 +20,7 @@ from typing import Optional
 
 import pandas as pd
 
-from src.prediction_service import snapshot_db
+from src.prediction_service import snapshot_db, observability
 
 EPS = 1e-7
 
@@ -61,6 +61,7 @@ def evaluate_prediction(
         "evaluated_at": evaluated_at,
     }
     snapshot_db.save_post_match_evaluation(conn, record)
+    observability.log_settlement(prediction_id, pred["market"], bool(correct), record["brier_contribution"])
     return record
 
 

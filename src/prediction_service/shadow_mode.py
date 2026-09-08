@@ -27,7 +27,7 @@ from typing import Optional
 
 import pandas as pd
 
-from src.prediction_service import live_models, model_agreement, snapshot_db
+from src.prediction_service import live_models, model_agreement, snapshot_db, observability
 from src.prediction_service.feature_engine import generate_features, FeatureGenerationError
 from src.prediction_service.prediction_pipeline import predict as production_predict, PredictionResult, PredictionRefused
 
@@ -97,6 +97,7 @@ def predict_with_shadow(
         "actual_outcome": None, "champion_brier_contribution": None, "challenger_brier_contribution": None,
         "evaluated_at": None, "created_at": datetime.now(timezone.utc).isoformat(),
     })
+    observability.log_shadow_prediction(shadow_id, market, production_result.champion_model, challenger_model)
 
     return ShadowComparison(
         shadow_id=shadow_id, champion_model=production_result.champion_model,

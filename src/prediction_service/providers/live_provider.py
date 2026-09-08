@@ -34,6 +34,7 @@ from src.prediction_service.data_contract import (
     DataMode, FixtureRecord, OddsRecord, LineupRecord, ProviderHealth, ProviderHealthStatus, now_iso,
 )
 from src.prediction_service.providers.base import FootballDataProvider, ProviderError
+from src.prediction_service import observability
 
 # How old a successful response may be before health_check demotes
 # AVAILABLE to STALE_DATA (Phase 4 §10).
@@ -63,6 +64,11 @@ class LiveProvider(FootballDataProvider):
         return bool(self.provider_id and self.api_key and self.base_url)
 
     def health_check(self) -> ProviderHealth:
+        result = self._health_check_inner()
+        observability.log_provider_health(result.provider_name, result.status.value, result.latency_ms, result.detail)
+        return result
+
+    def _health_check_inner(self) -> ProviderHealth:
         checked_at = now_iso()
         if not self.is_configured():
             return ProviderHealth(
