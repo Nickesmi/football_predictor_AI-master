@@ -66,11 +66,15 @@ def run_daily_settlement(date_str: str, conn: Optional[sqlite3.Connection] = Non
         match_key = f"{home}_vs_{away}"
         
         # --- CLV Update ---
-        # We try to extract closing odds if available
-        # This is a simplified lookup since true closing odds require time-series API calls
-        # We just bump the count for the hook
-        clv_count += 1
-        
+        # NOTE: true closing-line-value tracking requires calling
+        # update_closing_odds() with a real closing price matched to this
+        # pick's market/selection. That mapping is not implemented here yet
+        # (api_odds is fetched above but never applied), so clv_count must
+        # NOT be incremented — reporting a nonzero "clv_updated" count with
+        # no corresponding write would fabricate a metric nobody computed.
+        # TODO: implement real CLV by calling update_closing_odds(...) once
+        # api_odds is mapped to (match, market, selection).
+
         # --- Settlement ---
         res = results_map.get(match_key)
         if not res or res["status"] not in ("FT", "AET", "PEN"):

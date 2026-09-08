@@ -1,8 +1,17 @@
 """
-Team Statistics Database — Realistic 2024/25 season data for all Top 5 leagues + UCL.
+Team Statistics Database — hardcoded 2024/25-season priors, used ONLY as a
+cold-start fallback (Priority 2/3 below). Live matches ingested via
+src/engine/live_updater.on_match_finished() always take precedence
+(Priority 1) and supersede these numbers as soon as a team has real data.
 
 Every team entry: (avg_goals_scored, avg_goals_conceded, avg_corners, avg_cards)
 Separate home and away profiles.
+
+STALENESS WARNING: these are static priors captured for the 2024/25 season.
+Squads, form, and managers all drift season over season, so the longer this
+runs without being refreshed, the weaker this fallback tier becomes for any
+team whose live_updater history is still thin. Priority 1 (live DB) is the
+real signal; treat this table as an initial prior only, not ground truth.
 
 For unknown teams, deterministic hash-based stats ensure uniqueness.
 """
@@ -425,6 +434,11 @@ def get_team_stats(team_name: str, venue: str, league: str = "") -> TeamVenueSta
             return stats
 
     # ── Priority 4: Unknown team → hash-based (deterministic) ──
+    # NOTE: this branch has NO real observations behind it — it is a
+    # deterministic placeholder, not a statistic. matches_played MUST be 0
+    # (not the dataclass default of 20) so FeatureBuilder.compute_data_quality()
+    # correctly penalizes it as blind data and downstream risk_control /
+    # performance_gate can withhold picks instead of betting on noise.
     h = int(hashlib.md5(f"{team_name}:{venue}".encode()).hexdigest(), 16)
 
     if venue == "home":
@@ -443,5 +457,7 @@ def get_team_stats(team_name: str, venue: str, league: str = "") -> TeamVenueSta
         conceded=round(conceded, 2),
         corners=round(corners, 1),
         cards=round(cards, 1),
+        matches_played=0,
+        form_last5=0.5,
     )
 

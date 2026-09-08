@@ -5342,6 +5342,21 @@ def run_feature_backtest(limit: int = 50):
     """
     Feature Contribution Backtesting Framework.
     Evaluates configurations progressively to measure feature impact.
+
+    DATA LEAKAGE WARNING (do not remove): this endpoint calls
+    _compute_match_analysis(), which reads team_state via get_team_stats().
+    team_state only stores the CURRENT rolling averages/ELO for a team, not
+    a point-in-time snapshot as of each historical match's date. So a match
+    from months ago is scored using team strength that already reflects
+    results AFTER that match — the model "knows" future form. The
+    accuracy/brier numbers below are therefore NOT a valid walk-forward
+    backtest and must never be reported as real-world predictive
+    performance; they are only useful as a relative ranking of which
+    feature flags move the needle, evaluated on today's team snapshot.
+    Genuine out-of-sample accuracy comes from prediction_log (see
+    src/db/prediction_logger.get_backtest_summary / audit_engine.
+    audit_model_validation), where predicted_prob is captured at the time
+    the prediction was actually made, before kickoff.
     """
     from src.db.database import get_db
     conn = get_db()
@@ -5429,7 +5444,15 @@ def run_feature_backtest(limit: int = 50):
     return {
         "matches_tested": len(matches),
         "leaderboard": leaderboard,
-        "feature_deltas_accuracy": deltas
+        "feature_deltas_accuracy": deltas,
+        "data_leakage_warning": (
+            "These metrics use CURRENT team_state (rolling form/ELO), not a "
+            "point-in-time snapshot as of each historical match's date. They "
+            "leak future results into past predictions and must NOT be "
+            "reported as real out-of-sample accuracy. Use only to compare "
+            "feature flags against each other. For true accuracy see "
+            "/api/debug/model-validation or prediction_log-based reports."
+        ),
     }
 @app.get("/api/debug/provider-comparison")
 def debug_provider_comparison():
