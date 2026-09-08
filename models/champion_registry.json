@@ -14,12 +14,16 @@
       ],
       "top2_fold_count_of_4": 4,
       "stable": true,
-      "margin_to_runner_up_brier": 0.0132,
+      "margin_to_runner_up_brier": 0.0044,
       "selection_confidence": "clear_margin",
       "all_models_frozen_holdout_ranking": [
         [
           "elo",
           0.2095
+        ],
+        [
+          "xgboost_real_data_calibrated",
+          0.2139
         ],
         [
           "poisson_real_data",
@@ -92,12 +96,16 @@
       ],
       "top2_fold_count_of_4": 4,
       "stable": true,
-      "margin_to_runner_up_brier": 0.0186,
+      "margin_to_runner_up_brier": 0.0041,
       "selection_confidence": "clear_margin",
       "all_models_frozen_holdout_ranking": [
         [
           "elo",
           0.1934
+        ],
+        [
+          "xgboost_real_data_calibrated",
+          0.1975
         ],
         [
           "dixon_coles",
@@ -170,7 +178,7 @@
       ],
       "top2_fold_count_of_4": 4,
       "stable": true,
-      "margin_to_runner_up_brier": 0.0002,
+      "margin_to_runner_up_brier": 0.0009,
       "selection_confidence": "low_margin_is_noise_level",
       "all_models_frozen_holdout_ranking": [
         [
@@ -178,12 +186,12 @@
           0.247
         ],
         [
-          "xgboost_real_data_calibrated",
-          0.2472
-        ],
-        [
           "frequency",
           0.2479
+        ],
+        [
+          "xgboost_real_data_calibrated",
+          0.2483
         ],
         [
           "poisson_real_data",
@@ -226,7 +234,7 @@
         ],
         [
           "xgboost_real_data_calibrated",
-          0.226
+          0.2259
         ],
         [
           "poisson_real_data",
@@ -266,10 +274,6 @@
         [
           "elo",
           0.2477
-        ],
-        [
-          "xgboost_real_data_calibrated",
-          0.249
         ],
         [
           "dixon_coles",

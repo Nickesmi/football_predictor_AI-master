@@ -158,16 +158,35 @@ def build_point_in_time_features(matches: pd.DataFrame) -> pd.DataFrame:
     # leak every future season's scoring level into early-season cold-start
     # predictions — caught by tests/real_data/test_point_in_time_leakage.py
     # ::test_future_match_never_leaks_into_an_earlier_matchs_features).
+    #
+    # This MUST be grouped by calendar DATE, not by row position: several
+    # matches share a date (different leagues' fixtures on the same day),
+    # and this dataset's precision is day-granularity, not true kickoff
+    # order. A positional cumsum tie-breaks same-day matches by whatever
+    # order they happened to be concatenated/sorted in — which the live
+    # production path (src/prediction_service/feature_engine.py) can't
+    # replicate, since it only ever knows "history is everything strictly
+    # before this match's date". scripts/historical_simulation.py caught
+    # this exact drift on a real match (Como 1907 vs Bologna, 2024-09-14)
+    # before this fix — grouping by date instead of row position makes
+    # both paths agree by construction: every match on a given date sees
+    # identical "prior" totals, computed only from EARLIER dates.
     total_goals_per_match = matches["home_goals"] + matches["away_goals"]
-    cum_goals_before = total_goals_per_match.cumsum().shift(1).fillna(0.0)
-    cum_team_observations_before = pd.Series(np.arange(len(matches)), index=matches.index) * 2
+    daily = pd.DataFrame({
+        "date": matches["date"].values,
+        "total_goals": total_goals_per_match.values,
+    }).groupby("date", sort=True).agg(day_goals=("total_goals", "sum"), day_matches=("total_goals", "size"))
+    daily["cum_goals_before_date"] = daily["day_goals"].cumsum().shift(1).fillna(0.0)
+    daily["cum_team_obs_before_date"] = daily["day_matches"].cumsum().shift(1).fillna(0).astype(float) * 2
     with np.errstate(invalid="ignore", divide="ignore"):
-        expanding_league_avg = cum_goals_before / cum_team_observations_before.replace(0, np.nan)
-    # Only the very first match(es) in the ENTIRE dataset have no prior
-    # matches at all league-wide; fall back to a fixed, disclosed prior
-    # (a generic top-five-league average) rather than NaN for those.
+        daily["expanding_avg"] = daily["cum_goals_before_date"] / daily["cum_team_obs_before_date"].replace(0, np.nan)
+    # Only matches on the EARLIEST date in the entire dataset have no
+    # prior matches at all league-wide; fall back to a fixed, disclosed
+    # prior (a generic top-five-league average) rather than NaN for those.
     FIRST_MATCH_PRIOR_GOALS = 1.3
-    expanding_league_avg = expanding_league_avg.fillna(FIRST_MATCH_PRIOR_GOALS)
+    daily["expanding_avg"] = daily["expanding_avg"].fillna(FIRST_MATCH_PRIOR_GOALS)
+
+    expanding_league_avg = matches["date"].map(daily["expanding_avg"])
     # Symmetric: total goals-for == total goals-against league-wide, so the
     # same expanding series is the correct point-in-time default for both.
     league_avg_scored_by_match = expanding_league_avg.values

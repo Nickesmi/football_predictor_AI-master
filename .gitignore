@@ -16,6 +16,9 @@ dist-ssr
 data/*.db
 data/*.db-shm
 data/*.db-wal
+data/**/*.db
+data/**/*.db-shm
+data/**/*.db-wal
 .cache/
 catboost_info/
 data/logos/

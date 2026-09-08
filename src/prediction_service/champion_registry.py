@@ -202,3 +202,23 @@ def get_champion(market: str) -> Optional[str]:
     registry = load_registry()
     entry = registry["markets"].get(market)
     return entry["champion"] if entry else None
+
+
+def get_champion_evidence(market: str) -> dict:
+    """Full selection evidence for a market's champion (stability, margin,
+    method) — used by the confidence engine."""
+    registry = load_registry()
+    return registry["markets"].get(market, {})
+
+
+def get_champion_holdout_metrics(market: str) -> Optional[dict]:
+    """The champion's full metric dict (brier, log_loss, accuracy, ece, n)
+    on the frozen final holdout, straight from the backtest results —
+    used by the confidence engine's calibration-quality component."""
+    evidence = get_champion_evidence(market)
+    champion = evidence.get("champion")
+    if champion is None:
+        return None
+    backtest = _load_backtest()
+    final_fold = backtest["folds"][-1]
+    return final_fold["models"].get(champion, {}).get(market)

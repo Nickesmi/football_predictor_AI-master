@@ -24,6 +24,19 @@ _MARKET_FIELD = {
 }
 _UNDER_TO_OVER = {"under_1_5": "over_1_5", "under_2_5": "over_2_5", "under_3_5": "over_3_5"}
 
+# Models that actually use match-specific information and are meaningful
+# to compare for agreement (Phase 3 §7's own example only compares
+# Elo/Poisson/XGBoost). "frequency" and "home_baseline" are intentionally
+# naive reference points (see src/ml/baselines.py) — a naive baseline
+# "disagreeing" with a real model isn't informative disagreement, it would
+# just make every match look like low agreement regardless of how well
+# the real models actually agree with each other.
+AGREEMENT_COMPARISON_MODELS = {"elo", "poisson_real_data", "dixon_coles", "xgboost_real_data"}
+
+
+def filter_for_agreement(model_predictions: dict) -> dict:
+    return {name: preds for name, preds in model_predictions.items() if name in AGREEMENT_COMPARISON_MODELS}
+
 
 @dataclass
 class AgreementResult:
@@ -36,7 +49,7 @@ class AgreementResult:
     agreement_level: str    # "high" | "medium" | "low"
 
 
-def _extract_market_probability(probs: MarketProbs, market: str) -> float | None:
+def extract_market_probability(probs: MarketProbs, market: str) -> float | None:
     if market in _UNDER_TO_OVER:
         over_field = _MARKET_FIELD[_UNDER_TO_OVER[market]]
         val = getattr(probs, over_field)
@@ -53,7 +66,7 @@ def compute_agreement(model_predictions: dict[str, MarketProbs], market: str) ->
     Models that don't cover `market` (None) are excluded, not treated as 0."""
     values = {}
     for name, probs in model_predictions.items():
-        p = _extract_market_probability(probs, market)
+        p = extract_market_probability(probs, market)
         if p is not None:
             values[name] = p
 

@@ -50,58 +50,58 @@
     "home_win": {
       "n": 1065,
       "positive_rate": 0.39812206572769954,
-      "brier": 0.2149,
-      "log_loss": 0.6313,
-      "accuracy": 0.6638,
-      "ece": 0.0546
+      "brier": 0.2139,
+      "log_loss": 0.6166,
+      "accuracy": 0.6563,
+      "ece": 0.0539
     },
     "draw": {
       "n": 1065,
       "positive_rate": 0.26103286384976526,
-      "brier": 0.1937,
-      "log_loss": 0.6007,
+      "brier": 0.1935,
+      "log_loss": 0.6001,
       "accuracy": 0.739,
-      "ece": 0.0275
+      "ece": 0.0335
     },
     "away_win": {
       "n": 1065,
       "positive_rate": 0.3408450704225352,
-      "brier": 0.1986,
-      "log_loss": 0.5835,
-      "accuracy": 0.6883,
-      "ece": 0.0542
+      "brier": 0.1975,
+      "log_loss": 0.5929,
+      "accuracy": 0.6977,
+      "ece": 0.0508
     },
     "over_1_5": {
       "n": 1065,
       "positive_rate": 0.7849765258215963,
-      "brier": 0.1729,
-      "log_loss": 0.5458,
-      "accuracy": 0.785,
-      "ece": 0.06
+      "brier": 0.1756,
+      "log_loss": 0.5518,
+      "accuracy": 0.7793,
+      "ece": 0.0629
     },
     "over_2_5": {
       "n": 1065,
       "positive_rate": 0.5455399061032864,
-      "brier": 0.2472,
-      "log_loss": 0.6877,
-      "accuracy": 0.5559,
-      "ece": 0.0415
+      "brier": 0.2483,
+      "log_loss": 0.6902,
+      "accuracy": 0.5615,
+      "ece": 0.0411
     },
     "over_3_5": {
       "n": 1065,
       "positive_rate": 0.3380281690140845,
-      "brier": 0.226,
-      "log_loss": 0.6571,
-      "accuracy": 0.662,
-      "ece": 0.038
+      "brier": 0.2259,
+      "log_loss": 0.6438,
+      "accuracy": 0.6629,
+      "ece": 0.0422
     },
     "btts": {
       "n": 1065,
       "positive_rate": 0.5521126760563381,
-      "brier": 0.249,
-      "log_loss": 0.6917,
-      "accuracy": 0.5521,
-      "ece": 0.0259
+      "brier": 0.2504,
+      "log_loss": 0.6946,
+      "accuracy": 0.5512,
+      "ece": 0.0446
     }
   },
   "trained_through_season": "2022-23",
