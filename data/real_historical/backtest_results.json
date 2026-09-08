@@ -1,0 +1,1818 @@
+{
+  "data_summary": {
+    "n_real_matches": 10657,
+    "leagues": [
+      "Deutsche Bundesliga",
+      "English Premier League",
+      "Italian Serie A"
+    ],
+    "seasons": [
+      "2015-16",
+      "2016-17",
+      "2017-18",
+      "2018-19",
+      "2019-20",
+      "2020-21",
+      "2021-22",
+      "2022-23",
+      "2023-24",
+      "2024-25"
+    ],
+    "date_range": [
+      "2015-08-08",
+      "2025-05-25"
+    ]
+  },
+  "folds": [
+    {
+      "train_seasons": [
+        "2015-16",
+        "2016-17",
+        "2017-18",
+        "2018-19",
+        "2019-20"
+      ],
+      "val_season": "2020-21",
+      "test_season": "2021-22",
+      "is_final_frozen_holdout": false,
+      "n_train": 5329,
+      "n_val": 1065,
+      "n_test": 1066,
+      "models": {
+        "frequency": {
+          "home_win": {
+            "n": 1066,
+            "positive_rate": 0.4259,
+            "brier": 0.2451,
+            "log_loss": 0.6834,
+            "accuracy": 0.5741,
+            "ece": 0.0249
+          },
+          "draw": {
+            "n": 1066,
+            "positive_rate": 0.243,
+            "brier": 0.1839,
+            "log_loss": 0.5545,
+            "accuracy": 0.757,
+            "ece": 0.0041
+          },
+          "away_win": {
+            "n": 1066,
+            "positive_rate": 0.3311,
+            "brier": 0.2219,
+            "log_loss": 0.636,
+            "accuracy": 0.6689,
+            "ece": 0.0208
+          },
+          "over_1_5": {
+            "n": 1066,
+            "positive_rate": 0.7927,
+            "brier": 0.1645,
+            "log_loss": 0.511,
+            "accuracy": 0.7927,
+            "ece": 0.0141
+          },
+          "over_2_5": {
+            "n": 1066,
+            "positive_rate": 0.5591,
+            "brier": 0.2466,
+            "log_loss": 0.6864,
+            "accuracy": 0.5591,
+            "ece": 0.0102
+          },
+          "over_3_5": {
+            "n": 1066,
+            "positive_rate": 0.3452,
+            "brier": 0.2269,
+            "log_loss": 0.6464,
+            "accuracy": 0.6548,
+            "ece": 0.0292
+          },
+          "btts": {
+            "n": 1066,
+            "positive_rate": 0.5572,
+            "brier": 0.2471,
+            "log_loss": 0.6873,
+            "accuracy": 0.5572,
+            "ece": 0.0192
+          }
+        },
+        "home_baseline": {
+          "home_win": {
+            "n": 1066,
+            "positive_rate": 0.4259,
+            "brier": 0.5741,
+            "log_loss": 8.8556,
+            "accuracy": 0.4259,
+            "ece": 0.5741
+          },
+          "draw": {
+            "n": 1066,
+            "positive_rate": 0.243,
+            "brier": 0.243,
+            "log_loss": 3.9161,
+            "accuracy": 0.757,
+            "ece": 0.243
+          },
+          "away_win": {
+            "n": 1066,
+            "positive_rate": 0.3311,
+            "brier": 0.3311,
+            "log_loss": 5.3374,
+            "accuracy": 0.6689,
+            "ece": 0.3311
+          },
+          "over_1_5": {
+            "n": 1066,
+            "positive_rate": 0.7927,
+            "brier": 0.2073,
+            "log_loss": 3.3416,
+            "accuracy": 0.7927,
+            "ece": 0.2073
+          },
+          "over_2_5": {
+            "n": 1066,
+            "positive_rate": 0.5591,
+            "brier": 0.4409,
+            "log_loss": 7.1065,
+            "accuracy": 0.5591,
+            "ece": 0.4409
+          },
+          "over_3_5": {
+            "n": 1066,
+            "positive_rate": 0.3452,
+            "brier": 0.3452,
+            "log_loss": 5.5642,
+            "accuracy": 0.6548,
+            "ece": 0.3452
+          },
+          "btts": {
+            "n": 1066,
+            "positive_rate": 0.5572,
+            "brier": 0.4428,
+            "log_loss": 7.1367,
+            "accuracy": 0.5572,
+            "ece": 0.4428
+          }
+        },
+        "elo": {
+          "home_win": {
+            "n": 1066,
+            "positive_rate": 0.4259,
+            "brier": 0.2152,
+            "log_loss": 0.6183,
+            "accuracy": 0.651,
+            "ece": 0.0295
+          },
+          "draw": {
+            "n": 1066,
+            "positive_rate": 0.243,
+            "brier": 0.182,
+            "log_loss": 0.5487,
+            "accuracy": 0.757,
+            "ece": 0.014
+          },
+          "away_win": {
+            "n": 1066,
+            "positive_rate": 0.3311,
+            "brier": 0.1937,
+            "log_loss": 0.5727,
+            "accuracy": 0.7045,
+            "ece": 0.0409
+          },
+          "over_1_5": {
+            "n": 1066,
+            "positive_rate": 0.7927,
+            "brier": 0.165,
+            "log_loss": 0.5121,
+            "accuracy": 0.7927,
+            "ece": 0.0269
+          },
+          "over_2_5": {
+            "n": 1066,
+            "positive_rate": 0.5591,
+            "brier": 0.2469,
+            "log_loss": 0.6869,
+            "accuracy": 0.5619,
+            "ece": 0.0303
+          },
+          "over_3_5": {
+            "n": 1066,
+            "positive_rate": 0.3452,
+            "brier": 0.2265,
+            "log_loss": 0.6456,
+            "accuracy": 0.6548,
+            "ece": 0.0316
+          },
+          "btts": {
+            "n": 1066,
+            "positive_rate": 0.5572,
+            "brier": 0.2456,
+            "log_loss": 0.6843,
+            "accuracy": 0.5694,
+            "ece": 0.0307
+          }
+        },
+        "poisson_real_data": {
+          "home_win": {
+            "n": 1066,
+            "positive_rate": 0.4259,
+            "brier": 0.2288,
+            "log_loss": 0.6546,
+            "accuracy": 0.651,
+            "ece": 0.0976
+          },
+          "draw": {
+            "n": 1066,
+            "positive_rate": 0.243,
+            "brier": 0.1851,
+            "log_loss": 0.5589,
+            "accuracy": 0.757,
+            "ece": 0.0269
+          },
+          "away_win": {
+            "n": 1066,
+            "positive_rate": 0.3311,
+            "brier": 0.2216,
+            "log_loss": 0.6354,
+            "accuracy": 0.6454,
+            "ece": 0.1224
+          },
+          "over_1_5": {
+            "n": 1066,
+            "positive_rate": 0.7927,
+            "brier": 0.1722,
+            "log_loss": 0.5349,
+            "accuracy": 0.7852,
+            "ece": 0.0796
+          },
+          "over_2_5": {
+            "n": 1066,
+            "positive_rate": 0.5591,
+            "brier": 0.2574,
+            "log_loss": 0.7135,
+            "accuracy": 0.5544,
+            "ece": 0.1059
+          },
+          "over_3_5": {
+            "n": 1066,
+            "positive_rate": 0.3452,
+            "brier": 0.2343,
+            "log_loss": 0.6663,
+            "accuracy": 0.6248,
+            "ece": 0.0844
+          },
+          "btts": {
+            "n": 1066,
+            "positive_rate": 0.5572,
+            "brier": 0.2539,
+            "log_loss": 0.7023,
+            "accuracy": 0.53,
+            "ece": 0.0756
+          }
+        },
+        "dixon_coles": {
+          "home_win": {
+            "n": 1066,
+            "positive_rate": 0.4259,
+            "brier": 0.2297,
+            "log_loss": 0.6574,
+            "accuracy": 0.652,
+            "ece": 0.101
+          },
+          "draw": {
+            "n": 1066,
+            "positive_rate": 0.243,
+            "brier": 0.1849,
+            "log_loss": 0.558,
+            "accuracy": 0.757,
+            "ece": 0.0265
+          },
+          "away_win": {
+            "n": 1066,
+            "positive_rate": 0.3311,
+            "brier": 0.2207,
+            "log_loss": 0.6335,
+            "accuracy": 0.6501,
+            "ece": 0.1186
+          },
+          "over_1_5": {
+            "n": 1066,
+            "positive_rate": 0.7927,
+            "brier": 0.1718,
+            "log_loss": 0.5348,
+            "accuracy": 0.7871,
+            "ece": 0.0811
+          },
+          "over_2_5": {
+            "n": 1066,
+            "positive_rate": 0.5591,
+            "brier": 0.2574,
+            "log_loss": 0.7135,
+            "accuracy": 0.5544,
+            "ece": 0.1059
+          },
+          "over_3_5": {
+            "n": 1066,
+            "positive_rate": 0.3452,
+            "brier": 0.2343,
+            "log_loss": 0.6663,
+            "accuracy": 0.6248,
+            "ece": 0.0844
+          },
+          "btts": {
+            "n": 1066,
+            "positive_rate": 0.5572,
+            "brier": 0.2535,
+            "log_loss": 0.7013,
+            "accuracy": 0.5328,
+            "ece": 0.0731
+          }
+        },
+        "xgboost_real_data_raw": {
+          "home_win": {
+            "n": 1066,
+            "positive_rate": 0.425891181988743,
+            "brier": 0.2191,
+            "log_loss": 0.6274,
+            "accuracy": 0.6473
+          },
+          "draw": {
+            "n": 1066,
+            "positive_rate": 0.24296435272045028,
+            "brier": 0.1859,
+            "log_loss": 0.5615,
+            "accuracy": 0.758
+          },
+          "away_win": {
+            "n": 1066,
+            "positive_rate": 0.33114446529080677,
+            "brier": 0.1996,
+            "log_loss": 0.5903,
+            "accuracy": 0.7045
+          },
+          "over_1_5": {
+            "n": 1066,
+            "positive_rate": 0.7926829268292683,
+            "brier": 0.1691,
+            "log_loss": 0.5274,
+            "accuracy": 0.7908
+          },
+          "over_2_5": {
+            "n": 1066,
+            "positive_rate": 0.5590994371482176,
+            "brier": 0.251,
+            "log_loss": 0.6961,
+            "accuracy": 0.545
+          },
+          "over_3_5": {
+            "n": 1066,
+            "positive_rate": 0.3452157598499062,
+            "brier": 0.2288,
+            "log_loss": 0.6521,
+            "accuracy": 0.6426
+          },
+          "btts": {
+            "n": 1066,
+            "positive_rate": 0.5572232645403377,
+            "brier": 0.2496,
+            "log_loss": 0.6927,
+            "accuracy": 0.5403
+          }
+        },
+        "xgboost_real_data_calibrated": {
+          "home_win": {
+            "n": 1066,
+            "positive_rate": 0.425891181988743,
+            "brier": 0.221,
+            "log_loss": 0.6938,
+            "accuracy": 0.6454,
+            "ece": 0.048
+          },
+          "draw": {
+            "n": 1066,
+            "positive_rate": 0.24296435272045028,
+            "brier": 0.1831,
+            "log_loss": 0.5643,
+            "accuracy": 0.758,
+            "ece": 0.0136
+          },
+          "away_win": {
+            "n": 1066,
+            "positive_rate": 0.33114446529080677,
+            "brier": 0.2011,
+            "log_loss": 0.601,
+            "accuracy": 0.6857,
+            "ece": 0.0267
+          },
+          "over_1_5": {
+            "n": 1066,
+            "positive_rate": 0.7926829268292683,
+            "brier": 0.1677,
+            "log_loss": 0.5505,
+            "accuracy": 0.7927,
+            "ece": 0.0387
+          },
+          "over_2_5": {
+            "n": 1066,
+            "positive_rate": 0.5590994371482176,
+            "brier": 0.2476,
+            "log_loss": 0.702,
+            "accuracy": 0.5563,
+            "ece": 0.0185
+          },
+          "over_3_5": {
+            "n": 1066,
+            "positive_rate": 0.3452157598499062,
+            "brier": 0.228,
+            "log_loss": 0.6497,
+            "accuracy": 0.6426,
+            "ece": 0.0272
+          },
+          "btts": {
+            "n": 1066,
+            "positive_rate": 0.5572232645403377,
+            "brier": 0.2473,
+            "log_loss": 0.7135,
+            "accuracy": 0.5572,
+            "ece": 0.0305
+          }
+        }
+      }
+    },
+    {
+      "train_seasons": [
+        "2015-16",
+        "2016-17",
+        "2017-18",
+        "2018-19",
+        "2019-20",
+        "2020-21"
+      ],
+      "val_season": "2021-22",
+      "test_season": "2022-23",
+      "is_final_frozen_holdout": false,
+      "n_train": 6394,
+      "n_val": 1066,
+      "n_test": 1066,
+      "models": {
+        "frequency": {
+          "home_win": {
+            "n": 1066,
+            "positive_rate": 0.4597,
+            "brier": 0.2487,
+            "log_loss": 0.6905,
+            "accuracy": 0.5403,
+            "ece": 0.0171
+          },
+          "draw": {
+            "n": 1066,
+            "positive_rate": 0.2458,
+            "brier": 0.1854,
+            "log_loss": 0.5577,
+            "accuracy": 0.7542,
+            "ece": 0.006
+          },
+          "away_win": {
+            "n": 1066,
+            "positive_rate": 0.2946,
+            "brier": 0.2083,
+            "log_loss": 0.6074,
+            "accuracy": 0.7054,
+            "ece": 0.0231
+          },
+          "over_1_5": {
+            "n": 1066,
+            "positive_rate": 0.7805,
+            "brier": 0.1713,
+            "log_loss": 0.5263,
+            "accuracy": 0.7805,
+            "ece": 0.0006
+          },
+          "over_2_5": {
+            "n": 1066,
+            "positive_rate": 0.5235,
+            "brier": 0.2501,
+            "log_loss": 0.6934,
+            "accuracy": 0.5235,
+            "ece": 0.0255
+          },
+          "over_3_5": {
+            "n": 1066,
+            "positive_rate": 0.3086,
+            "brier": 0.2135,
+            "log_loss": 0.6182,
+            "accuracy": 0.6914,
+            "ece": 0.0098
+          },
+          "btts": {
+            "n": 1066,
+            "positive_rate": 0.5328,
+            "brier": 0.249,
+            "log_loss": 0.6911,
+            "accuracy": 0.5328,
+            "ece": 0.0089
+          }
+        },
+        "home_baseline": {
+          "home_win": {
+            "n": 1066,
+            "positive_rate": 0.4597,
+            "brier": 0.5403,
+            "log_loss": 8.3347,
+            "accuracy": 0.4597,
+            "ece": 0.5403
+          },
+          "draw": {
+            "n": 1066,
+            "positive_rate": 0.2458,
+            "brier": 0.2458,
+            "log_loss": 3.9615,
+            "accuracy": 0.7542,
+            "ece": 0.2458
+          },
+          "away_win": {
+            "n": 1066,
+            "positive_rate": 0.2946,
+            "brier": 0.2946,
+            "log_loss": 4.7477,
+            "accuracy": 0.7054,
+            "ece": 0.2946
+          },
+          "over_1_5": {
+            "n": 1066,
+            "positive_rate": 0.7805,
+            "brier": 0.2195,
+            "log_loss": 3.5381,
+            "accuracy": 0.7805,
+            "ece": 0.2195
+          },
+          "over_2_5": {
+            "n": 1066,
+            "positive_rate": 0.5235,
+            "brier": 0.4765,
+            "log_loss": 7.681,
+            "accuracy": 0.5235,
+            "ece": 0.4765
+          },
+          "over_3_5": {
+            "n": 1066,
+            "positive_rate": 0.3086,
+            "brier": 0.3086,
+            "log_loss": 4.9745,
+            "accuracy": 0.6914,
+            "ece": 0.3086
+          },
+          "btts": {
+            "n": 1066,
+            "positive_rate": 0.5328,
+            "brier": 0.4672,
+            "log_loss": 7.5298,
+            "accuracy": 0.5328,
+            "ece": 0.4672
+          }
+        },
+        "elo": {
+          "home_win": {
+            "n": 1066,
+            "positive_rate": 0.4597,
+            "brier": 0.22,
+            "log_loss": 0.6305,
+            "accuracy": 0.6454,
+            "ece": 0.0274
+          },
+          "draw": {
+            "n": 1066,
+            "positive_rate": 0.2458,
+            "brier": 0.1852,
+            "log_loss": 0.5572,
+            "accuracy": 0.7542,
+            "ece": 0.0092
+          },
+          "away_win": {
+            "n": 1066,
+            "positive_rate": 0.2946,
+            "brier": 0.1864,
+            "log_loss": 0.5511,
+            "accuracy": 0.7139,
+            "ece": 0.0322
+          },
+          "over_1_5": {
+            "n": 1066,
+            "positive_rate": 0.7805,
+            "brier": 0.171,
+            "log_loss": 0.5251,
+            "accuracy": 0.7805,
+            "ece": 0.0093
+          },
+          "over_2_5": {
+            "n": 1066,
+            "positive_rate": 0.5235,
+            "brier": 0.2483,
+            "log_loss": 0.6897,
+            "accuracy": 0.5244,
+            "ece": 0.0369
+          },
+          "over_3_5": {
+            "n": 1066,
+            "positive_rate": 0.3086,
+            "brier": 0.2118,
+            "log_loss": 0.6145,
+            "accuracy": 0.6914,
+            "ece": 0.0147
+          },
+          "btts": {
+            "n": 1066,
+            "positive_rate": 0.5328,
+            "brier": 0.2492,
+            "log_loss": 0.6915,
+            "accuracy": 0.53,
+            "ece": 0.0106
+          }
+        },
+        "poisson_real_data": {
+          "home_win": {
+            "n": 1066,
+            "positive_rate": 0.4597,
+            "brier": 0.2449,
+            "log_loss": 0.6981,
+            "accuracy": 0.6041,
+            "ece": 0.1223
+          },
+          "draw": {
+            "n": 1066,
+            "positive_rate": 0.2458,
+            "brier": 0.1888,
+            "log_loss": 0.5695,
+            "accuracy": 0.7542,
+            "ece": 0.0284
+          },
+          "away_win": {
+            "n": 1066,
+            "positive_rate": 0.2946,
+            "brier": 0.2202,
+            "log_loss": 0.6333,
+            "accuracy": 0.6501,
+            "ece": 0.1349
+          },
+          "over_1_5": {
+            "n": 1066,
+            "positive_rate": 0.7805,
+            "brier": 0.185,
+            "log_loss": 0.5687,
+            "accuracy": 0.7627,
+            "ece": 0.0929
+          },
+          "over_2_5": {
+            "n": 1066,
+            "positive_rate": 0.5235,
+            "brier": 0.2606,
+            "log_loss": 0.7225,
+            "accuracy": 0.5732,
+            "ece": 0.0934
+          },
+          "over_3_5": {
+            "n": 1066,
+            "positive_rate": 0.3086,
+            "brier": 0.2292,
+            "log_loss": 0.6589,
+            "accuracy": 0.6285,
+            "ece": 0.0957
+          },
+          "btts": {
+            "n": 1066,
+            "positive_rate": 0.5328,
+            "brier": 0.2612,
+            "log_loss": 0.7193,
+            "accuracy": 0.5366,
+            "ece": 0.0859
+          }
+        },
+        "dixon_coles": {
+          "home_win": {
+            "n": 1066,
+            "positive_rate": 0.4597,
+            "brier": 0.2464,
+            "log_loss": 0.7025,
+            "accuracy": 0.5966,
+            "ece": 0.1283
+          },
+          "draw": {
+            "n": 1066,
+            "positive_rate": 0.2458,
+            "brier": 0.1888,
+            "log_loss": 0.569,
+            "accuracy": 0.7542,
+            "ece": 0.0322
+          },
+          "away_win": {
+            "n": 1066,
+            "positive_rate": 0.2946,
+            "brier": 0.2189,
+            "log_loss": 0.6301,
+            "accuracy": 0.6548,
+            "ece": 0.1289
+          },
+          "over_1_5": {
+            "n": 1066,
+            "positive_rate": 0.7805,
+            "brier": 0.1843,
+            "log_loss": 0.5683,
+            "accuracy": 0.7645,
+            "ece": 0.0947
+          },
+          "over_2_5": {
+            "n": 1066,
+            "positive_rate": 0.5235,
+            "brier": 0.2606,
+            "log_loss": 0.7225,
+            "accuracy": 0.5732,
+            "ece": 0.0934
+          },
+          "over_3_5": {
+            "n": 1066,
+            "positive_rate": 0.3086,
+            "brier": 0.2292,
+            "log_loss": 0.6589,
+            "accuracy": 0.6285,
+            "ece": 0.0957
+          },
+          "btts": {
+            "n": 1066,
+            "positive_rate": 0.5328,
+            "brier": 0.2607,
+            "log_loss": 0.7183,
+            "accuracy": 0.5403,
+            "ece": 0.0827
+          }
+        },
+        "xgboost_real_data_raw": {
+          "home_win": {
+            "n": 1066,
+            "positive_rate": 0.4596622889305816,
+            "brier": 0.2221,
+            "log_loss": 0.6353,
+            "accuracy": 0.6529
+          },
+          "draw": {
+            "n": 1066,
+            "positive_rate": 0.24577861163227016,
+            "brier": 0.1869,
+            "log_loss": 0.5634,
+            "accuracy": 0.7552
+          },
+          "away_win": {
+            "n": 1066,
+            "positive_rate": 0.2945590994371482,
+            "brier": 0.1929,
+            "log_loss": 0.5698,
+            "accuracy": 0.7036
+          },
+          "over_1_5": {
+            "n": 1066,
+            "positive_rate": 0.7804878048780488,
+            "brier": 0.1741,
+            "log_loss": 0.5373,
+            "accuracy": 0.7805
+          },
+          "over_2_5": {
+            "n": 1066,
+            "positive_rate": 0.5234521575984991,
+            "brier": 0.2545,
+            "log_loss": 0.7032,
+            "accuracy": 0.5216
+          },
+          "over_3_5": {
+            "n": 1066,
+            "positive_rate": 0.30863039399624764,
+            "brier": 0.2158,
+            "log_loss": 0.6233,
+            "accuracy": 0.682
+          },
+          "btts": {
+            "n": 1066,
+            "positive_rate": 0.5328330206378987,
+            "brier": 0.2573,
+            "log_loss": 0.7083,
+            "accuracy": 0.5094
+          }
+        },
+        "xgboost_real_data_calibrated": {
+          "home_win": {
+            "n": 1066,
+            "positive_rate": 0.4596622889305816,
+            "brier": 0.2236,
+            "log_loss": 0.6412,
+            "accuracy": 0.6538,
+            "ece": 0.0432
+          },
+          "draw": {
+            "n": 1066,
+            "positive_rate": 0.24577861163227016,
+            "brier": 0.1847,
+            "log_loss": 0.5553,
+            "accuracy": 0.7533,
+            "ece": 0.0067
+          },
+          "away_win": {
+            "n": 1066,
+            "positive_rate": 0.2945590994371482,
+            "brier": 0.1926,
+            "log_loss": 0.5675,
+            "accuracy": 0.7064,
+            "ece": 0.0415
+          },
+          "over_1_5": {
+            "n": 1066,
+            "positive_rate": 0.7804878048780488,
+            "brier": 0.1715,
+            "log_loss": 0.5513,
+            "accuracy": 0.7805,
+            "ece": 0.0148
+          },
+          "over_2_5": {
+            "n": 1066,
+            "positive_rate": 0.5234521575984991,
+            "brier": 0.252,
+            "log_loss": 0.7113,
+            "accuracy": 0.5413,
+            "ece": 0.0396
+          },
+          "over_3_5": {
+            "n": 1066,
+            "positive_rate": 0.30863039399624764,
+            "brier": 0.2147,
+            "log_loss": 0.6334,
+            "accuracy": 0.6886,
+            "ece": 0.0358
+          },
+          "btts": {
+            "n": 1066,
+            "positive_rate": 0.5328330206378987,
+            "brier": 0.2515,
+            "log_loss": 0.6963,
+            "accuracy": 0.5328,
+            "ece": 0.0297
+          }
+        }
+      }
+    },
+    {
+      "train_seasons": [
+        "2015-16",
+        "2016-17",
+        "2017-18",
+        "2018-19",
+        "2019-20",
+        "2020-21",
+        "2021-22"
+      ],
+      "val_season": "2022-23",
+      "test_season": "2023-24",
+      "is_final_frozen_holdout": false,
+      "n_train": 7460,
+      "n_val": 1066,
+      "n_test": 1066,
+      "models": {
+        "frequency": {
+          "home_win": {
+            "n": 1066,
+            "positive_rate": 0.439,
+            "brier": 0.2463,
+            "log_loss": 0.6857,
+            "accuracy": 0.561,
+            "ece": 0.0012
+          },
+          "draw": {
+            "n": 1066,
+            "positive_rate": 0.258,
+            "brier": 0.1917,
+            "log_loss": 0.5718,
+            "accuracy": 0.742,
+            "ece": 0.0178
+          },
+          "away_win": {
+            "n": 1066,
+            "positive_rate": 0.303,
+            "brier": 0.2115,
+            "log_loss": 0.614,
+            "accuracy": 0.697,
+            "ece": 0.0166
+          },
+          "over_1_5": {
+            "n": 1066,
+            "positive_rate": 0.8171,
+            "brier": 0.1506,
+            "log_loss": 0.4794,
+            "accuracy": 0.8171,
+            "ece": 0.0344
+          },
+          "over_2_5": {
+            "n": 1066,
+            "positive_rate": 0.5854,
+            "brier": 0.2439,
+            "log_loss": 0.681,
+            "accuracy": 0.5854,
+            "ece": 0.035
+          },
+          "over_3_5": {
+            "n": 1066,
+            "positive_rate": 0.3677,
+            "brier": 0.2346,
+            "log_loss": 0.6624,
+            "accuracy": 0.6323,
+            "ece": 0.0455
+          },
+          "btts": {
+            "n": 1066,
+            "positive_rate": 0.5835,
+            "brier": 0.2446,
+            "log_loss": 0.6823,
+            "accuracy": 0.5835,
+            "ece": 0.0395
+          }
+        },
+        "home_baseline": {
+          "home_win": {
+            "n": 1066,
+            "positive_rate": 0.439,
+            "brier": 0.561,
+            "log_loss": 8.653,
+            "accuracy": 0.439,
+            "ece": 0.561
+          },
+          "draw": {
+            "n": 1066,
+            "positive_rate": 0.258,
+            "brier": 0.258,
+            "log_loss": 4.158,
+            "accuracy": 0.742,
+            "ece": 0.258
+          },
+          "away_win": {
+            "n": 1066,
+            "positive_rate": 0.303,
+            "brier": 0.303,
+            "log_loss": 4.8838,
+            "accuracy": 0.697,
+            "ece": 0.303
+          },
+          "over_1_5": {
+            "n": 1066,
+            "positive_rate": 0.8171,
+            "brier": 0.1829,
+            "log_loss": 2.9484,
+            "accuracy": 0.8171,
+            "ece": 0.1829
+          },
+          "over_2_5": {
+            "n": 1066,
+            "positive_rate": 0.5854,
+            "brier": 0.4146,
+            "log_loss": 6.6831,
+            "accuracy": 0.5854,
+            "ece": 0.4146
+          },
+          "over_3_5": {
+            "n": 1066,
+            "positive_rate": 0.3677,
+            "brier": 0.3677,
+            "log_loss": 5.9271,
+            "accuracy": 0.6323,
+            "ece": 0.3677
+          },
+          "btts": {
+            "n": 1066,
+            "positive_rate": 0.5835,
+            "brier": 0.4165,
+            "log_loss": 6.7134,
+            "accuracy": 0.5835,
+            "ece": 0.4165
+          }
+        },
+        "elo": {
+          "home_win": {
+            "n": 1066,
+            "positive_rate": 0.439,
+            "brier": 0.2103,
+            "log_loss": 0.608,
+            "accuracy": 0.6576,
+            "ece": 0.0199
+          },
+          "draw": {
+            "n": 1066,
+            "positive_rate": 0.258,
+            "brier": 0.19,
+            "log_loss": 0.5669,
+            "accuracy": 0.742,
+            "ece": 0.0246
+          },
+          "away_win": {
+            "n": 1066,
+            "positive_rate": 0.303,
+            "brier": 0.1727,
+            "log_loss": 0.5201,
+            "accuracy": 0.743,
+            "ece": 0.0258
+          },
+          "over_1_5": {
+            "n": 1066,
+            "positive_rate": 0.8171,
+            "brier": 0.1501,
+            "log_loss": 0.4774,
+            "accuracy": 0.8171,
+            "ece": 0.0306
+          },
+          "over_2_5": {
+            "n": 1066,
+            "positive_rate": 0.5854,
+            "brier": 0.2435,
+            "log_loss": 0.6801,
+            "accuracy": 0.5854,
+            "ece": 0.0301
+          },
+          "over_3_5": {
+            "n": 1066,
+            "positive_rate": 0.3677,
+            "brier": 0.2329,
+            "log_loss": 0.6588,
+            "accuracy": 0.6323,
+            "ece": 0.04
+          },
+          "btts": {
+            "n": 1066,
+            "positive_rate": 0.5835,
+            "brier": 0.2436,
+            "log_loss": 0.6804,
+            "accuracy": 0.5788,
+            "ece": 0.0433
+          }
+        },
+        "poisson_real_data": {
+          "home_win": {
+            "n": 1066,
+            "positive_rate": 0.439,
+            "brier": 0.2284,
+            "log_loss": 0.655,
+            "accuracy": 0.636,
+            "ece": 0.0979
+          },
+          "draw": {
+            "n": 1066,
+            "positive_rate": 0.258,
+            "brier": 0.1897,
+            "log_loss": 0.5675,
+            "accuracy": 0.742,
+            "ece": 0.0394
+          },
+          "away_win": {
+            "n": 1066,
+            "positive_rate": 0.303,
+            "brier": 0.1987,
+            "log_loss": 0.5842,
+            "accuracy": 0.6867,
+            "ece": 0.1308
+          },
+          "over_1_5": {
+            "n": 1066,
+            "positive_rate": 0.8171,
+            "brier": 0.1537,
+            "log_loss": 0.4843,
+            "accuracy": 0.8058,
+            "ece": 0.0602
+          },
+          "over_2_5": {
+            "n": 1066,
+            "positive_rate": 0.5854,
+            "brier": 0.2447,
+            "log_loss": 0.6864,
+            "accuracy": 0.5872,
+            "ece": 0.0883
+          },
+          "over_3_5": {
+            "n": 1066,
+            "positive_rate": 0.3677,
+            "brier": 0.235,
+            "log_loss": 0.6673,
+            "accuracy": 0.5947,
+            "ece": 0.0881
+          },
+          "btts": {
+            "n": 1066,
+            "positive_rate": 0.5835,
+            "brier": 0.2503,
+            "log_loss": 0.6954,
+            "accuracy": 0.5507,
+            "ece": 0.0694
+          }
+        },
+        "dixon_coles": {
+          "home_win": {
+            "n": 1066,
+            "positive_rate": 0.439,
+            "brier": 0.2296,
+            "log_loss": 0.6584,
+            "accuracy": 0.6323,
+            "ece": 0.1026
+          },
+          "draw": {
+            "n": 1066,
+            "positive_rate": 0.258,
+            "brier": 0.1889,
+            "log_loss": 0.5653,
+            "accuracy": 0.742,
+            "ece": 0.0269
+          },
+          "away_win": {
+            "n": 1066,
+            "positive_rate": 0.303,
+            "brier": 0.1971,
+            "log_loss": 0.5807,
+            "accuracy": 0.6932,
+            "ece": 0.1236
+          },
+          "over_1_5": {
+            "n": 1066,
+            "positive_rate": 0.8171,
+            "brier": 0.1531,
+            "log_loss": 0.4834,
+            "accuracy": 0.8058,
+            "ece": 0.0639
+          },
+          "over_2_5": {
+            "n": 1066,
+            "positive_rate": 0.5854,
+            "brier": 0.2447,
+            "log_loss": 0.6864,
+            "accuracy": 0.5872,
+            "ece": 0.0883
+          },
+          "over_3_5": {
+            "n": 1066,
+            "positive_rate": 0.3677,
+            "brier": 0.235,
+            "log_loss": 0.6673,
+            "accuracy": 0.5947,
+            "ece": 0.0881
+          },
+          "btts": {
+            "n": 1066,
+            "positive_rate": 0.5835,
+            "brier": 0.2496,
+            "log_loss": 0.694,
+            "accuracy": 0.5525,
+            "ece": 0.068
+          }
+        },
+        "xgboost_real_data_raw": {
+          "home_win": {
+            "n": 1066,
+            "positive_rate": 0.43902439024390244,
+            "brier": 0.2089,
+            "log_loss": 0.6059,
+            "accuracy": 0.6811
+          },
+          "draw": {
+            "n": 1066,
+            "positive_rate": 0.2579737335834897,
+            "brier": 0.1938,
+            "log_loss": 0.5782,
+            "accuracy": 0.742
+          },
+          "away_win": {
+            "n": 1066,
+            "positive_rate": 0.3030018761726079,
+            "brier": 0.1752,
+            "log_loss": 0.5268,
+            "accuracy": 0.7439
+          },
+          "over_1_5": {
+            "n": 1066,
+            "positive_rate": 0.8170731707317073,
+            "brier": 0.1491,
+            "log_loss": 0.474,
+            "accuracy": 0.8161
+          },
+          "over_2_5": {
+            "n": 1066,
+            "positive_rate": 0.5853658536585366,
+            "brier": 0.2432,
+            "log_loss": 0.6798,
+            "accuracy": 0.576
+          },
+          "over_3_5": {
+            "n": 1066,
+            "positive_rate": 0.3677298311444653,
+            "brier": 0.2351,
+            "log_loss": 0.6645,
+            "accuracy": 0.6229
+          },
+          "btts": {
+            "n": 1066,
+            "positive_rate": 0.5834896810506567,
+            "brier": 0.2506,
+            "log_loss": 0.6954,
+            "accuracy": 0.5497
+          }
+        },
+        "xgboost_real_data_calibrated": {
+          "home_win": {
+            "n": 1066,
+            "positive_rate": 0.43902439024390244,
+            "brier": 0.2102,
+            "log_loss": 0.6207,
+            "accuracy": 0.6764,
+            "ece": 0.031
+          },
+          "draw": {
+            "n": 1066,
+            "positive_rate": 0.2579737335834897,
+            "brier": 0.1928,
+            "log_loss": 0.5983,
+            "accuracy": 0.742,
+            "ece": 0.0345
+          },
+          "away_win": {
+            "n": 1066,
+            "positive_rate": 0.3030018761726079,
+            "brier": 0.1789,
+            "log_loss": 0.5596,
+            "accuracy": 0.7326,
+            "ece": 0.033
+          },
+          "over_1_5": {
+            "n": 1066,
+            "positive_rate": 0.8170731707317073,
+            "brier": 0.1494,
+            "log_loss": 0.476,
+            "accuracy": 0.8171,
+            "ece": 0.0393
+          },
+          "over_2_5": {
+            "n": 1066,
+            "positive_rate": 0.5853658536585366,
+            "brier": 0.2461,
+            "log_loss": 0.7116,
+            "accuracy": 0.5797,
+            "ece": 0.0635
+          },
+          "over_3_5": {
+            "n": 1066,
+            "positive_rate": 0.3677298311444653,
+            "brier": 0.2349,
+            "log_loss": 0.6901,
+            "accuracy": 0.6323,
+            "ece": 0.0533
+          },
+          "btts": {
+            "n": 1066,
+            "positive_rate": 0.5834896810506567,
+            "brier": 0.2468,
+            "log_loss": 0.6872,
+            "accuracy": 0.5816,
+            "ece": 0.0518
+          }
+        }
+      }
+    },
+    {
+      "train_seasons": [
+        "2015-16",
+        "2016-17",
+        "2017-18",
+        "2018-19",
+        "2019-20",
+        "2020-21",
+        "2021-22",
+        "2022-23"
+      ],
+      "val_season": "2023-24",
+      "test_season": "2024-25",
+      "is_final_frozen_holdout": true,
+      "n_train": 8526,
+      "n_val": 1066,
+      "n_test": 1065,
+      "models": {
+        "frequency": {
+          "home_win": {
+            "n": 1065,
+            "positive_rate": 0.3981,
+            "brier": 0.2416,
+            "log_loss": 0.6763,
+            "accuracy": 0.6019,
+            "ece": 0.0445
+          },
+          "draw": {
+            "n": 1065,
+            "positive_rate": 0.261,
+            "brier": 0.1933,
+            "log_loss": 0.5752,
+            "accuracy": 0.739,
+            "ece": 0.0201
+          },
+          "away_win": {
+            "n": 1065,
+            "positive_rate": 0.3408,
+            "brier": 0.2253,
+            "log_loss": 0.643,
+            "accuracy": 0.6592,
+            "ece": 0.0244
+          },
+          "over_1_5": {
+            "n": 1065,
+            "positive_rate": 0.785,
+            "brier": 0.1688,
+            "log_loss": 0.5206,
+            "accuracy": 0.785,
+            "ece": 0.0025
+          },
+          "over_2_5": {
+            "n": 1065,
+            "positive_rate": 0.5455,
+            "brier": 0.2479,
+            "log_loss": 0.689,
+            "accuracy": 0.5455,
+            "ece": 0.0015
+          },
+          "over_3_5": {
+            "n": 1065,
+            "positive_rate": 0.338,
+            "brier": 0.2241,
+            "log_loss": 0.6404,
+            "accuracy": 0.662,
+            "ece": 0.0175
+          },
+          "btts": {
+            "n": 1065,
+            "positive_rate": 0.5521,
+            "brier": 0.2474,
+            "log_loss": 0.6879,
+            "accuracy": 0.5521,
+            "ece": 0.0095
+          }
+        },
+        "home_baseline": {
+          "home_win": {
+            "n": 1065,
+            "positive_rate": 0.3981,
+            "brier": 0.6019,
+            "log_loss": 9.2839,
+            "accuracy": 0.3981,
+            "ece": 0.6019
+          },
+          "draw": {
+            "n": 1065,
+            "positive_rate": 0.261,
+            "brier": 0.261,
+            "log_loss": 4.2074,
+            "accuracy": 0.739,
+            "ece": 0.261
+          },
+          "away_win": {
+            "n": 1065,
+            "positive_rate": 0.3408,
+            "brier": 0.3408,
+            "log_loss": 5.4938,
+            "accuracy": 0.6592,
+            "ece": 0.3408
+          },
+          "over_1_5": {
+            "n": 1065,
+            "positive_rate": 0.785,
+            "brier": 0.215,
+            "log_loss": 3.4658,
+            "accuracy": 0.785,
+            "ece": 0.215
+          },
+          "over_2_5": {
+            "n": 1065,
+            "positive_rate": 0.5455,
+            "brier": 0.4545,
+            "log_loss": 7.325,
+            "accuracy": 0.5455,
+            "ece": 0.4545
+          },
+          "over_3_5": {
+            "n": 1065,
+            "positive_rate": 0.338,
+            "brier": 0.338,
+            "log_loss": 5.4484,
+            "accuracy": 0.662,
+            "ece": 0.338
+          },
+          "btts": {
+            "n": 1065,
+            "positive_rate": 0.5521,
+            "brier": 0.4479,
+            "log_loss": 7.2191,
+            "accuracy": 0.5521,
+            "ece": 0.4479
+          }
+        },
+        "elo": {
+          "home_win": {
+            "n": 1065,
+            "positive_rate": 0.3981,
+            "brier": 0.2095,
+            "log_loss": 0.6053,
+            "accuracy": 0.6723,
+            "ece": 0.0533
+          },
+          "draw": {
+            "n": 1065,
+            "positive_rate": 0.261,
+            "brier": 0.1933,
+            "log_loss": 0.5751,
+            "accuracy": 0.739,
+            "ece": 0.0259
+          },
+          "away_win": {
+            "n": 1065,
+            "positive_rate": 0.3408,
+            "brier": 0.1934,
+            "log_loss": 0.5683,
+            "accuracy": 0.7014,
+            "ece": 0.0304
+          },
+          "over_1_5": {
+            "n": 1065,
+            "positive_rate": 0.785,
+            "brier": 0.1686,
+            "log_loss": 0.5203,
+            "accuracy": 0.785,
+            "ece": 0.0114
+          },
+          "over_2_5": {
+            "n": 1065,
+            "positive_rate": 0.5455,
+            "brier": 0.247,
+            "log_loss": 0.6872,
+            "accuracy": 0.5455,
+            "ece": 0.0082
+          },
+          "over_3_5": {
+            "n": 1065,
+            "positive_rate": 0.338,
+            "brier": 0.2221,
+            "log_loss": 0.6361,
+            "accuracy": 0.661,
+            "ece": 0.0216
+          },
+          "btts": {
+            "n": 1065,
+            "positive_rate": 0.5521,
+            "brier": 0.2477,
+            "log_loss": 0.6885,
+            "accuracy": 0.5484,
+            "ece": 0.0133
+          }
+        },
+        "poisson_real_data": {
+          "home_win": {
+            "n": 1065,
+            "positive_rate": 0.3981,
+            "brier": 0.2227,
+            "log_loss": 0.6373,
+            "accuracy": 0.6451,
+            "ece": 0.0671
+          },
+          "draw": {
+            "n": 1065,
+            "positive_rate": 0.261,
+            "brier": 0.1935,
+            "log_loss": 0.5767,
+            "accuracy": 0.739,
+            "ece": 0.0428
+          },
+          "away_win": {
+            "n": 1065,
+            "positive_rate": 0.3408,
+            "brier": 0.2134,
+            "log_loss": 0.6149,
+            "accuracy": 0.6385,
+            "ece": 0.0929
+          },
+          "over_1_5": {
+            "n": 1065,
+            "positive_rate": 0.785,
+            "brier": 0.1792,
+            "log_loss": 0.5494,
+            "accuracy": 0.77,
+            "ece": 0.0834
+          },
+          "over_2_5": {
+            "n": 1065,
+            "positive_rate": 0.5455,
+            "brier": 0.2599,
+            "log_loss": 0.7202,
+            "accuracy": 0.5671,
+            "ece": 0.1157
+          },
+          "over_3_5": {
+            "n": 1065,
+            "positive_rate": 0.338,
+            "brier": 0.2356,
+            "log_loss": 0.6701,
+            "accuracy": 0.616,
+            "ece": 0.096
+          },
+          "btts": {
+            "n": 1065,
+            "positive_rate": 0.5521,
+            "brier": 0.2579,
+            "log_loss": 0.7119,
+            "accuracy": 0.5296,
+            "ece": 0.0842
+          }
+        },
+        "dixon_coles": {
+          "home_win": {
+            "n": 1065,
+            "positive_rate": 0.3981,
+            "brier": 0.2238,
+            "log_loss": 0.6408,
+            "accuracy": 0.6423,
+            "ece": 0.0819
+          },
+          "draw": {
+            "n": 1065,
+            "positive_rate": 0.261,
+            "brier": 0.1929,
+            "log_loss": 0.5746,
+            "accuracy": 0.739,
+            "ece": 0.0304
+          },
+          "away_win": {
+            "n": 1065,
+            "positive_rate": 0.3408,
+            "brier": 0.212,
+            "log_loss": 0.6119,
+            "accuracy": 0.6423,
+            "ece": 0.0843
+          },
+          "over_1_5": {
+            "n": 1065,
+            "positive_rate": 0.785,
+            "brier": 0.1785,
+            "log_loss": 0.5492,
+            "accuracy": 0.77,
+            "ece": 0.0865
+          },
+          "over_2_5": {
+            "n": 1065,
+            "positive_rate": 0.5455,
+            "brier": 0.2599,
+            "log_loss": 0.7202,
+            "accuracy": 0.5671,
+            "ece": 0.1157
+          },
+          "over_3_5": {
+            "n": 1065,
+            "positive_rate": 0.338,
+            "brier": 0.2356,
+            "log_loss": 0.6701,
+            "accuracy": 0.616,
+            "ece": 0.096
+          },
+          "btts": {
+            "n": 1065,
+            "positive_rate": 0.5521,
+            "brier": 0.2572,
+            "log_loss": 0.7102,
+            "accuracy": 0.5333,
+            "ece": 0.0811
+          }
+        },
+        "xgboost_real_data_raw": {
+          "home_win": {
+            "n": 1065,
+            "positive_rate": 0.39812206572769954,
+            "brier": 0.213,
+            "log_loss": 0.6146,
+            "accuracy": 0.6667
+          },
+          "draw": {
+            "n": 1065,
+            "positive_rate": 0.26103286384976526,
+            "brier": 0.1971,
+            "log_loss": 0.5873,
+            "accuracy": 0.739
+          },
+          "away_win": {
+            "n": 1065,
+            "positive_rate": 0.3408450704225352,
+            "brier": 0.1965,
+            "log_loss": 0.5761,
+            "accuracy": 0.6958
+          },
+          "over_1_5": {
+            "n": 1065,
+            "positive_rate": 0.7849765258215963,
+            "brier": 0.1728,
+            "log_loss": 0.5319,
+            "accuracy": 0.784
+          },
+          "over_2_5": {
+            "n": 1065,
+            "positive_rate": 0.5455399061032864,
+            "brier": 0.246,
+            "log_loss": 0.685,
+            "accuracy": 0.5624
+          },
+          "over_3_5": {
+            "n": 1065,
+            "positive_rate": 0.3380281690140845,
+            "brier": 0.2275,
+            "log_loss": 0.6481,
+            "accuracy": 0.6469
+          },
+          "btts": {
+            "n": 1065,
+            "positive_rate": 0.5521126760563381,
+            "brier": 0.2527,
+            "log_loss": 0.6989,
+            "accuracy": 0.5183
+          }
+        },
+        "xgboost_real_data_calibrated": {
+          "home_win": {
+            "n": 1065,
+            "positive_rate": 0.39812206572769954,
+            "brier": 0.2149,
+            "log_loss": 0.6313,
+            "accuracy": 0.6638,
+            "ece": 0.0546
+          },
+          "draw": {
+            "n": 1065,
+            "positive_rate": 0.26103286384976526,
+            "brier": 0.1937,
+            "log_loss": 0.6007,
+            "accuracy": 0.739,
+            "ece": 0.0275
+          },
+          "away_win": {
+            "n": 1065,
+            "positive_rate": 0.3408450704225352,
+            "brier": 0.1986,
+            "log_loss": 0.5835,
+            "accuracy": 0.6883,
+            "ece": 0.0542
+          },
+          "over_1_5": {
+            "n": 1065,
+            "positive_rate": 0.7849765258215963,
+            "brier": 0.1729,
+            "log_loss": 0.5458,
+            "accuracy": 0.785,
+            "ece": 0.06
+          },
+          "over_2_5": {
+            "n": 1065,
+            "positive_rate": 0.5455399061032864,
+            "brier": 0.2472,
+            "log_loss": 0.6877,
+            "accuracy": 0.5559,
+            "ece": 0.0415
+          },
+          "over_3_5": {
+            "n": 1065,
+            "positive_rate": 0.3380281690140845,
+            "brier": 0.226,
+            "log_loss": 0.6571,
+            "accuracy": 0.662,
+            "ece": 0.038
+          },
+          "btts": {
+            "n": 1065,
+            "positive_rate": 0.5521126760563381,
+            "brier": 0.249,
+            "log_loss": 0.6917,
+            "accuracy": 0.5521,
+            "ece": 0.0259
+          }
+        }
+      }
+    }
+  ],
+  "final_holdout_significance_vs_baselines": {
+    "home_win__xgb_vs_elo": {
+      "point_estimate": 0.00534,
+      "ci_95": [
+        -7e-05,
+        0.01067
+      ],
+      "significant_at_95": false
+    },
+    "home_win__xgb_vs_poisson_real_data": {
+      "point_estimate": -0.00782,
+      "ci_95": [
+        -0.01671,
+        0.00147
+      ],
+      "significant_at_95": false
+    },
+    "draw__xgb_vs_elo": {
+      "point_estimate": 0.0004,
+      "ci_95": [
+        -0.00217,
+        0.00303
+      ],
+      "significant_at_95": false
+    },
+    "draw__xgb_vs_poisson_real_data": {
+      "point_estimate": 0.00017,
+      "ci_95": [
+        -0.00359,
+        0.00387
+      ],
+      "significant_at_95": false
+    },
+    "away_win__xgb_vs_elo": {
+      "point_estimate": 0.00513,
+      "ci_95": [
+        0.0007,
+        0.00979
+      ],
+      "significant_at_95": true
+    },
+    "away_win__xgb_vs_poisson_real_data": {
+      "point_estimate": -0.01488,
+      "ci_95": [
+        -0.0247,
+        -0.00485
+      ],
+      "significant_at_95": true
+    },
+    "over_1_5__xgb_vs_elo": {
+      "point_estimate": 0.00423,
+      "ci_95": [
+        0.00032,
+        0.00819
+      ],
+      "significant_at_95": true
+    },
+    "over_1_5__xgb_vs_poisson_real_data": {
+      "point_estimate": -0.00638,
+      "ci_95": [
+        -0.01306,
+        0.00094
+      ],
+      "significant_at_95": false
+    },
+    "over_2_5__xgb_vs_elo": {
+      "point_estimate": 0.00015,
+      "ci_95": [
+        -0.0046,
+        0.00515
+      ],
+      "significant_at_95": false
+    },
+    "over_2_5__xgb_vs_poisson_real_data": {
+      "point_estimate": -0.01268,
+      "ci_95": [
+        -0.02248,
+        -0.00279
+      ],
+      "significant_at_95": true
+    },
+    "over_3_5__xgb_vs_elo": {
+      "point_estimate": 0.00387,
+      "ci_95": [
+        -0.00056,
+        0.00817
+      ],
+      "significant_at_95": false
+    },
+    "over_3_5__xgb_vs_poisson_real_data": {
+      "point_estimate": -0.00958,
+      "ci_95": [
+        -0.01792,
+        -0.00143
+      ],
+      "significant_at_95": true
+    },
+    "btts__xgb_vs_elo": {
+      "point_estimate": 0.00138,
+      "ci_95": [
+        -0.00197,
+        0.00472
+      ],
+      "significant_at_95": false
+    },
+    "btts__xgb_vs_poisson_real_data": {
+      "point_estimate": -0.00891,
+      "ci_95": [
+        -0.01688,
+        -0.00062
+      ],
+      "significant_at_95": true
+    }
+  },
+  "final_holdout_ood_report": {
+    "thin_history_matches": 40,
+    "sufficient_history_matches": 1025,
+    "thin_history_home_win_brier": 0.2288,
+    "sufficient_history_home_win_brier": 0.2143
+  }
+}

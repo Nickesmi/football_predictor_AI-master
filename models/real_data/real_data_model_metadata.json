@@ -1,0 +1,110 @@
+{
+  "provenance": "REAL_DATA_TRAINED",
+  "markets": [
+    "home_win",
+    "draw",
+    "away_win",
+    "over_1_5",
+    "over_2_5",
+    "over_3_5",
+    "btts"
+  ],
+  "training_info": {
+    "n_train_matches": 8526,
+    "train_seasons": [
+      "2015-16",
+      "2016-17",
+      "2017-18",
+      "2018-19",
+      "2019-20",
+      "2020-21",
+      "2021-22",
+      "2022-23"
+    ],
+    "train_leagues": [
+      "Deutsche Bundesliga",
+      "English Premier League",
+      "Italian Serie A"
+    ],
+    "feature_columns": [
+      "home_elo_before",
+      "away_elo_before",
+      "home_scored_avg_5",
+      "home_conceded_avg_5",
+      "home_scored_avg_10",
+      "home_conceded_avg_10",
+      "away_scored_avg_5",
+      "away_conceded_avg_5",
+      "away_scored_avg_10",
+      "away_conceded_avg_10",
+      "home_form_points_5",
+      "away_form_points_5",
+      "home_venue_scored_avg",
+      "home_venue_conceded_avg",
+      "away_venue_scored_avg",
+      "away_venue_conceded_avg",
+      "data_sufficiency"
+    ]
+  },
+  "test_metrics": {
+    "home_win": {
+      "n": 1065,
+      "positive_rate": 0.39812206572769954,
+      "brier": 0.2149,
+      "log_loss": 0.6313,
+      "accuracy": 0.6638,
+      "ece": 0.0546
+    },
+    "draw": {
+      "n": 1065,
+      "positive_rate": 0.26103286384976526,
+      "brier": 0.1937,
+      "log_loss": 0.6007,
+      "accuracy": 0.739,
+      "ece": 0.0275
+    },
+    "away_win": {
+      "n": 1065,
+      "positive_rate": 0.3408450704225352,
+      "brier": 0.1986,
+      "log_loss": 0.5835,
+      "accuracy": 0.6883,
+      "ece": 0.0542
+    },
+    "over_1_5": {
+      "n": 1065,
+      "positive_rate": 0.7849765258215963,
+      "brier": 0.1729,
+      "log_loss": 0.5458,
+      "accuracy": 0.785,
+      "ece": 0.06
+    },
+    "over_2_5": {
+      "n": 1065,
+      "positive_rate": 0.5455399061032864,
+      "brier": 0.2472,
+      "log_loss": 0.6877,
+      "accuracy": 0.5559,
+      "ece": 0.0415
+    },
+    "over_3_5": {
+      "n": 1065,
+      "positive_rate": 0.3380281690140845,
+      "brier": 0.226,
+      "log_loss": 0.6571,
+      "accuracy": 0.662,
+      "ece": 0.038
+    },
+    "btts": {
+      "n": 1065,
+      "positive_rate": 0.5521126760563381,
+      "brier": 0.249,
+      "log_loss": 0.6917,
+      "accuracy": 0.5521,
+      "ece": 0.0259
+    }
+  },
+  "trained_through_season": "2022-23",
+  "validated_on_season": "2023-24",
+  "tested_on_season_frozen_holdout": "2024-25"
+}

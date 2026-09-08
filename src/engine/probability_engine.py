@@ -90,21 +90,40 @@ def _blend(poisson_prob: float, xgb_prob: float | None, weight: float) -> float:
 
 def _market_weight(xgb_prediction, market: str, data_quality: float) -> float:
     """
-    Choose a conservative XGBoost blend weight.
+    Choose the XGBoost blend weight, gated by model provenance (see
+    src/ml/model_provenance.py and AUDIT_REPORT.md / REAL_DATA_BACKTEST_REPORT.md).
 
-    The bundled models are useful as a second opinion, but the stored metrics show
-    modest AUC, so Poisson remains the anchor until richer real match history exists.
+    _xgb (module-level singleton above) loads src/ml/trainer.py's models,
+    which are trained EXCLUSIVELY on synthetic data (src/ml/dataset_builder.py).
+    Those models must NEVER receive nonzero weight, full stop — this
+    function returns 0.0 for them unconditionally, regardless of what
+    their self-referential AUC claims.
+
+    A real-data-trained alternative now exists (src/ml/real_data_trainer.py,
+    models/real_data/), walk-forward backtested against Elo and Poisson
+    baselines on a frozen, untouched final season (2024-25). As of the last
+    run (see REAL_DATA_BACKTEST_REPORT.md), it DID beat those baselines
+    with statistical significance for over_2_5, over_3_5, and btts — three
+    of the four markets this function actually blends for — but home_win
+    and draw did not clear the bar. Even for the markets that did, this
+    still returns 0.0, for two reasons that are each independently
+    sufficient to withhold it:
+      1. No live feature-extraction path exists yet that builds this
+         model's point-in-time features (Elo, rolling scored/conceded,
+         venue splits) FROM THE PRODUCTION team_state/match_history
+         tables — src/ml/point_in_time.py only operates on the offline
+         real-historical-match dataset. Wiring that up is real
+         integration work, not a config flip, and doing it without tests
+         against production data risks introducing a new, unvalidated
+         leakage path.
+      2. This environment's production database has zero real historical
+         matches (see AUDIT_REPORT.md) — there would be nothing for that
+         live feature path to compute from yet even if it existed.
+    Re-check src.ml.model_provenance.real_data_model_provenance(market)
+    before ever changing this — do not re-enable a nonzero weight based on
+    AUC, a single backtest run, or provenance labeling alone.
     """
-    if xgb_prediction is None or data_quality < 45:
-        return 0.0
-
-    metrics = getattr(_xgb.trainer, "metrics", {}).get(market, {})
-    auc = float(metrics.get("roc_auc_mean", 0.5) or 0.5)
-    if auc < 0.53:
-        return 0.10
-    if auc < 0.57:
-        return 0.18
-    return 0.25
+    return 0.0
 
 
 def estimate_probabilities(match: dict) -> dict:
