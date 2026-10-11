@@ -9,7 +9,13 @@ Tolerance: absolute 1e-9 on every float. Production code already rounds its
 outputs to <= 4 decimals, so this is effectively exact equality; the epsilon
 only absorbs float repr noise.
 
-Regenerate ONLY for an approved behaviour change:
+One reference file per Python minor version. Python 3.11 is the canonical
+runtime; the 3.13 reference is kept for comparison. The two references may
+differ ONLY at the paths listed in KNOWN_RUNTIME_DIFFERENCES (enforced below):
+Python 3.12+ sums floats with compensated summation, which moves a value that
+sits on a rounding boundary.
+
+Regenerate ONLY for an approved behaviour change, on each supported runtime:
     GOLDEN_UPDATE=1 python -m pytest tests/golden -q
 """
 import json
@@ -18,6 +24,7 @@ import os
 import random
 import re
 import sqlite3
+import sys
 from pathlib import Path
 
 import pytest
@@ -27,7 +34,16 @@ import src.engine.isotonic_calibrator as isotonic_calibrator
 from src.db.team_state import TeamState, upsert_team_state
 
 GOLDEN_DIR = Path(__file__).parent
-GOLDEN_FILE = GOLDEN_DIR / "golden_probabilities.json"
+CANONICAL_RUNTIME = (3, 11)
+GOLDEN_FILES = {
+    (3, 11): GOLDEN_DIR / "golden_probabilities.py311.json",
+    (3, 13): GOLDEN_DIR / "golden_probabilities.py313.json",
+}
+GOLDEN_FILE = GOLDEN_FILES.get(sys.version_info[:2])
+KNOWN_RUNTIME_DIFFERENCES = {
+    # path: (value on 3.11, value on 3.13) — sum([...]) / 4 = 82.14999999999999 vs 82.15
+    "$.match_analysis.Arsenal v Chelsea [Premier League].categories[0].avg_probability": (82.1, 82.2),
+}
 LEGACY_TABLES_SQL = GOLDEN_DIR / "legacy_learning_tables.sql"
 ABS_TOL = 1e-9
 
@@ -145,6 +161,7 @@ def _diff(expected, actual, path="$"):
         yield f"{path}: {expected!r} != {actual!r}"
 
 
+@pytest.mark.skipif(GOLDEN_FILE is None, reason=f"no golden reference for Python {sys.version_info[0]}.{sys.version_info[1]}")
 def test_production_probabilities_match_golden(isolated_engine):
     actual = _capture()
     if os.getenv("GOLDEN_UPDATE") == "1":
@@ -163,8 +180,20 @@ def test_golden_run_is_deterministic(isolated_engine):
     assert list(_diff(first, second)) == []
 
 
+def test_canonical_runtime_reference_exists():
+    assert GOLDEN_FILES[CANONICAL_RUNTIME].exists()
+
+
+def test_runtime_references_differ_only_at_documented_paths():
+    py311 = json.loads(GOLDEN_FILES[(3, 11)].read_text())
+    py313 = json.loads(GOLDEN_FILES[(3, 13)].read_text())
+    diffs = list(_diff(py311, py313))
+    expected = [f"{path}: {a!r} != {b!r}" for path, (a, b) in sorted(KNOWN_RUNTIME_DIFFERENCES.items())]
+    assert diffs == expected
+
+
 def test_golden_inputs_exercise_the_synthetic_xgb_blend_both_ways():
-    data = json.loads(GOLDEN_FILE.read_text())["estimate_probabilities"]
+    data = json.loads(GOLDEN_FILES[CANONICAL_RUNTIME].read_text())["estimate_probabilities"]
     sources = {v["source"] for v in data.values()}
     assert "hybrid" in sources, "no fixture exercises the nonzero synthetic-XGB weight path"
     assert any(v["data_quality"] < 45 for v in data.values()), "no fixture exercises the DQ<45 zero-weight path"
