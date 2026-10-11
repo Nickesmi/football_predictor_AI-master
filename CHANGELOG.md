@@ -1,5 +1,13 @@
 # Changelog
 
+## M1.1 — stabilization (2026-10-11, `m1.1/stabilization`)
+
+No change to prediction outputs or calibration behaviour.
+
+- Python 3.11 is the canonical runtime: golden references versioned per runtime (`golden_probabilities.py311.json` canonical, `py313` kept byte-identical); a test pins the only allowed difference.
+- CI installs `requirements-lock.txt`, runs the integrity audit via `python`, adds a frontend lint/build job; devcontainer installs the lock; README setup/validation match CI.
+- Docs: `BASELINE_FREEZE_DESIGN.md` (17 mutation pathways + freeze architecture), `M2_PLAN.md`, `M1_1_REPORT.md`.
+
 ## M1 — security, reproducibility, test infrastructure (2026-10-11, `m1/security-reproducibility`)
 
 No change to prediction outputs (golden test identical on Python 3.13).
