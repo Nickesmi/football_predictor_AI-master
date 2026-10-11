@@ -1,26 +1,37 @@
 # Football Predictor AI - Dependencies
 # =====================================
+# Direct dependencies, pinned to the versions that produced the committed
+# golden-probability outputs (tests/golden). Full transitive lock for the
+# declared runtime (Python 3.11, runtime.txt): requirements-lock.txt.
+# Change a pin only together with a golden-test run (model artifacts and
+# probability outputs can shift with numeric-library versions).
 
 # ML Stack
-numpy>=1.24.0
-pandas>=2.0.0
-xgboost>=2.0.0
-scikit-learn>=1.3.0
+numpy==2.4.6
+pandas==3.0.3
+xgboost==3.2.0
+scikit-learn==1.8.0
+scipy==1.17.1
 
 # HTTP client
-requests>=2.31.0
-certifi>=2024.2.2
-curl-cffi>=0.7.0
-Pillow>=10.0.0
+requests==2.34.2
+certifi==2026.4.22
+curl-cffi==0.15.0
+Pillow==12.2.0
 
 # Environment variable management
-python-dotenv>=1.0.0
+python-dotenv==1.2.2
+
+# API
+fastapi==0.136.1
+uvicorn[standard]==0.47.0
+pydantic==2.13.4
+
+# UI / data providers
+streamlit==1.65.0
+sports-skills==0.26.5
 
 # Testing
-pytest>=7.4.0
-pytest-cov>=4.1.0
-fastapi>=0.110.0
-uvicorn[standard]>=0.28.0
-pydantic>=2.6.0
-streamlit>=1.35.0
-sports-skills>=0.26.5
+pytest==9.0.3
+pytest-cov==7.1.0
+httpx==0.28.1
