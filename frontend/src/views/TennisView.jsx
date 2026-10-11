@@ -6,7 +6,7 @@ import DatePicker from '../components/DatePicker';
 
 const API = import.meta.env.VITE_API_URL || '/api';
 
-const TennisView = ({ selectedDate, onDateChange, todayDate }) => {
+const TennisView = ({ selectedDate }) => {
   const [matches, setMatches]         = useState([]);
   const [loading, setLoading]         = useState(true);
   const [error, setError]             = useState(null);
@@ -57,7 +57,9 @@ const TennisView = ({ selectedDate, onDateChange, todayDate }) => {
       const res  = await fetch(`${API}/tennis/analytics/baseline`);
       const data = await res.json();
       setBaseline(data);
-    } catch (_) {}
+    } catch {
+      // Baseline panel is optional; keep the previous state on failure.
+    }
   }, []);
 
   useEffect(() => { fetchMatches(selectedDate); }, [selectedDate, fetchMatches]);

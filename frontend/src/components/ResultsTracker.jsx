@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   Loader2, CheckCircle2, XCircle, Trophy, TrendingUp,
   BarChart3, ChevronDown, ChevronUp, Calendar, Target, ArrowLeft,
@@ -93,18 +93,18 @@ const outcomeLabel = (home, away) => {
   return "Draw";
 };
 
+const TeamLogo = ({ src }) => (
+  src ? (
+    <img src={src} alt="" className="w-6 h-6 object-contain shrink-0" onError={e => e.currentTarget.style.display = 'none'} />
+  ) : (
+    <div className="w-6 h-6 rounded-full bg-white/8 shrink-0" aria-hidden="true" />
+  )
+);
+
 const MatchScorelineHeader = ({ fixture, actual }) => {
   const score = getActualScore(fixture, actual);
   const homeWon = score.hasScore && score.home > score.away;
   const awayWon = score.hasScore && score.away > score.home;
-
-  const TeamLogo = ({ src }) => (
-    src ? (
-      <img src={src} alt="" className="w-6 h-6 object-contain shrink-0" onError={e => e.currentTarget.style.display = 'none'} />
-    ) : (
-      <div className="w-6 h-6 rounded-full bg-white/8 shrink-0" aria-hidden="true" />
-    )
-  );
 
   return (
     <div className="grid grid-cols-[minmax(0,1fr)_72px_minmax(0,1fr)] items-center gap-3 flex-1 min-w-0">
@@ -192,19 +192,14 @@ const MatchResultCard = ({ match }) => {
   const settled  = summary?.total || 0;
   const accuracy = settled > 0 ? Math.round(((summary?.correct || 0) / settled) * 100) : 0;
 
-  const sortedPicks = useMemo(() => {
-    return [...picks].sort((a, b) => b.probability - a.probability);
-  }, [picks]);
+  const sortedPicks = [...picks].sort((a, b) => b.probability - a.probability);
 
-  const displayTiers = useMemo(() => {
-    if (tiers && tiers.length) return tiers;
-    const tierSize = Math.max(1, Math.ceil(sortedPicks.length / 3));
-    return [
-      { id: 'tier1', name: 'Tier 1', label: 'Top Ranked Group', picks: sortedPicks.slice(0, tierSize) },
-      { id: 'tier2', name: 'Tier 2', label: 'Second Ranked Group', picks: sortedPicks.slice(tierSize, tierSize * 2) },
-      { id: 'tier3', name: 'Tier 3', label: 'Third Ranked Group', picks: sortedPicks.slice(tierSize * 2) },
-    ];
-  }, [tiers, sortedPicks]);
+  const tierSize = Math.max(1, Math.ceil(sortedPicks.length / 3));
+  const displayTiers = (tiers && tiers.length) ? tiers : [
+    { id: 'tier1', name: 'Tier 1', label: 'Top Ranked Group', picks: sortedPicks.slice(0, tierSize) },
+    { id: 'tier2', name: 'Tier 2', label: 'Second Ranked Group', picks: sortedPicks.slice(tierSize, tierSize * 2) },
+    { id: 'tier3', name: 'Tier 3', label: 'Third Ranked Group', picks: sortedPicks.slice(tierSize * 2) },
+  ];
 
   return (
     <div className={`bg-surface-2 border rounded-xl overflow-hidden transition-all duration-300 ${expanded ? 'border-white/15' : 'border-border hover:border-white/10'}`}>

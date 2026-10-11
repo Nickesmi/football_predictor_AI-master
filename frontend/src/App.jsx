@@ -21,11 +21,6 @@ const fmtDateInTimeZone = (d, timeZone = 'Asia/Tehran') => {
 };
 
 const getRealtimeDate = () => fmtDateInTimeZone(new Date());
-const parseMatchDateTime = (fixture) => {
-  if (!fixture?.date || !/^\d{2}:\d{2}$/.test(fixture.time || '')) return null;
-  const parsed = new Date(`${fixture.date}T${fixture.time}:00`);
-  return Number.isNaN(parsed.getTime()) ? null : parsed;
-};
 
 const isActiveStatus = (status = '') => (
   status.includes('LIVE') ||
@@ -37,7 +32,7 @@ const isActiveStatus = (status = '') => (
   status.includes('BT')
 );
 
-const getLiveClockStatus = (fixture, nowMs) => {
+const getLiveClockStatus = (fixture) => {
   const status = fixture?.status || '';
   if (!isActiveStatus(status) || status === 'HT' || status.includes('BT')) return status;
   return 'LIVE';
@@ -213,7 +208,7 @@ function App() {
   useEffect(() => { fetchFixtures(selectedDate); }, [selectedDate, fetchFixtures]);
 
   // Calculate adaptive polling interval based on match status and tab visibility
-  const [isTabVisible, setIsTabVisible] = useState(!document.hidden);
+  const [_isTabVisible, setIsTabVisible] = useState(!document.hidden);
 
   useEffect(() => {
     const handleVisibilityChange = () => {
@@ -229,21 +224,6 @@ function App() {
     document.addEventListener("visibilitychange", handleVisibilityChange);
     return () => document.removeEventListener("visibilitychange", handleVisibilityChange);
   }, [selectedDate, todayDate, fetchFixtures]);
-
-  const pollInterval = React.useMemo(() => {
-    if (!isTabVisible || selectedDate !== todayDate) return null;
-
-    const statuses = fixtures.map(f => (f.status || '').toUpperCase());
-    const hasLive = statuses.some(s => s === 'LIVE' || /^\d+$/.test(s) || s === '1H' || s === '2H');
-    const hasHT = statuses.some(s => s === 'HT');
-    const hasNS = statuses.some(s => s === 'NS' || s === 'TBD');
-
-    if (hasLive) return 15000;  // 15 seconds
-    if (hasHT) return 30000;    // 30 seconds
-    if (hasNS) return 300000;   // 5 minutes
-    
-    return null; // FT -> never refresh
-  }, [fixtures, isTabVisible, selectedDate, todayDate]);
 
   // Connect to WebSocket for real-time live scores
   useEffect(() => {

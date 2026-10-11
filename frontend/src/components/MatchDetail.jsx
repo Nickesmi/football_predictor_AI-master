@@ -675,7 +675,6 @@ const MatchDetail = ({ fixture, analysis, loading, error }) => {
 
   if (!analysis) return null;
 
-  const categories = analysis.categories || [];
   const fullAnalysis = analysis.full_analysis || {};
   const poisson = analysis.poisson;
   const scorePrediction = analysis.score_prediction;
