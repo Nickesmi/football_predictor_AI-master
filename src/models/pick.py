@@ -23,6 +23,7 @@ class Pick:
     league_reliability: float  # league trust (0-10)
     grade: str               # "A+", "A", "B", "Pass", "Trap"
     stake_units: float       # 0 to 2.0
+    model_source: str = "unknown"  # which model produced model_prob: "poisson", "hybrid", "xgboost", etc.
 
     @property
     def expected_value(self) -> float:
@@ -43,6 +44,7 @@ class Pick:
             "league_reliability": round(self.league_reliability, 2),
             "grade": self.grade,
             "stake_units": round(self.stake_units, 2),
+            "model_source": self.model_source,
         }
 
     def to_display_dict(self) -> dict:

@@ -45,14 +45,21 @@ def _get_cache_path(date_str: str) -> Path:
 
 
 def _get_istanbul_today() -> str:
-    """Return the current date in Europe/Istanbul (UTC+3) timezone as a YYYY-MM-DD string."""
-    import zoneinfo
-    from datetime import datetime
+    """Return the current date using the widest-offset timezone among expected users.
+
+    The app is used from Iran (UTC+3:30), so we use UTC+3:30 rather than
+    Istanbul (UTC+3).  This ensures that when the local calendar rolls over to
+    a new day (e.g. midnight Iran time) the backend agrees on which date is
+    'today', preventing the pre-3AM fetch gap.
+    """
     try:
-        return datetime.now(zoneinfo.ZoneInfo("Europe/Istanbul")).date().isoformat()
+        import zoneinfo
+        from datetime import datetime
+        # Use Iran Standard Time (UTC+3:30) so the date matches the user's calendar.
+        return datetime.now(zoneinfo.ZoneInfo("Asia/Tehran")).date().isoformat()
     except Exception:
-        from datetime import timezone, timedelta
-        return datetime.now(timezone(timedelta(hours=3))).date().isoformat()
+        from datetime import datetime, timezone, timedelta
+        return datetime.now(timezone(timedelta(hours=3, minutes=30))).date().isoformat()
 
 
 def _read_fixture_cache(date_str: str) -> Optional[list]:
@@ -96,6 +103,21 @@ def _read_fixture_cache(date_str: str) -> Optional[list]:
             # Only past dates with unfinished matches are already expired above.
             is_future_or_today = date_str >= today
             if is_future_or_today:
+                # Guard: if the cache has NO non-overflow fixtures for this date
+                # (e.g. it only contains late-night matches timezone-shifted from the
+                # previous day's API call) treat it as a miss so a fresh fetch brings
+                # in the full day's fixtures.
+                has_own_fixtures = any(
+                    isinstance(f, dict)
+                    and f.get("date") == date_str
+                    and not f.get("_overflow")
+                    for f in data
+                )
+                if not has_own_fixtures:
+                    logger.info(
+                        f"Cache for {date_str} has no non-overflow fixtures (midnight gap) — expiring to trigger fresh fetch."
+                    )
+                    return None
                 return data  # serve forever until a new fetch explicitly replaces it
             effective_ttl = 86400  # 24 hours for past dates not yet fully finished
         elif has_live or has_ht:
@@ -139,7 +161,7 @@ def _fetch_api_football_fixtures(date_str: str) -> list[dict]:
         logger.warning("APIFOOTBALL_API_KEY not set; API-Football fixture fetch unavailable")
         return []
 
-    url = f"https://v3.football.api-sports.io/fixtures?date={date_str}&timezone=Europe/Istanbul"
+    url = f"https://v3.football.api-sports.io/fixtures?date={date_str}&timezone=Asia/Tehran"
     req = urllib.request.Request(url, headers={
         "x-apisports-key": APIFOOTBALL_API_KEY,
         "Accept": "application/json",
@@ -184,19 +206,27 @@ def _api_football_to_fixture(raw: dict, requested_date: str = "") -> dict:
     date_str = requested_date or (api_date_iso[:10] if api_date_iso else "")
     time_str = api_date_iso[11:16] if len(api_date_iso) >= 16 else "TBD"
 
-    # Convert UTC kick-off time to Istanbul (UTC+3) so that late-UTC matches
-    # (e.g. Brazil 22:00 UTC = Istanbul 01:00 next day) appear on the correct
-    # calendar date and show the correct local time for Istanbul users.
+    # Convert UTC kick-off time to Iran (UTC+3:30) so that match times and dates
+    # align with the user's local calendar. A match at 23:30 Istanbul (UTC+3)
+    # becomes 00:00 Iran time (UTC+3:30) and correctly appears on the next date.
     if api_date_iso:
         try:
             from datetime import timezone as _tz, timedelta as _td
-            _ist = _tz(_td(hours=3))
-            _dt = datetime.fromisoformat(api_date_iso.replace("Z", "+00:00"))
-            if _dt.tzinfo is None:
-                _dt = _dt.replace(tzinfo=_tz.utc)
-            _dt_ist = _dt.astimezone(_ist)
-            date_str = _dt_ist.strftime("%Y-%m-%d")
-            time_str = _dt_ist.strftime("%H:%M")
+            try:
+                import zoneinfo as _zi
+                _iran = _zi.ZoneInfo("Asia/Tehran")
+                _dt = datetime.fromisoformat(api_date_iso.replace("Z", "+00:00"))
+                if _dt.tzinfo is None:
+                    _dt = _dt.replace(tzinfo=_tz.utc)
+                _dt_iran = _dt.astimezone(_iran)
+            except Exception:
+                _iran_offset = _tz(_td(hours=3, minutes=30))
+                _dt = datetime.fromisoformat(api_date_iso.replace("Z", "+00:00"))
+                if _dt.tzinfo is None:
+                    _dt = _dt.replace(tzinfo=_tz.utc)
+                _dt_iran = _dt.astimezone(_iran_offset)
+            date_str = _dt_iran.strftime("%Y-%m-%d")
+            time_str = _dt_iran.strftime("%H:%M")
         except Exception:
             pass  # keep UTC fallback values above
 
@@ -305,14 +335,14 @@ def _sofascore_to_fixture(ev: dict, requested_date: str = "") -> dict:
     date_str = requested_date or ""
     if start_ts:
         try:
-            # Convert to Europe/Istanbul (Turkey time, UTC+3) for the time display
-            dt = datetime.datetime.fromtimestamp(start_ts, zoneinfo.ZoneInfo("Europe/Istanbul"))
+            # Convert to Asia/Tehran (Iran time, UTC+3:30) for the time display
+            dt = datetime.datetime.fromtimestamp(start_ts, zoneinfo.ZoneInfo("Asia/Tehran"))
             time_str = dt.strftime("%H:%M")
             if not requested_date:
                 date_str = dt.strftime("%Y-%m-%d")
         except Exception:
             try:
-                dt = datetime.datetime.fromtimestamp(start_ts, datetime.timezone(datetime.timedelta(hours=3)))
+                dt = datetime.datetime.fromtimestamp(start_ts, datetime.timezone(datetime.timedelta(hours=3, minutes=30)))
                 time_str = dt.strftime("%H:%M")
                 if not requested_date:
                     date_str = dt.strftime("%Y-%m-%d")
@@ -711,19 +741,26 @@ def get_fixtures_by_date_service(date_str: str, background_tasks: BackgroundTask
                 _existing_ids = {f.get("id") for f in base_fixtures}
                 for f in _overflow:
                     if f.get("id") not in _existing_ids:
+                        f["_overflow"] = True
                         base_fixtures.append(f)
                         _existing_ids.add(f.get("id"))
                 logger.info(f"[ISTANBUL-OVERFLOW] Added {len(_overflow)} late-UTC fixtures from {_prev_utc} into {date_str}")
     except Exception as _e:
         logger.debug(f"Istanbul overflow check failed: {_e}")
     
-    # Check if we already have matches at or after 03:00 IST (meaning the UTC same-day data was already fetched)
-    _has_utc_day_fixtures = any(
-        (f.get("time") or "00:00") >= "03:00" and f.get("provider") == "api_football"
-        for f in base_fixtures
-    )
+    # Check if we already have a complete day's fixtures — BOTH daytime (>= 03:30)
+    # AND early-morning (< 03:00) matches from API-Football.  Overflow fixtures are
+    # excluded because they come from a different day's API call.  If only one half
+    # exists the cache is incomplete and a fresh API-Football fetch is required.
+    _non_overflow_api = [
+        f for f in base_fixtures
+        if f.get("provider") == "api_football" and not f.get("_overflow")
+    ]
+    _has_daytime = any((f.get("time") or "00:00") >= "03:30" for f in _non_overflow_api)
+    _has_early = any((f.get("time") or "00:00") < "03:00" for f in _non_overflow_api)
+    _has_full_day_fixtures = _has_daytime and _has_early
 
-    if not base_fixtures or not _has_utc_day_fixtures:
+    if not base_fixtures or not _has_full_day_fixtures:
         if not base_fixtures:
             logger.info(f"[API-FOOTBALL REQUEST] Fetching base fixtures for {date_str}")
         else:
@@ -731,28 +768,39 @@ def get_fixtures_by_date_service(date_str: str, background_tasks: BackgroundTask
         try:
             raw_api = _fetch_api_football_fixtures(date_str)
             seen_ids = {f.get("id") for f in base_fixtures}
+            # Collect ALL fixtures from the API (including ones that date-shift to
+            # the next Iran day) so they can be cached and found by the overflow
+            # mechanism later.  Only same-date fixtures go into base_fixtures.
             new_added = False
+            _date_shifted = []
             for raw in raw_api:
                 f = _api_football_to_fixture(raw, date_str)
-                if f["date"] == date_str and f.get("id") not in seen_ids:
-                    seen_ids.add(f.get("id"))
+                if f.get("id") in seen_ids:
+                    continue
+                seen_ids.add(f.get("id"))
+                if f["date"] == date_str:
                     base_fixtures.append(f)
                     new_added = True
+                else:
+                    # Fixture date-shifted to a different Iran day (e.g. late-night
+                    # Istanbul match → next Iran calendar day).  Keep it in the
+                    # cache so the overflow mechanism can pick it up.
+                    _date_shifted.append(f)
 
-            if new_added:
+            if new_added or _date_shifted:
                 base_fixtures.sort(key=lambda x: x.get("time") or "TBD")
                 # Merge with the FULL existing cache (which may contain overnight overflow
                 # fixtures from the previous UTC day stored under this IST date).
                 _existing_full = cached or []
-                _existing_ids = {f.get("id") for f in base_fixtures}
-                _merged = base_fixtures + [
+                _existing_ids = {f.get("id") for f in base_fixtures} | {f.get("id") for f in _date_shifted}
+                _merged = base_fixtures + _date_shifted + [
                     f for f in _existing_full if f.get("id") not in _existing_ids
                 ]
                 _merged.sort(key=lambda x: x.get("time") or "TBD")
                 _write_fixture_cache(date_str, _merged)
                 _track_competitions_from_fixtures(base_fixtures)
                 # Update base_fixtures to include the overflow so the response is complete
-                base_fixtures = _merged
+                base_fixtures = [f for f in _merged if f.get("date") == date_str]
         except Exception as e:
             logger.error(f"API-Football base fixture fetch failed: {e}")
 
@@ -805,12 +853,42 @@ def get_fixtures_by_date_service(date_str: str, background_tasks: BackgroundTask
         }
 
     # ── 2. Fetch Daily + Live Updates (SofaScore when available) ──
-    logger.info(f"[SOFASCORE SCORELINES] Fetching daily scorelines for {date_str}")
-    sofa_scorelines = _build_sofascore_scoreline_map(date_str)
+    # Skip slow SofaScore external calls (3+ seconds each) when they can't possibly
+    # return useful data:
+    #   (a) Future dates
+    #   (b) Today's date before 03:00 Iran time — no matches have kicked off yet
+    #       (API-Football fixtures start at 03:00 IST at the earliest)
+    _today_for_live = _get_istanbul_today()
+    _is_future = date_str > _today_for_live
+    _is_today = date_str == _today_for_live
+
+    # Get current hour in Iran (UTC+3:30)
+    try:
+        import zoneinfo as _zi
+        _now_iran = datetime.now(_zi.ZoneInfo("Asia/Tehran"))
+    except Exception:
+        _now_iran = datetime.now(timezone(timedelta(hours=3, minutes=30)))
+    _iran_hour = _now_iran.hour
+
+    # Skip live fetches before 03:00 Iran time on today's date — no matches started
+    _before_first_kickoff = _is_today and _iran_hour < 3
+    _skip_live = _is_future or _before_first_kickoff
+
+    if _skip_live:
+        reason = "future date" if _is_future else f"before 03:00 Iran time (current={_iran_hour:02d}:00)"
+        logger.info(f"[SOFASCORE SCORELINES] Skipping — {reason} for {date_str}")
+        sofa_scorelines = {}
+    else:
+        logger.info(f"[SOFASCORE SCORELINES] Fetching daily scorelines for {date_str}")
+        sofa_scorelines = _build_sofascore_scoreline_map(date_str)
 
     from src.data.live_score_provider import fetch_live_scores
-    logger.info(f"[LIVE SCORES] Fetching live updates from RapidAPI SofaScore for {date_str}")
-    live_updates = fetch_live_scores(date_str)
+    if _skip_live:
+        logger.info(f"[LIVE SCORES] Skipping — {reason} for {date_str}")
+        live_updates = []
+    else:
+        logger.info(f"[LIVE SCORES] Fetching live updates from RapidAPI SofaScore for {date_str}")
+        live_updates = fetch_live_scores(date_str)
     
     # ── 3. Merge Strategy ──
     # Strict matching by home_team and away_team (normalized)

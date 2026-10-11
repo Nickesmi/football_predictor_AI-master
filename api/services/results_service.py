@@ -877,7 +877,22 @@ def get_results_verification_service(date_str: str, background_tasks: Background
 
 
 def run_investment_pipeline_service(date_str: str):
-    """Run the full investment pipeline for a date → returns graded picks."""
+    """Run the full investment pipeline for a date → returns graded picks.
+
+    Restricted to today's date only. This pipeline is the sole writer to the
+    `picks` table that baseline_contract.md's 1,000-pick evidence gate counts —
+    allowing an arbitrary past date_str would let someone generate "picks" for
+    already-finished matches using today's (already-updated) team state, which
+    is retroactive/leaked, not a genuine pre-match prediction.
+    """
+    today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    if date_str != today_str:
+        return {
+            "date": date_str,
+            "error": f"Pipeline can only be run for today's date (UTC): {today_str}",
+            "picks": [],
+        }
+
     fixtures = _read_fixture_cache(date_str)
     if not fixtures:
         raw_api = _fetch_sofascore_fixtures(date_str)

@@ -10,6 +10,7 @@ import logging
 import sqlite3
 from typing import Any, Dict, List, Optional
 from pydantic import BaseModel
+from src.config import now_utc
 from src.db.picks_repo import (
     get_picks_by_date,
     get_portfolio_summary,
@@ -19,6 +20,13 @@ from src.db.picks_repo import (
     update_closing_odds,
 )
 from src.data.odds_fetcher import TheOddsAPIProvider, get_api_key as get_odds_key, LEAGUE_TO_SPORT
+
+# A match still not FT this long after its scheduled date almost certainly means
+# postponed/abandoned/cancelled, not "still in progress" — its picks should be
+# voided rather than left "pending" forever (which would silently exclude them
+# from the pending count without ever resolving, and never contribute to Brier/
+# hit-rate stats one way or the other while looking like open, live wagers).
+STALE_MATCH_VOID_HOURS = 48
 
 logger = logging.getLogger("football_predictor")
 
@@ -37,6 +45,7 @@ class PickCreate(BaseModel):
     league_reliability: float
     grade: str
     stake_units: float
+    model_source: str = "manual"  # distinguishes manually-entered picks from pipeline output
 
 
 class ClvUpdate(BaseModel):
@@ -150,6 +159,38 @@ def auto_settle_picks(conn: sqlite3.Connection) -> Dict[str, Any]:
         settled_count += 1
 
     return {"settled": settled_count, "remaining": len(unsettled) - settled_count}
+
+
+def void_stale_picks(
+    conn: sqlite3.Connection, max_age_hours: int = STALE_MATCH_VOID_HOURS
+) -> Dict[str, Any]:
+    """
+    Void picks whose match is older than max_age_hours and still hasn't reached
+    a finished status (FT/AET/PEN) — almost always postponed, abandoned, or
+    cancelled. Without this, such picks stay "pending" forever: never settled,
+    never contributing to (and never distorting) Brier score or hit rate, but
+    also never leaving the open-wager count.
+
+    Returns {"voided": count}.
+    """
+    from datetime import timedelta
+
+    cutoff_date = (now_utc() - timedelta(hours=max_age_hours)).strftime("%Y-%m-%d")
+
+    rows = conn.execute(
+        """SELECT p.id
+           FROM picks p
+           JOIN matches m ON p.match_id = m.id
+           WHERE p.result IS NULL
+             AND m.status NOT IN ('FT', 'AET', 'PEN')
+             AND m.date < ?""",
+        (cutoff_date,),
+    ).fetchall()
+
+    for row in rows:
+        settle_pick(conn, row["id"] if isinstance(row, sqlite3.Row) else row[0], "void", 0.0)
+
+    return {"voided": len(rows)}
 
 
 def place_pick(conn: sqlite3.Connection, pick_data: Dict[str, Any]) -> Dict[str, Any]:

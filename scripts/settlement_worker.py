@@ -6,7 +6,6 @@ With robust retry mechanics.
 """
 
 import sys
-import time
 import logging
 from datetime import date, datetime, timezone, timedelta
 from pathlib import Path
@@ -17,6 +16,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 from src.config import logger
 from src.db.database import get_db
 from src.data.sofascore_provider import fetch_daily_matches, fetch_match, normalize_event
+from api.services.portfolio_service import auto_settle_picks, void_stale_picks
 
 def run_settlement():
     logger.info("==================================================")
@@ -131,34 +131,36 @@ def run_settlement():
                 WHERE match_id = ? AND market = ? AND actual_outcome IS NULL
             """, (outcome, event_id, market))
             
-            # 3. picks
-            result_str = 'W' if outcome == 1 else 'L'
-            picks = cursor.execute(
-                "SELECT id, odds_at_pick FROM picks WHERE match_id = ? AND market = ? AND result IS NULL",
-                (event_id, market)
-            ).fetchall()
-            
-            for p in picks:
-                pick_id = p[0]
-                odds = p[1] or 2.0
-                pnl = (odds - 1.0) if outcome == 1 else -1.0
-                cursor.execute("""
-                    UPDATE picks SET result = ?, pnl_units = ? WHERE id = ?
-                """, (result_str, pnl, pick_id))
-        
         # Remove from pending
         cursor.execute("DELETE FROM pending_settlements WHERE event_id = ?", (event_id,))
         conn.commit()
         settled_count += 1
-            
+
+    # 3. picks — graded via the shared auto_settle_picks logic, which matches the
+    # market/selection vocabulary ("1X2"/"home", "O/U 2.5"/"over", "BTTS"/"yes")
+    # and 'won'/'lost' convention that get_portfolio_summary and the calibrator
+    # actually read.
+    pick_result = auto_settle_picks(conn)
+    void_result = void_stale_picks(conn)
+    if pick_result["settled"] or void_result["voided"]:
+        logger.info(
+            f"Picks ledger: settled {pick_result['settled']}, voided {void_result['voided']}"
+        )
+
     logger.info("==================================================")
     logger.info(f"SETTLEMENT COMPLETE: {settled_count} matches double-confirmed and settled.")
     logger.info("==================================================")
 
 if __name__ == "__main__":
-    while True:
-        try:
-            run_settlement()
-        except Exception as e:
-            logger.error(f"Settlement worker crashed: {e}")
-        time.sleep(300) # Run every 5 minutes
+    # Run once and exit — both scheduling mechanisms in this repo
+    # (scripts/orchestration/crontab.txt's hourly entry and
+    # scripts/orchestration/systemd/settlement_worker.{service,timer}, which
+    # declares Type=oneshot) invoke this script periodically themselves and
+    # expect a single execution per trigger, exactly like odds_worker.py and
+    # collection_worker.py. An infinite loop here would never let systemd
+    # consider the oneshot service "done," and would spawn an overlapping
+    # second process at every subsequent cron trigger.
+    try:
+        run_settlement()
+    except Exception as e:
+        logger.error(f"Settlement worker crashed: {e}")

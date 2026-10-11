@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { Loader2, AlertCircle, ShieldAlert, Cpu, ChevronDown, ChevronRight, Activity, Zap, Target, CornerUpRight, CreditCard, Trophy, Layers, Filter, BarChart3, TrendingUp, Shuffle, Crosshair, Crown, Shield } from 'lucide-react';
+import { Loader2, AlertCircle, ShieldAlert, Cpu, ChevronDown, ChevronRight, Activity, Zap, Target, CornerUpRight, CreditCard, Trophy, Layers, Filter, BarChart3, TrendingUp, Shuffle, Crosshair, Crown, Shield, Dice5 } from 'lucide-react';
 
 const getBarColor = (pct) => {
   if (pct >= 95) return "bg-emerald-500";
@@ -481,6 +481,161 @@ const ConfidenceChartCard = ({ picks, tiers = [] }) => {
 };
 
 
+/* ── Random Suggested Picks List (Unsorted) ─────────── */
+const SuggestedPicksCard = ({ picks = [], pick = null }) => {
+  const initialList = useMemo(() => {
+    if (Array.isArray(picks) && picks.length > 0) return picks;
+    if (pick) return [pick];
+    return [];
+  }, [picks, pick]);
+
+  const [pickList, setPickList] = useState(initialList);
+
+  React.useEffect(() => {
+    setPickList(initialList);
+  }, [initialList]);
+
+  const handleReshuffle = () => {
+    const arr = [...pickList];
+    for (let i = arr.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [arr[i], arr[j]] = [arr[j], arr[i]];
+    }
+    setPickList(arr);
+  };
+
+  if (!pickList || pickList.length === 0) return null;
+
+  const getBadgeClass = (sec) => {
+    switch (sec) {
+      case "Result": return "bg-emerald-500/15 text-emerald-400 border-emerald-500/20";
+      case "Goals": return "bg-cyan-500/15 text-cyan-400 border-cyan-500/20";
+      case "Team Goals": return "bg-teal-500/15 text-teal-400 border-teal-500/20";
+      case "Handicaps": return "bg-fuchsia-500/15 text-fuchsia-400 border-fuchsia-500/20";
+      case "Corners": return "bg-blue-500/15 text-blue-400 border-blue-500/20";
+      case "Cards": return "bg-amber-500/15 text-amber-400 border-amber-500/20";
+      case "First Half": return "bg-violet-500/15 text-violet-400 border-violet-500/20";
+      case "Second Half": return "bg-orange-500/15 text-orange-400 border-orange-500/20";
+      default: return "bg-slate-500/15 text-slate-400 border-white/5";
+    }
+  };
+
+  return (
+    <div className="relative rounded-2xl border border-violet-500/30 bg-[#111318] p-5 mb-6 overflow-hidden shadow-[0_0_24px_rgba(139,92,246,0.08)]">
+      {/* Background subtle gradient */}
+      <div className="absolute inset-0 bg-gradient-to-br from-violet-500/[0.04] via-transparent to-transparent pointer-events-none" />
+
+      {/* Header */}
+      <div className="flex items-center justify-between gap-3 mb-4 relative z-10">
+        <div className="flex items-center gap-2.5">
+          <div className="flex items-center justify-center w-8 h-8 rounded-xl bg-violet-500/15 border border-violet-500/25">
+            <Dice5 className="w-4 h-4 text-violet-400" />
+          </div>
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="text-[12px] font-bold uppercase tracking-[0.18em] text-violet-300">
+                Random Suggested Picks
+              </span>
+              <span className="bg-violet-500/15 text-violet-300 border border-violet-500/30 text-[10px] font-mono font-bold px-2 py-0.5 rounded-full">
+                {pickList.length} picks
+              </span>
+            </div>
+            <p className="text-[9px] text-slate-500 tracking-wider mt-0.5">
+              Fisher-Yates shuffle · confidence ≥ 60% · odds &gt; 1.16 · unsorted list
+            </p>
+          </div>
+        </div>
+
+        <button
+          onClick={handleReshuffle}
+          title="Reshuffle picks (Fisher-Yates)"
+          className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-violet-500/10 hover:bg-violet-500/20 border border-violet-500/25 text-violet-300 hover:text-white text-[11px] font-medium transition-all shrink-0 cursor-pointer"
+        >
+          <Shuffle className="w-3.5 h-3.5" />
+          <span className="hidden sm:inline">Reshuffle</span>
+        </button>
+      </div>
+
+      {/* Picks List */}
+      <div className="divide-y divide-white/[0.05] bg-[#0D0F13] rounded-xl border border-white/5 overflow-hidden relative z-10">
+        {pickList.map((pick, idx) => {
+          const prob = pick.probability ?? 0;
+          const odds = pick.fair_odds ?? null;
+
+          return (
+            <div
+              key={idx}
+              className="flex flex-col sm:flex-row sm:items-center justify-between p-3.5 hover:bg-white/[0.02] transition-colors gap-3"
+            >
+              {/* Left: Index + Section Badge + Market Name */}
+              <div className="flex items-center gap-2.5 flex-1 min-w-0">
+                <span className="text-[10px] font-mono text-slate-500 w-5 shrink-0 text-center">
+                  #{idx + 1}
+                </span>
+
+                {pick.section && (
+                  <div
+                    className={`flex items-center gap-1 px-2 py-0.5 rounded border text-[10px] font-bold tracking-wider shrink-0 uppercase ${getBadgeClass(
+                      pick.section
+                    )}`}
+                  >
+                    {getSectionIcon(pick.section)}
+                    <span>{pick.section}</span>
+                  </div>
+                )}
+
+                <span className="text-[13px] font-semibold text-slate-200 truncate">
+                  {pick.market}
+                </span>
+
+                {pick.bankroll_qualified && (
+                  <span className="hidden md:inline-flex items-center gap-1 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider shrink-0">
+                    <Shield className="w-3 h-3" />
+                    Gate
+                  </span>
+                )}
+              </div>
+
+              {/* Right: Odds & Probability bar */}
+              <div className="flex items-center gap-3 shrink-0 sm:w-64 justify-end">
+                {odds !== null && (
+                  <span className="bg-black/40 text-slate-300 border border-white/10 rounded px-2 py-0.5 text-[10px] font-mono shrink-0">
+                    fair <span className="text-white font-bold">{odds.toFixed(2)}</span>
+                  </span>
+                )}
+
+                {/* Progress bar */}
+                <div className="flex-1 h-2 bg-black/50 rounded-full overflow-hidden hidden sm:block border border-white/5 max-w-[100px]">
+                  <div
+                    className={`h-full ${getBarColor(prob)} rounded-full`}
+                    style={{ width: `${Math.min(prob, 100)}%` }}
+                  />
+                </div>
+
+                {/* Percentage */}
+                <div className="font-mono text-right min-w-[50px]">
+                  <span className={`text-sm font-bold ${getTextColor(prob)}`}>
+                    {prob.toFixed(1)}%
+                  </span>
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Footer Note */}
+      <div className="mt-3 flex items-center justify-between text-[9px] text-slate-500 uppercase tracking-widest relative z-10">
+        <span>Not ranked by confidence — randomized from all eligible picks (≥60%)</span>
+        <span className="font-mono text-slate-600">UNSORTED</span>
+      </div>
+    </div>
+  );
+};
+
+const SuggestedPickCard = SuggestedPicksCard;
+
+
 const MatchDetail = ({ fixture, analysis, loading, error }) => {
   const [activeLayer, setActiveLayer] = useState('layer2');
 
@@ -611,6 +766,12 @@ const MatchDetail = ({ fixture, analysis, loading, error }) => {
           total_goals: fixture.home_goals + fixture.away_goals
         } : null)}
         status={fixture?.status} 
+      />
+
+      {/* ── Random Suggested Picks (Unsorted List) ─────────── */}
+      <SuggestedPicksCard 
+        picks={analysis.suggested_picks} 
+        pick={analysis.suggested_pick} 
       />
 
       {/* ── Layer Toggle ──────────────────────── */}

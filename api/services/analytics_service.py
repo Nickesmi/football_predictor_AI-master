@@ -32,6 +32,9 @@ def get_warehouse_stats(conn: sqlite3.Connection) -> Dict[str, Any]:
 
     odds_snaps = conn.execute("SELECT COUNT(*) FROM odds_snapshots").fetchone()[0]
 
+    # Raw picks-table row count — NOT the baseline_contract.md experiment
+    # population (includes manual/placeholder rows). See "experiment" below for
+    # the authoritative, filtered count that gate is actually measured against.
     settled_picks = conn.execute(
         "SELECT COUNT(*) FROM picks WHERE result IS NOT NULL"
     ).fetchone()[0]
@@ -40,14 +43,23 @@ def get_warehouse_stats(conn: sqlite3.Connection) -> Dict[str, Any]:
         "SELECT COUNT(DISTINCT match_date) FROM match_history"
     ).fetchone()[0]
 
+    from src.db.picks_repo import get_experiment_progress
+    experiment = get_experiment_progress(conn)
+
     return {
         "settled_predictions": settled_preds,
         "active_predictions": active_preds,
         "total_odds_snapshots": odds_snaps,
         "settled_picks": settled_picks,
         "days_of_history": days_of_history,
-        "target": 10000,
-        "progress_pct": round(min(100.0, (settled_preds / 10000.0) * 100.0), 2),
+        # This target/progress_pct is warehouse growth of the LEGACY
+        # prediction_log table only — it is not, and must not be read as,
+        # progress toward the baseline_contract.md 1,000-pick experiment gate.
+        "legacy_prediction_log_target": 10000,
+        "legacy_prediction_log_progress_pct": round(min(100.0, (settled_preds / 10000.0) * 100.0), 2),
+        # Authoritative baseline_contract.md experiment progress: genuine
+        # automated gated-pipeline picks only, settled won/lost only.
+        "experiment_progress": experiment,
     }
 
 

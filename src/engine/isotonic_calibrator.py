@@ -66,6 +66,20 @@ MIN_BIN_SAMPLES = 5  # bins with fewer samples are excluded from fit
 LAPLACE_ALPHA = 2  # pseudocounts for Laplace smoothing (higher = more conservative)
 
 
+def _fetch_settled_predictions(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    """Fetch settled predictions ordered chronologically (by match date, not by
+    row id — a backfilled/reprocessed row can get a higher autoincrement id
+    than a later match, which would silently let "train" data include matches
+    that happened after "test" data, breaking the walk-forward guarantee the
+    80/20 split in fit_all() exists to provide)."""
+    return conn.execute(
+        """SELECT market_type, predicted_prob, actual_outcome
+           FROM prediction_log
+           WHERE actual_outcome IS NOT NULL
+           ORDER BY market_type, match_date, id"""
+    ).fetchall()
+
+
 def _bin_predictions(probs: np.ndarray, outcomes: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Bin predictions into fixed-width buckets and compute smoothed hit rates.
 
@@ -127,13 +141,7 @@ class IsotonicCalibrator:
         """
         from sklearn.isotonic import IsotonicRegression
 
-        # Get all settled predictions grouped by market type, ordered chronologically
-        rows = conn.execute(
-            """SELECT market_type, predicted_prob, actual_outcome
-               FROM prediction_log
-               WHERE actual_outcome IS NOT NULL
-               ORDER BY market_type, id"""
-        ).fetchall()
+        rows = _fetch_settled_predictions(conn)
 
         if not rows:
             logger.info("IsotonicCalibrator: no settled predictions yet")

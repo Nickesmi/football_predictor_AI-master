@@ -232,7 +232,11 @@ def audit_realtime_freshness(date_str: str) -> dict:
             "SELECT MAX(timestamp) FROM odds_snapshots"
         ).fetchone()[0]
         if latest_odds:
-            odds_age = (datetime.now() - datetime.fromisoformat(latest_odds)).total_seconds()
+            # SQLite CURRENT_TIMESTAMP is UTC; compare against UTC "now" (naive, to
+            # match SQLite's naive-string format) rather than server-local wall-clock
+            # time, which would silently shift staleness detection by the UTC offset.
+            now_utc_naive = datetime.now(timezone.utc).replace(tzinfo=None)
+            odds_age = (now_utc_naive - datetime.fromisoformat(latest_odds)).total_seconds()
             if odds_age > FRESHNESS_PREMATCH_ODDS:
                 odds_fresh = False
                 stale_items.append({

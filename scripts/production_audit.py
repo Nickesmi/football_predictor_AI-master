@@ -60,12 +60,18 @@ def run_audit():
     log("==================================================")
     
     try:
+        from src.db.picks_repo import get_experiment_progress
+
         fixtures_count = conn.execute("SELECT COUNT(*) FROM matches").fetchone()[0]
         prediction_count = conn.execute("SELECT COUNT(*) FROM prediction_log").fetchone()[0]
         odds_count = conn.execute("SELECT COUNT(*) FROM odds_snapshots").fetchone()[0]
         picks_count = conn.execute("SELECT COUNT(*) FROM picks").fetchone()[0]
-        settled_picks = conn.execute("SELECT COUNT(*) FROM picks WHERE result IS NOT NULL").fetchone()[0]
-        
+        # NOTE: this is the raw picks-table row count, NOT the baseline_contract.md
+        # 1,000-pick experiment population — it includes manual/placeholder rows.
+        # Use get_experiment_progress() below for the authoritative, filtered count.
+        experiment = get_experiment_progress(conn)
+        settled_picks = experiment["settled_eligible"]
+
         # Determine days of history
         first_date_row = conn.execute("SELECT MIN(created_at) FROM picks").fetchone()
         if first_date_row and first_date_row[0]:
@@ -84,7 +90,9 @@ def run_audit():
         log(f"prediction_log count: {prediction_count}")
         log(f"odds_snapshots count: {odds_count}")
         log(f"picks count: {picks_count}")
-        log(f"settled picks count: {settled_picks}")
+        log(f"settled picks count (experiment-eligible, authoritative): {settled_picks}")
+        log(f"  excluded (manual/non-pipeline model_source): {experiment['excluded_non_pipeline']}")
+        log(f"  excluded (voided, no win/loss evidence): {experiment['excluded_voided']}")
         log(f"\nDaily growth rate: {daily_growth:.1f} picks/day")
         log(f"Estimate days until 10,000 settled picks: {days_to_10k if days_to_10k == float('inf') else round(days_to_10k, 1)}")
         

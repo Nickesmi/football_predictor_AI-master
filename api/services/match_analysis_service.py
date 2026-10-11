@@ -227,7 +227,7 @@ def _build_joint_matrix(lam_h: float, lam_a: float, max_goals: int,
     return matrix
 
 
-def _compute_match_analysis(home_name: str, away_name: str, league_name: str = "Premier League", shuffle_tiers: bool = True, feature_flags: dict = None) -> dict:
+def _compute_match_analysis(home_name: str, away_name: str, league_name: str = "Premier League", shuffle_tiers: bool = True, feature_flags: dict = None, fixture_id: str = "") -> dict:
     """
     Per-match MODULAR analysis — 2-Layer Architecture:
 
@@ -1433,6 +1433,35 @@ def _compute_match_analysis(home_name: str, away_name: str, league_name: str = "
     # source of truth, so this exposes the same ranked picks as a flat list.
     top_picks = [pick for tier in tier_layers for pick in tier["picks"]]
 
+    # ── Random Suggested Pick ──────────────────────────────────────────────
+    # Eligibility: confidence (probability) ≥ 60%  AND  fair_odds ∈ (1.16, 100).
+    # Picks that pass BOTH conditions are shuffled with the Fisher-Yates
+    # algorithm; the first element after shuffling is the suggested pick.
+    # Confidence values are preserved as-is from the model — they are never
+    # re-ranked or biased toward higher confidence during shuffling.
+    import random as _random
+
+    def _fisher_yates_shuffle(lst: list) -> list:
+        """In-place Fisher-Yates shuffle, returns the same list."""
+        n = len(lst)
+        for i in range(n - 1, 0, -1):
+            j = _random.randint(0, i)
+            lst[i], lst[j] = lst[j], lst[i]
+        return lst
+
+    _ODDS_MIN = 1.16   # strictly greater than
+    _ODDS_MAX = 100.0  # strictly less than
+
+    _eligible = [
+        dict(p) for p in top_picks
+        if (p.get("probability", 0) >= 60.0)
+        and (p.get("fair_odds") is not None)
+        and (_ODDS_MIN < p["fair_odds"] < _ODDS_MAX)
+    ]
+    _fisher_yates_shuffle(_eligible)
+    suggested_picks = _eligible
+    suggested_pick = _eligible[0] if _eligible else None
+
     # Also build per-section qualified view (≥80%)
     qualified = [m for m in raw if m["probability"] >= 80.0]
     qualified_sections = {}
@@ -1471,8 +1500,28 @@ def _compute_match_analysis(home_name: str, away_name: str, league_name: str = "
             away_name=away_name,
             league_name=league_key,
             conn=_bilqe_conn,
+            match_id=fixture_id,
         )
         bilqe_dict = bilqe_result.to_dict()
+
+        # Persist the qualification verdict (F16): without a fixture_id (e.g. the
+        # ad-hoc/test callers of _compute_match_analysis that don't have a real
+        # match identity) there is nothing meaningful to key the log row on, so
+        # persistence is skipped rather than logged under a blank/shared match_id.
+        if fixture_id:
+            try:
+                from src.engine.qualification_engine import log_qualification
+                log_qualification(
+                    _bilqe_conn,
+                    match_id=fixture_id,
+                    match_date=_get_istanbul_today(),
+                    home_team=home_name,
+                    away_team=away_name,
+                    league_name=league_key,
+                    result=bilqe_result,
+                )
+            except Exception as log_err:
+                logger.warning(f"Failed to persist qualification_log for {fixture_id}: {log_err}")
     except Exception as bilqe_err:
         logger.warning(f"BILQE qualification failed: {bilqe_err}")
         bilqe_dict = {
@@ -1500,6 +1549,11 @@ def _compute_match_analysis(home_name: str, away_name: str, league_name: str = "
         "tiers": tier_layers,
         # Legacy flat list
         "top_picks": top_picks,
+        # Random Suggested Picks — Fisher-Yates shuffled list of all eligible picks
+        # (confidence ≥ 60%, odds ∈ (1.16, 100.0)), unsorted.
+        # Confidence values are model-original, unchanged.
+        "suggested_picks": suggested_picks,
+        "suggested_pick": suggested_pick,
         # Layer 1 — FULL structured analysis (all markets, all probs)
         "full_analysis": full_analysis,
         # Qualified per section (≥80%)
@@ -1541,6 +1595,7 @@ def get_match_analysis(
             home_name=home_name,
             away_name=away_name,
             league_name=league,
+            fixture_id=fixture_id,
         )
         analysis["match"] = {
             "home_team": home_name,

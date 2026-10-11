@@ -10,6 +10,7 @@ import os
 import json
 import logging
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -64,6 +65,25 @@ if not RAPIDAPI_KEY or not RAPIDAPI_HOST:
         file=sys.stderr,
     )
 API_RATE_LIMIT_PER_MINUTE: int = int(_settings.get("api_rate_limit") or os.getenv("API_RATE_LIMIT_PER_MINUTE", "10"))
+
+# ---------------------------------------------------------------------------
+# Time handling — every kickoff/timestamp comparison in the system MUST use
+# UTC-aware datetimes. Mixing naive datetime.now() (server-local time) with
+# UTC timestamps from the DB/providers silently shifts match-timing decisions
+# (e.g. "is this match already started?", "how stale are these odds?") by the
+# server's UTC offset. Use these helpers instead of bare datetime.now()/utcnow().
+# ---------------------------------------------------------------------------
+def now_utc() -> datetime:
+    """Current time as a timezone-aware UTC datetime."""
+    return datetime.now(timezone.utc)
+
+
+def parse_utc(value: str) -> datetime:
+    """Parse an ISO-8601 timestamp, assuming UTC when no offset is present."""
+    dt = datetime.fromisoformat(value)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
 
 # ---------------------------------------------------------------------------
 # Cache

@@ -9,7 +9,7 @@ import TennisView from './views/TennisView';
 
 const API = import.meta.env.VITE_API_URL || "/api";
 
-const fmtDateInTimeZone = (d, timeZone = 'Europe/Istanbul') => {
+const fmtDateInTimeZone = (d, timeZone = 'Asia/Tehran') => {
   const parts = new Intl.DateTimeFormat('en-CA', {
     timeZone,
     year: 'numeric',
@@ -137,7 +137,7 @@ function App() {
 
   // Fetch fixtures for the selected date
   const fetchFixtures = useCallback(async (dateStr, options = {}) => {
-    const { isBackground = false, forceRefresh = false } = options;
+    const { isBackground = false, forceRefresh = false, retryCount = 0 } = options;
     if (!isBackground) {
       setLoading(true);
       setError(null);
@@ -191,9 +191,22 @@ function App() {
         .catch(console.error);
 
     } catch (e) {
-      if (!isBackground) setError(e.message);
+      // Auto-retry up to 3 times with increasing delays (2s, 4s, 6s)
+      // This handles transient failures like backend still starting up
+      if (retryCount < 3) {
+        const delay = (retryCount + 1) * 2000;
+        setTimeout(() => {
+          fetchFixtures(dateStr, { ...options, retryCount: retryCount + 1 });
+        }, delay);
+        if (!isBackground && retryCount === 0) {
+          setError(`Connecting to server... (retry ${retryCount + 1}/3)`);
+        }
+      } else {
+        if (!isBackground) setError(e.message);
+      }
     } finally {
-      if (!isBackground) setLoading(false);
+      if (!isBackground && retryCount >= 3) setLoading(false);
+      if (!isBackground && retryCount === 0) setLoading(false);
     }
   }, [handleMatchSelect]);
 

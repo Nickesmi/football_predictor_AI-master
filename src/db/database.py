@@ -184,6 +184,7 @@ def init_db(conn: sqlite3.Connection) -> None:
             league_reliability REAL DEFAULT 0.5,
             grade           TEXT NOT NULL,
             stake_units     REAL DEFAULT 0.0,
+            model_source    TEXT DEFAULT 'unknown',
             result          TEXT,
             pnl_units       REAL,
             clv             REAL,
@@ -207,6 +208,12 @@ def init_db(conn: sqlite3.Connection) -> None:
         CREATE INDEX IF NOT EXISTS idx_picks_match ON picks(match_id);
         CREATE INDEX IF NOT EXISTS idx_picks_date  ON picks(created_at);
         CREATE INDEX IF NOT EXISTS idx_matches_date ON matches(date);
+
+        -- Prevents a rerun of pick generation for the same match from silently
+        -- duplicating rows for the same market/selection (this is exactly how the
+        -- legacy prediction_log accumulated 6,355 duplicate pairs — see audit_report.json).
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_picks_unique
+            ON picks(match_id, market, selection);
 
         -- ═══ Logo Registry ═══
         CREATE TABLE IF NOT EXISTS team_logo_registry (
@@ -442,10 +449,33 @@ def init_db(conn: sqlite3.Connection) -> None:
         CREATE INDEX IF NOT EXISTS idx_quallog_tier ON qualification_log(tier);
         CREATE INDEX IF NOT EXISTS idx_quallog_league ON qualification_log(league_name);
 
+        -- One qualification decision per match/market; reruns become no-ops
+        -- instead of duplicate log rows (log_qualification() already tolerates
+        -- insert failures per-pick via its own try/except).
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_quallog_unique
+            ON qualification_log(match_id, market);
+
     """)
     conn.commit()
 
+    _migrate_add_column(conn, "picks", "model_source", "TEXT DEFAULT 'unknown'")
+
     _seed_league_profiles(conn)
+
+
+def _migrate_add_column(conn: sqlite3.Connection, table: str, column: str, ddl_type: str) -> None:
+    """Add a column to an existing table if it isn't already there.
+
+    CREATE TABLE IF NOT EXISTS only creates a table on first run — it never
+    alters one that already exists, so a new column added to the schema above
+    would silently never reach a database file created by an older version of
+    this module without an explicit ALTER TABLE migration like this one.
+    """
+    existing = {row[1] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+    if column not in existing:
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl_type}")
+        conn.commit()
+        logger.info(f"Migrated: added column {table}.{column}")
 
 
 def _seed_league_profiles(conn: sqlite3.Connection) -> None:

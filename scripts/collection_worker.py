@@ -79,7 +79,7 @@ def run_collection():
         try:
             logger.info(f"Generating prediction for {home} vs {away}...")
             # _compute_match_analysis internally writes to prediction_log
-            analysis = _compute_match_analysis(home, away, league_name)
+            analysis = _compute_match_analysis(home, away, league_name, fixture_id=event_id)
             success_count += 1
             time.sleep(1.0)
         except Exception as e:

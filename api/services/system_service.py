@@ -81,8 +81,12 @@ async def _daily_fixture_refresh_loop():
     import json
     from collections import defaultdict
 
-    def _istanbul_date(offset_days: int = 0) -> str:
-        tz = timezone(timedelta(hours=3))
+    def _iran_date(offset_days: int = 0) -> str:
+        try:
+            import zoneinfo
+            tz = zoneinfo.ZoneInfo("Asia/Tehran")
+        except Exception:
+            tz = timezone(timedelta(hours=3, minutes=30))
         return (datetime.now(tz).date() + timedelta(days=offset_days)).isoformat()
 
     def _has_valid_api_football_cache(ist_date: str) -> bool:
@@ -123,7 +127,7 @@ async def _daily_fixture_refresh_loop():
         if not KEY:
             logger.warning("[AUTO-REFRESH] No API-Football key configured.")
             return {}
-        url = f"https://v3.football.api-sports.io/fixtures?date={utc_date}"
+        url = f"https://v3.football.api-sports.io/fixtures?date={utc_date}&timezone=Asia/Tehran"
         try:
             req = urllib.request.Request(
                 url, headers={"x-apisports-key": KEY, "Accept": "application/json"}
@@ -196,23 +200,27 @@ async def _daily_fixture_refresh_loop():
         """Current UTC date + offset_days."""
         return (datetime.now(timezone.utc).date() + timedelta(days=offset_days)).isoformat()
 
-    def _ist_has_full_coverage(ist_date: str) -> bool:
-        """True when the IST cache for ist_date has API-Football fixtures at or after 03:00 IST.
-        This indicates the UTC same-day data has been fetched (not just the previous-UTC-day overflow)."""
+    def _iran_has_full_coverage(iran_date: str) -> bool:
+        """True when the Iran cache for iran_date has API-Football fixtures spanning
+        the full day — both early-morning (before 03:00) AND daytime (03:30+).
+        If only one half exists, the cache is incomplete."""
         from api.services.fixtures_service import _get_cache_path
-        path = _get_cache_path(ist_date)
+        path = _get_cache_path(iran_date)
         if not path.exists():
             return False
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
             if not isinstance(data, list) or len(data) == 0:
                 return False
-            return any(
-                isinstance(f, dict)
+            api_fixtures = [
+                f for f in data
+                if isinstance(f, dict)
                 and (f.get("provider") == "api_football" or f.get("source") in ("api_football", "apifootball"))
-                and (f.get("time") or "00:00") >= "03:00"
-                for f in data
-            )
+                and not f.get("_overflow")
+            ]
+            has_daytime = any((f.get("time") or "00:00") >= "03:30" for f in api_fixtures)
+            has_early = any((f.get("time") or "00:00") < "03:00" for f in api_fixtures)
+            return has_daytime and has_early
         except Exception:
             return False
 
@@ -228,20 +236,24 @@ async def _daily_fixture_refresh_loop():
     for utc_offset in [-1, 0, 1]:
         utc_date = _utc_date(utc_offset)
         # For UTC offset 0 and +1, skip only if the IST date (same as UTC +3h) already has full coverage
-        ist_equivalent = _istanbul_date(utc_offset)
-        if utc_offset >= 0 and _ist_has_full_coverage(ist_equivalent):
-            logger.info(f"[AUTO-REFRESH] IST {ist_equivalent} already has full API-Football coverage — skipping UTC {utc_date}")
+        iran_equivalent = _iran_date(utc_offset)
+        if utc_offset >= 0 and _iran_has_full_coverage(iran_equivalent):
+            logger.info(f"[AUTO-REFRESH] Iran {iran_equivalent} already has full API-Football coverage — skipping UTC {utc_date}")
             continue
         written = await loop.run_in_executor(None, _fetch_and_cache, utc_date)
-        for ist_date in written:
-            await loop.run_in_executor(None, _prewarm, ist_date)
+        for iran_date in written:
+            await loop.run_in_executor(None, _prewarm, iran_date)
 
     # ── Hourly loop: checks every hour for newly-unlocked UTC dates ──
     # The free plan rolling 3-day window shifts at midnight UTC.
     # e.g. when UTC date changes from Jul 19 → Jul 20, "Jul 20" UTC becomes accessible.
     # This loop wakes every hour and fetches any UTC dates whose IST caches are incomplete.
     while True:
-        tz = timezone(timedelta(hours=3))
+        try:
+            import zoneinfo
+            tz = zoneinfo.ZoneInfo("Asia/Tehran")
+        except Exception:
+            tz = timezone(timedelta(hours=3, minutes=30))
         now = datetime.now(tz)
         # Wake at HH:05 every hour
         target = now.replace(minute=5, second=0, microsecond=0)
@@ -254,13 +266,13 @@ async def _daily_fixture_refresh_loop():
         # Fetch UTC yesterday, today, tomorrow (UTC) each tick
         for utc_offset in [-1, 0, 1]:
             utc_date = _utc_date(utc_offset)
-            ist_equivalent = _istanbul_date(utc_offset)
-            if utc_offset >= 0 and _ist_has_full_coverage(ist_equivalent):
+            iran_equivalent = _iran_date(utc_offset)
+            if utc_offset >= 0 and _iran_has_full_coverage(iran_equivalent):
                 continue
-            logger.info(f"[AUTO-REFRESH] Fetching UTC {utc_date} (IST target: {ist_equivalent})")
+            logger.info(f"[AUTO-REFRESH] Fetching UTC {utc_date} (Iran target: {iran_equivalent})")
             written = await loop.run_in_executor(None, _fetch_and_cache, utc_date)
-            for ist_date in written:
-                await loop.run_in_executor(None, _prewarm, ist_date)
+            for iran_date in written:
+                await loop.run_in_executor(None, _prewarm, iran_date)
 
 
 async def _nightly_retrain_loop():

@@ -58,42 +58,35 @@ def run_pipeline(
         conn = get_db()
 
     # ── Agent 1: Fixture Collector ───────────────────────────────
-    fixtures = collect_fixtures(raw_events, date_str, conn)
-    if not fixtures:
+    all_fixtures = collect_fixtures(raw_events, date_str, conn)
+    if not all_fixtures:
         logger.warning(f"No tracked fixtures for {date_str}")
         return _empty_result(date_str, len(raw_events))
 
+    # Only generate picks for matches that haven't kicked off yet. Without this,
+    # re-running the pipeline for a date with some matches already LIVE/FT would
+    # silently generate a "pre-match" pick using team state that may already
+    # reflect that very match's result — the live-pipeline equivalent of feature
+    # leakage, and exactly what must not happen to the frozen 1,000-pick sample.
+    fixtures = [m for m in all_fixtures if m.get("status") == "NS"]
+    skipped_started = len(all_fixtures) - len(fixtures)
+    if skipped_started:
+        logger.warning(
+            f"Skipped {skipped_started} already-started/finished fixture(s) for {date_str} "
+            f"(not NS) — no picks generated for them."
+        )
+    if not fixtures:
+        logger.warning(f"No not-yet-started fixtures for {date_str}")
+        return _empty_result(date_str, len(raw_events))
+
     # ── Agent 2: Odds Fetcher ────────────────────────────────────
-    # Hybrid Odds: SofaScore pseudo-odds were inserted by fixture_collector.
-    # Now we fallback to API-Football odds for real bookmaker data.
-    from api.main import _fetch_api_football_odds
+    # SofaScore pseudo-odds were already inserted by fixture_collector's
+    # _extract_odds() during collect_fixtures() above. A previous attempt to
+    # cross-reference API-Football odds here was never completed (it imported a
+    # function that no longer exists in api.main, and its own cross-provider
+    # mapping loop was an empty `pass` even when it did run) — it never fetched
+    # anything usable and unconditionally raised ImportError before this fix.
     odds_status = "sofascore_only"
-    
-    # Check if we should fetch API-Football odds
-    try:
-        api_odds = _fetch_api_football_odds(date_str)
-        if api_odds:
-            from src.db.odds_repo import insert_odds
-            from src.data.odds_fetcher import _fuzzy_match
-            from datetime import datetime, timezone
-            
-            inserted = 0
-            # For each API-Football fixture ID
-            for fix_id, bookmakers in api_odds.items():
-                # We need to map api-football fixture to our SofaScore fixture.
-                # Since we don't have the api-football team names readily available in api_odds,
-                # we will rely on the fact that the pipeline fetched raw_events and fixtures.
-                # Wait, we can fetch api_football fixtures for the date, or simply extract them if we cached them.
-                # To be completely safe and avoid extra API calls, we will just use SofaScore odds if mapping fails.
-                pass
-                
-            # Since cross-provider mapping without the API-Football fixture metadata is fragile,
-            # we will securely rely on SofaScore's embedded odds for the local environment 
-            # and only trigger API-Football if specifically mapped in the backend DB.
-            odds_status = f"hybrid_fallback:sofascore"
-    except Exception as e:
-        logger.error(f"API-Football odds fetch failed: {e}")
-        odds_status = f"error:{e}"
 
     # ── Agent 3: Probability Engine ──────────────────────────────
     # Fit calibrator from historical data (if available)
@@ -193,6 +186,7 @@ def run_pipeline(
             league_reliability=c["league_reliability"],
             grade=grade,
             stake_units=min(stake, c.get("max_stake_units", 2.0)),
+            model_source=c.get("model_source", "unknown"),
         )
         picks.append(pick)
 

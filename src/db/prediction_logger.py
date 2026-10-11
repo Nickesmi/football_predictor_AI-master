@@ -98,12 +98,15 @@ def log_predictions(
     - Prevents logging predictions made after match start (future leakage)
     - Uses (match_id, market_type) deduplication, not just match_id
     """
-    from datetime import datetime
-    
-    # VALIDATION: Check timestamp is not in future
+    from src.config import now_utc
+
+    # VALIDATION: Check timestamp is not in future.
+    # Must compare against UTC "now", not server-local wall-clock time — match_date
+    # is stored/derived from UTC provider timestamps, so a naive datetime.now() here
+    # silently shifts this leakage guard by the server's UTC offset.
     try:
         match_dt = datetime.fromisoformat(match_date)
-        now = datetime.now()
+        now = now_utc().replace(tzinfo=None) if match_dt.tzinfo is None else now_utc()
         if match_dt > now:
             logger.warning(f"Cannot predict match {match_id}: match date {match_date} is in future")
             return 0

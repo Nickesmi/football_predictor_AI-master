@@ -103,20 +103,25 @@ def run_validation():
     logger.info("==================================================")
     
     conn = get_db()
-    
-    # Check if we have enough historical data
-    # We will query `picks` table to see how many settled picks we have
-    settled_picks = conn.execute(
-        "SELECT COUNT(*) FROM picks WHERE result IS NOT NULL"
-    ).fetchone()[0]
-    
+    from src.db.picks_repo import get_experiment_progress, _AUTOMATED_PIPELINE_MODEL_SOURCES
+
+    # Check if we have enough historical data. Uses the same authoritative,
+    # provenance-filtered count as the baseline_contract.md 1,000-pick gate —
+    # a naive COUNT(*) here would also pass manual/placeholder rows.
+    experiment = get_experiment_progress(conn)
+    settled_picks = experiment["settled_eligible"]
+
     if settled_picks < 1000:
         logger.error(f"FAIL: Insufficient settled picks ({settled_picks} < 1000).")
         logger.error("INSUFFICIENT EVIDENCE — DO NOT DEPLOY BILQE")
         return
-        
+
+    _source_placeholders = ",".join("?" for _ in _AUTOMATED_PIPELINE_MODEL_SOURCES)
     clv_picks = conn.execute(
-        "SELECT COUNT(*) FROM picks WHERE clv_pct IS NOT NULL AND result IS NOT NULL"
+        f"""SELECT COUNT(*) FROM picks
+            WHERE clv_pct IS NOT NULL AND result IN ('won', 'lost')
+              AND model_source IN ({_source_placeholders})""",
+        _AUTOMATED_PIPELINE_MODEL_SOURCES,
     ).fetchone()[0]
     
     if clv_picks < 50:
@@ -131,15 +136,18 @@ def run_validation():
     # we will analyze the results using the existing `prediction_log` and `picks` 
     # as a proxy for the baseline, and apply simulated layer logic to them.
     
-    # ── Fetch baseline data ──
+    # ── Fetch baseline data (same provenance filter as the gate above — a
+    # manual/placeholder row must not enter the BILQE baseline any more than it
+    # should count toward the 1,000-pick gate) ──
     rows = conn.execute(
-        """SELECT p.id, p.match_id, p.market, p.model_prob, p.implied_prob, p.edge, 
+        f"""SELECT p.id, p.match_id, p.market, p.model_prob, p.implied_prob, p.edge,
                   p.odds_at_pick, p.clv_pct, p.result, m.league_name, m.home_team, m.away_team
            FROM picks p
            JOIN matches m ON p.match_id = m.id
-           WHERE p.result IS NOT NULL
+           WHERE p.result IN ('won', 'lost')
+             AND p.model_source IN ({_source_placeholders})
            LIMIT ?""",
-        (MAX_MATCHES_TO_TEST,)
+        _AUTOMATED_PIPELINE_MODEL_SOURCES + (MAX_MATCHES_TO_TEST,)
     ).fetchall()
     
     if len(rows) < 1000:
