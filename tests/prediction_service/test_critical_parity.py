@@ -95,7 +95,10 @@ def test_replay_feature_values_exactly_match_the_reference_batch_computation(rea
     rows = db_conn.execute(
         "SELECT match_id, feature_snapshot_json FROM predictions WHERE is_latest = 1 AND market = 'home_win'"
     ).fetchall()
-    assert len(rows) > 0
+    window_ids = set(real_matches.loc[
+        (real_matches["date"] >= REPLAY_START) & (real_matches["date"] <= REPLAY_END), "match_id"
+    ])
+    assert {row["match_id"] for row in rows} == window_ids
 
     reference = build_point_in_time_features(real_matches)
 

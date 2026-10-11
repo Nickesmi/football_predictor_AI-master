@@ -22,7 +22,9 @@ def real_matches():
 def test_replay_fetch_fixtures_never_includes_the_result(real_matches):
     provider = ReplayProvider(real_matches)
     fixtures = provider.fetch_fixtures(as_of="2025-05-25")
-    assert len(fixtures) > 0
+    expected_ids = set(real_matches.loc[real_matches["date"] == "2025-05-25", "match_id"])
+    assert len(expected_ids) == 16  # EPL final day (10) + Serie A (6)
+    assert {f.fixture_id for f in fixtures} == expected_ids
     for f in fixtures:
         assert f.home_goals is None and f.away_goals is None
         assert f.data_mode.value == "REPLAY"
@@ -41,9 +43,10 @@ def test_replay_fetch_result_reveals_the_real_result_once_the_date_has_passed(re
     some_fixture = provider.fetch_fixtures(as_of="2025-05-25")[0]
 
     result_after = provider.fetch_result(some_fixture.fixture_id, as_of="2025-05-25T23:59:59Z")
-    assert result_after is not None
+    truth = real_matches.loc[real_matches["match_id"] == some_fixture.fixture_id].iloc[0]
+    assert result_after.fixture_id == some_fixture.fixture_id
     assert result_after.status == "finished"
-    assert result_after.home_goals is not None and result_after.away_goals is not None
+    assert (result_after.home_goals, result_after.away_goals) == (int(truth["home_goals"]), int(truth["away_goals"]))
 
 
 def test_replay_fetch_result_unknown_fixture_id_returns_none(real_matches):

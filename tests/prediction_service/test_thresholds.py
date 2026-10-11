@@ -64,9 +64,7 @@ def test_threshold_prefers_lowest_qualifying_value_to_maximize_coverage():
     p = np.array([0.5] * 50 + [0.8] * 50)
     y = np.array([1] * 20 + [0] * 30 + [1] * 45 + [0] * 5)
     result = _find_threshold(p, y)
-    assert result is not None
-    assert result["threshold"] == pytest.approx(0.5)
-    assert result["pooled_hit_rate"] == pytest.approx(0.65)
+    assert result == {"threshold": 0.5, "pooled_hit_rate": 0.65, "pooled_n": 100}
 
 
 def test_real_market_thresholds_file_never_exceeds_hit_rate_floor_promise():

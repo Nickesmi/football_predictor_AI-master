@@ -50,7 +50,9 @@ def test_rolling_shadow_never_lets_the_challenger_change_the_production_predicti
     # replaced by the challenger being shadow-tested alongside it.
     real_champion = get_champion("home_win")
     rows = db_conn.execute("SELECT champion_model FROM predictions WHERE is_latest = 1").fetchall()
-    assert len(rows) > 0
+    in_window = toy_history[(toy_history["date"] >= window_start) & (toy_history["date"] <= window_end)]
+    assert len(in_window) == 6
+    assert len(rows) == len(in_window)
     for row in rows:
         assert row["champion_model"] == real_champion
 
@@ -70,7 +72,8 @@ def test_rolling_shadow_settles_only_after_the_clock_passes_the_match(toy_histor
     rows = db_conn.execute(
         "SELECT prediction_timestamp, evaluated_at FROM shadow_predictions WHERE evaluated_at IS NOT NULL"
     ).fetchall()
-    assert len(rows) > 0
+    in_window = toy_history[(toy_history["date"] >= window_start) & (toy_history["date"] <= window_end)]
+    assert len(rows) == len(in_window) == 6
     for row in rows:
         assert pd.Timestamp(row["evaluated_at"]) > pd.Timestamp(row["prediction_timestamp"])
 

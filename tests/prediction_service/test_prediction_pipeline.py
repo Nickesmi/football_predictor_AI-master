@@ -44,8 +44,10 @@ def test_successful_prediction_end_to_end(real_matches, db_conn):
     assert result.betting_recommendation.status == "UNAVAILABLE"  # no odds supplied
 
     saved = snapshot_db.get_prediction(db_conn, result.prediction_id)
-    assert saved is not None
+    assert saved["prediction_id"] == result.prediction_id
     assert saved["champion_model"] == result.champion_model
+    assert saved["market"] == "home_win"
+    assert saved["calibrated_probability"] == pytest.approx(result.calibrated_probability)
 
 
 def test_prediction_timestamp_at_or_after_kickoff_is_refused(real_matches, db_conn):

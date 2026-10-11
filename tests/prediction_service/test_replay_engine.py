@@ -57,7 +57,8 @@ def test_settlement_always_happens_strictly_after_the_prediction_was_frozen(toy_
         """SELECT p.prediction_timestamp, e.evaluated_at FROM predictions p
            JOIN post_match_evaluations e ON p.prediction_id = e.prediction_id"""
     ).fetchall()
-    assert len(rows) > 0
+    in_window = toy_history[(toy_history["date"] >= window_start) & (toy_history["date"] <= window_end)]
+    assert len(rows) == len(in_window) == 6
     for row in rows:
         assert pd.Timestamp(row["evaluated_at"]) > pd.Timestamp(row["prediction_timestamp"]), (
             "a prediction was settled at or before its own prediction_timestamp — this is the exact "
@@ -88,7 +89,8 @@ def test_replay_predictions_are_tagged_as_replay_not_live(toy_history, db_conn):
     window_end = toy_history["date"].iloc[-1]
     run_replay(toy_history, window_start, window_end, markets=["home_win"], conn=db_conn)
     rows = db_conn.execute("SELECT data_mode FROM predictions").fetchall()
-    assert len(rows) > 0
+    in_window = toy_history[(toy_history["date"] >= window_start) & (toy_history["date"] <= window_end)]
+    assert len(rows) == len(in_window) == 3
     assert all(r["data_mode"] == "REPLAY" for r in rows)
 
 
