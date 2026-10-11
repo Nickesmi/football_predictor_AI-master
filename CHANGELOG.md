@@ -1,0 +1,23 @@
+# Changelog
+
+## M0 — consolidation (2026-10-11, `integration/m0-consolidation`)
+
+No change to production prediction probabilities (golden test identical before and after).
+
+### Added
+- Real-data research pipeline from the audit branch (merged with history): openfootball dataset (public domain / CC0), point-in-time features, walk-forward backtest, real-data models, champion registry, market thresholds, `src/prediction_service` (fail-closed pipeline, replay, shadow mode) and tests. Not wired into the app.
+- `tests/golden/`: golden-probability regression for `estimate_probabilities()` and `_compute_match_analysis()` (tolerance 1e-9).
+- `tests/pending_m2/`: tests for governed changes deferred to M2 (opt-in via `RUN_PENDING_M2=1`).
+- `tests/test_schema_migrations.py`.
+- `data_leakage_warning` field and docstring on `/api/debug/backtest-features` (admin only).
+
+### Fixed
+- `init_db()` now creates `model_confidence_adjustments`, `prediction_errors`, `team_learning_state`, `team_rating_history` (verbatim live DDL, idempotent).
+- Previously uncommitted gated-pipeline fixes (see `AUDIT_REPORT_2026-09-13.md`): unique indexes on `picks` / `qualification_log`, UTC helpers, chronological isotonic split, `void_stale_picks`, `model_source` provenance, NS/today-only pipeline guards, `qualification_log` persistence, authoritative experiment counter, one-shot settlement worker.
+
+### Removed
+- `src/engine/settlement.py` (zero callers; unimportable; replaced by `auto_settle_picks` / `void_stale_picks` via `scripts/settlement_worker.py`).
+- `src/ml/calibration.py` (unused in-sample calibrator).
+
+### Repository
+- `.gitignore`: `.env.*` (except `.env.example`), `PROJECT_MASTER_REPORT.pdf`, `data/**/*.db*`; whitelist `tests/golden/*.json`.
