@@ -65,9 +65,21 @@ __pycache__/
 *.py[cod]
 *$py.class
 venv/
+.venv*/
 .env
 .env.*
 !.env.example
+
+# Credentials and private material
+.streamlit/secrets.toml
+*.pem
+*.key
+*.p12
+*.pfx
+*.bak
+backups/
+*.sqlite
+*.sqlite3
 
 # Local handover documents (not for version control)
 PROJECT_MASTER_REPORT.pdf
