@@ -19,12 +19,18 @@ async def lifespan(app: FastAPI):
     await start_background_tasks()
     yield
 
+from src.config import APP_ENV, CORS_ALLOW_ORIGINS, validate_security_config  # noqa: E402
+
+_security_problems = validate_security_config()
+if _security_problems:
+    raise RuntimeError(f"Refusing to start (APP_ENV={APP_ENV}): " + "; ".join(_security_problems))
+
 # ── Instantiate App ──────────────────────────────────────────────────────────
 app = FastAPI(title="Football Predictor AI API", version="5.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=CORS_ALLOW_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

@@ -25,7 +25,7 @@ check_worker "Settlement Worker" "settlement_worker.py"
 echo ""
 echo "--- API Football Status ---"
 # Note: Requires the web server to be running on 8001
-API_RES=$(curl -s -H "x-api-key: dev-admin-secret" http://127.0.0.1:8001/api/debug/api-football-status || echo '{"error": "Web server offline"}')
+API_RES=$(curl -s http://127.0.0.1:8001/api/debug/api-football-status || echo '{"error": "Web server offline"}')
 
 if echo "$API_RES" | grep -q '"error"'; then
     echo "Web Server: OFFLINE ❌"

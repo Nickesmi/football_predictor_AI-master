@@ -49,7 +49,48 @@ APIFOOTBALL_API_KEY: str = _settings.get("api_key") or os.getenv("APIFOOTBALL_AP
 APIFOOTBALL_HOST: str = _settings.get("api_host") or os.getenv("APIFOOTBALL_HOST", "v3.football.api-sports.io")
 RAPIDAPI_KEY: str = os.getenv("RAPIDAPI_KEY", "")
 RAPIDAPI_HOST: str = os.getenv("RAPIDAPI_HOST", "")
-ADMIN_API_KEY: str = os.getenv("ADMIN_API_KEY", "dev-admin-secret")
+
+# ---------------------------------------------------------------------------
+# Security — no credential has a built-in default. Outside development the API
+# refuses to start unless these are configured (see validate_security_config).
+# ---------------------------------------------------------------------------
+APP_ENV: str = os.getenv("APP_ENV", "development").strip().lower()
+IS_DEVELOPMENT: bool = APP_ENV in ("development", "dev", "local", "test")
+MIN_ADMIN_API_KEY_LENGTH = 32
+
+# Empty means the admin API is disabled (every admin request is refused).
+ADMIN_API_KEY: str = os.getenv("ADMIN_API_KEY", "").strip()
+
+
+def _parse_origins(raw: str) -> list[str]:
+    return [o.strip().rstrip("/") for o in raw.split(",") if o.strip()]
+
+
+_WEB_PORT = os.getenv("WEB_PORT", "5173").strip() or "5173"
+_DEV_CORS_ORIGINS = sorted({
+    f"http://{host}:{port}"
+    for host in ("localhost", "127.0.0.1")
+    for port in (_WEB_PORT, "5173")
+})
+CORS_ALLOW_ORIGINS: list[str] = (
+    _parse_origins(os.getenv("CORS_ALLOW_ORIGINS", ""))
+    or (_DEV_CORS_ORIGINS if IS_DEVELOPMENT else [])
+)
+
+
+def validate_security_config() -> list[str]:
+    """Return a list of security misconfigurations (empty when safe to run)."""
+    problems = []
+    if not IS_DEVELOPMENT:
+        if len(ADMIN_API_KEY) < MIN_ADMIN_API_KEY_LENGTH:
+            problems.append(
+                f"ADMIN_API_KEY must be set to at least {MIN_ADMIN_API_KEY_LENGTH} characters when APP_ENV={APP_ENV}"
+            )
+        if not CORS_ALLOW_ORIGINS:
+            problems.append(f"CORS_ALLOW_ORIGINS must list the allowed origins when APP_ENV={APP_ENV}")
+    if "*" in CORS_ALLOW_ORIGINS:
+        problems.append("CORS_ALLOW_ORIGINS must not contain '*' (credentials are allowed)")
+    return problems
 
 if not APIFOOTBALL_API_KEY:
     print(
