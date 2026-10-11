@@ -1,0 +1,63 @@
+{
+  "target_hit_rate_floor": 0.55,
+  "min_samples": 40,
+  "folds_used": [
+    "train_through_2019-20_test_2021-22",
+    "train_through_2020-21_test_2022-23",
+    "train_through_2021-22_test_2023-24"
+  ],
+  "markets": {
+    "home_win": {
+      "champion": "elo",
+      "threshold": 0.37,
+      "pooled_hit_rate": 0.5502,
+      "pooled_n": 2012
+    },
+    "draw": {
+      "champion": "elo",
+      "threshold": null,
+      "reason": "no probability level pooled from folds 1-3 reached 55% hit-rate with >= 40 samples"
+    },
+    "away_win": {
+      "champion": "elo",
+      "threshold": 0.43,
+      "pooled_hit_rate": 0.5501,
+      "pooled_n": 838
+    },
+    "over_1_5": {
+      "champion": "elo",
+      "threshold": 0.74,
+      "pooled_hit_rate": 0.7967,
+      "pooled_n": 3198
+    },
+    "over_2_5": {
+      "champion": "elo",
+      "threshold": 0.5,
+      "pooled_hit_rate": 0.5584,
+      "pooled_n": 3107
+    },
+    "over_3_5": {
+      "champion": "elo",
+      "threshold": null,
+      "reason": "no probability level pooled from folds 1-3 reached 55% hit-rate with >= 40 samples"
+    },
+    "btts": {
+      "champion": "elo",
+      "threshold": 0.45,
+      "pooled_hit_rate": 0.5578,
+      "pooled_n": 3198
+    },
+    "home_over_0_5": {
+      "champion": "frequency",
+      "threshold": 0.78,
+      "pooled_hit_rate": 0.7908,
+      "pooled_n": 1066
+    },
+    "away_over_0_5": {
+      "champion": "poisson_real_data",
+      "threshold": 0.3,
+      "pooled_hit_rate": 0.7117,
+      "pooled_n": 3195
+    }
+  }
+}

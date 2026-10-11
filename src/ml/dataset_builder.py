@@ -3,6 +3,24 @@ Synthetic Dataset Builder for XGBoost Training.
 
 Generates realistic football match data with proper statistical distributions
 for training when API data is unavailable. Uses league-specific priors.
+
+IMPORTANT — this is 100% synthetic data (random team profiles + Poisson-
+sampled outcomes drawn from those same profiles). It contains no real
+match history, so:
+  - Cross-validated metrics computed on it (see src/ml/trainer.py and
+    models/training_metrics.json) measure how well a model reconstructs
+    this generator's own formula, NOT real-world predictive skill. Do not
+    quote those AUC/accuracy numbers as evidence of real accuracy.
+  - This is why src/engine/probability_engine.py deliberately treats the
+    XGBoost models as a low-weight "second opinion" on top of the
+    Poisson model (which uses real, live team_state data), gated further
+    by data_quality and the stored AUC.
+  - Once enough real matches accumulate in the `match_history` table
+    (populated by src/engine/live_updater.on_match_finished), the correct
+    fix is to add a builder that turns match_history into point-in-time
+    features (state as of each match's date, not "current" state) and
+    retrain/validate with walk-forward splits — never a random shuffle
+    split — before raising the XGBoost blend weight.
 """
 
 from __future__ import annotations
