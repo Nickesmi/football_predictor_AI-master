@@ -80,7 +80,7 @@ Important components:
 
 ### Prerequisites
 
-- Python 3.11 or newer
+- Python 3.11 (canonical runtime: `runtime.txt`, CI, devcontainer; golden-probability references are versioned per Python minor version)
 - Node.js 20 or newer
 - npm
 - GitHub CLI, if you want to publish with `gh`
@@ -88,12 +88,12 @@ Important components:
 ### Python Dependencies
 
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
+python3.11 -m venv .venv311
+source .venv311/bin/activate
+pip install -r requirements-lock.txt   # exact, reproducible (pinned top-level deps: requirements.txt)
 ```
 
-Some provider paths may also require optional packages used by the local runtime. If a missing package error appears, install the named package in the active environment.
+Note: the launchers (`run_web.command`, `*_workers.command`, `scripts/orchestration/*`) still use `.venv`. Moving the running app to the 3.11 environment is a planned cutover (see `docs/M2_PLAN.md`) because it changes one display value (`KNOWN_ISSUES.md` K20).
 
 ### Frontend Dependencies
 
@@ -112,7 +112,12 @@ Common variables:
 ```bash
 APIFOOTBALL_API_KEY=your_api_football_key
 VITE_API_URL=/api
+APP_ENV=development          # production requires the two settings below
+ADMIN_API_KEY=               # empty = admin endpoints disabled (503)
+CORS_ALLOW_ORIGINS=          # comma-separated; '*' is rejected
 ```
+
+See `.env.example` for the full list.
 
 The repository ignores `.env` files and SQLite database files by default.
 
@@ -148,19 +153,15 @@ POST /api/admin/retrain-engine
 
 ## Validation
 
-The current focused validation commands are:
+Same steps as CI (`.github/workflows/ci.yml`):
 
 ```bash
-python3 -m py_compile api/main.py src/engine/performance_gate.py
-PYTEST_ADDOPTS='-o cache_dir=.pytest_cache' python3 -m pytest tests/test_prediction_quality_controls.py -q
-cd frontend && npm run build
+.venv311/bin/python -m pytest tests -q          # isolated: temp DB/HOME, network blocked
+.venv311/bin/python scripts/test_integrity_audit.py
+cd frontend && npm ci && npm run lint && npm run build
 ```
 
-Expected focused test result:
-
-```text
-6 passed
-```
+Tests never touch `data/engine.db` or real providers. Opt-in suites: `RUN_PENDING_M2=1 pytest tests/pending_m2`, `M0_EXISTING_DB_COPY=<copy of engine.db> pytest tests/test_schema_migrations.py`, `RUN_EXTERNAL_TESTS=1` for tests marked `external`.
 
 ## Accuracy and Risk Notes
 
