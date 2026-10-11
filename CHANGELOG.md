@@ -1,5 +1,31 @@
 # Changelog
 
+## M1 — security, reproducibility, test infrastructure (2026-10-11, `m1/security-reproducibility`)
+
+No change to prediction outputs (golden test identical on Python 3.13).
+
+### Security
+- No default admin key; admin API returns 503 until `ADMIN_API_KEY` is set; constant-time comparison.
+- `APP_ENV`; outside development the API refuses to start without a ≥32-char admin key and explicit `CORS_ALLOW_ORIGINS`.
+- CORS restricted to configured origins (development default: localhost/127.0.0.1 web port); `*` rejected.
+- `.gitignore` covers credential files, key material, backups, SQLite files, extra venvs.
+
+### Tests
+- Test session isolated from production: temp DB, temp HOME, blank provider keys, network guard failing any external call, cache/research DB redirected.
+- Offline provider fakes for API-compatibility tests.
+- New: `test_security_config.py`, `test_repo_hygiene.py`.
+- 9 weak assertions replaced with exact expectations (integrity audit passes).
+
+### Frontend
+- 13 lint errors fixed without functional change.
+
+### Reproducibility
+- Pinned `requirements.txt`; `requirements-lock.txt` for Python 3.11; `.venv311`.
+- `FOOTBALL_PREDICTOR_SNAPSHOT_DB_PATH` override for the research snapshot DB.
+
+### Docs
+- `docs/NIGHTLY_REFIT_REVIEW.md`, `docs/M1_REPORT.md`.
+
 ## M0 — consolidation (2026-10-11, `integration/m0-consolidation`)
 
 No change to production prediction probabilities (golden test identical before and after).
