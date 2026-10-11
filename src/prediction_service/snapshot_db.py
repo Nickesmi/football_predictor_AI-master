@@ -21,12 +21,16 @@ not just a survivorship-biased view of predictions that succeeded.
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 from pathlib import Path
 from typing import Optional
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
-_DB_PATH = _PROJECT_ROOT / "data" / "real_historical" / "predictions.db"
+_DB_PATH = Path(
+    os.getenv("FOOTBALL_PREDICTOR_SNAPSHOT_DB_PATH")
+    or _PROJECT_ROOT / "data" / "real_historical" / "predictions.db"
+)
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS predictions (

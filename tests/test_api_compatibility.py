@@ -30,6 +30,12 @@ BENCHMARK_RESULTS: Dict[str, Any] = {
 }
 
 
+@pytest.fixture(autouse=True)
+def _offline_providers(monkeypatch):
+    from tests.fakes import providers
+    providers.install(monkeypatch)
+
+
 def record_latency(endpoint_name: str, duration: float, status_code: int) -> None:
     """Record latency and status code for benchmark comparison."""
     BENCHMARK_RESULTS["endpoints"][endpoint_name] = {
@@ -98,6 +104,7 @@ def test_fixtures_today_snapshot() -> None:
     assert response.status_code == 200
     data = response.json()
     assert isinstance(data, list)
+    assert [f["status"] for f in data] == ["FT", "STALE", "NS"]  # live match without live-provider data -> stale protection
 
 
 def test_fixtures_by_date_snapshot() -> None:
@@ -110,6 +117,7 @@ def test_fixtures_by_date_snapshot() -> None:
     assert response.status_code == 200
     data = response.json()
     assert isinstance(data, list)
+    assert [f["status"] for f in data] == ["FT", "STALE", "NS"]  # live match without live-provider data -> stale protection
 
 
 def test_portfolio_summary_snapshot() -> None:
@@ -275,17 +283,21 @@ def test_image_endpoints_snapshot() -> None:
     res_team = client.get("/api/image/team/17")
     dt = time.perf_counter() - t0
     record_latency("GET /api/image/team/17", dt, res_team.status_code)
-    assert res_team.status_code in (200, 307, 404)
+    assert res_team.status_code == 200
+    assert res_team.headers["content-type"] == "image/png"
 
     t0 = time.perf_counter()
     res_tour = client.get("/api/image/tournament/17")
     dt = time.perf_counter() - t0
     record_latency("GET /api/image/tournament/17", dt, res_tour.status_code)
-    assert res_tour.status_code in (200, 307, 404)
+    assert res_tour.status_code == 200
+    assert res_tour.headers["content-type"] == "image/png"
 
 
-def test_admin_auth_protection_snapshot() -> None:
+def test_admin_auth_protection_snapshot(monkeypatch) -> None:
     """Verify protected admin endpoints reject unauthenticated requests with 401/403."""
+    from src import config
+    monkeypatch.setattr(config, "ADMIN_API_KEY", "k" * 40)
     t0 = time.perf_counter()
     response = client.get("/api/debug/logo-audit")
     dt = time.perf_counter() - t0
