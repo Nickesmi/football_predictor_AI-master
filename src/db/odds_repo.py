@@ -7,6 +7,13 @@ from typing import Optional
 from src.db.database import retry_on_db_lock
 
 
+def _with_implied_probability(snapshot: dict) -> dict:
+    """Producers that only know decimal odds (e.g. SofaScore vote pseudo-odds) omit implied_probability."""
+    if snapshot.get("implied_probability") is None and snapshot.get("odds"):
+        snapshot["implied_probability"] = round(1.0 / float(snapshot["odds"]), 4)
+    return snapshot
+
+
 @retry_on_db_lock()
 def insert_odds(conn: sqlite3.Connection, snapshot: dict) -> None:
     """Insert an odds snapshot."""
@@ -20,7 +27,7 @@ def insert_odds(conn: sqlite3.Connection, snapshot: dict) -> None:
             """INSERT INTO odds_snapshots
                (match_id, market, selection, odds, bookmaker, is_opening, implied_probability, timestamp)
                VALUES (:match_id, :market, :selection, :odds, :bookmaker, :is_opening, :implied_probability, :timestamp)""",
-            snapshot,
+            _with_implied_probability(snapshot),
         )
 
 
@@ -40,7 +47,7 @@ def insert_odds_batch(conn: sqlite3.Connection, snapshots: list[dict]) -> None:
             """INSERT INTO odds_snapshots
                (match_id, market, selection, odds, bookmaker, is_opening, implied_probability, timestamp)
                VALUES (:match_id, :market, :selection, :odds, :bookmaker, :is_opening, :implied_probability, :timestamp)""",
-            snapshots,
+            [_with_implied_probability(s) for s in snapshots],
         )
 
 

@@ -129,3 +129,22 @@ def test_no_imports_of_names_removed_from_api_main():
             if isinstance(node, ast.ImportFrom) and node.module == "api.main":
                 stale += [f"{path.relative_to(ROOT)}: {a.name}" for a in node.names if a.name not in exported]
     assert stale == []
+
+
+def test_vote_odds_without_implied_probability_are_stored(engine_db):
+    from src.engine.fixture_collector import collect_fixtures
+
+    event = {
+        "id": "vote-1",
+        "tournament": {"uniqueTournament": {"id": 17, "name": "Premier League"}},
+        "homeTeam": {"name": "Liverpool"}, "awayTeam": {"name": "Ipswich Town"},
+        "status": {"type": "notstarted"}, "homeScore": {}, "awayScore": {},
+        "startTimestamp": 1893456000,
+        "vote": {"vote1": 50, "votex": 25, "vote2": 25},
+    }
+    fixtures = collect_fixtures([event], "2030-01-01", engine_db)
+    rows = engine_db.execute(
+        "SELECT selection, odds, implied_probability FROM odds_snapshots WHERE match_id = 'vote-1' ORDER BY selection"
+    ).fetchall()
+    assert [f["id"] for f in fixtures] == ["vote-1"]
+    assert [tuple(r) for r in rows] == [("away", 4.0, 0.25), ("draw", 4.0, 0.25), ("home", 2.0, 0.5)]
