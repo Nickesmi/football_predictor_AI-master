@@ -38,6 +38,7 @@ from api.services.fixtures_service import (
     _read_fixture_cache,
     _write_fixture_cache,
     _fetch_api_football_fixtures,
+    _api_football_to_fixture,
     _fetch_sofascore_fixtures,
     _get_istanbul_today,
     _PREDICTION_STATUS,

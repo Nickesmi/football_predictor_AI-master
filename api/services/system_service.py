@@ -190,9 +190,8 @@ async def _daily_fixture_refresh_loop():
 
     def _prewarm(ist_date: str):
         try:
-            from api.services.prediction_service import precompute_predictions_for_date
-            precompute_predictions_for_date(ist_date)
-            logger.info(f"[AUTO-REFRESH] Predictions pre-warmed for {ist_date}")
+            count = prewarm_predictions_for_date(ist_date)
+            logger.info(f"[AUTO-REFRESH] Predictions pre-warmed for {ist_date}: {count} fixtures")
         except Exception as e:
             logger.warning(f"[AUTO-REFRESH] Pre-warm skipped for {ist_date}: {e}")
 
@@ -273,6 +272,19 @@ async def _daily_fixture_refresh_loop():
             written = await loop.run_in_executor(None, _fetch_and_cache, utc_date)
             for iran_date in written:
                 await loop.run_in_executor(None, _prewarm, iran_date)
+
+
+def prewarm_predictions_for_date(ist_date: str) -> int:
+    """Pre-compute analyses for the cached fixtures of one Istanbul date; returns the fixture count."""
+    from api.services.fixtures_service import _precompute_predictions_for_date, _read_fixture_cache
+
+    fixtures = [
+        f for f in (_read_fixture_cache(ist_date) or [])
+        if isinstance(f, dict) and f.get("date") == ist_date
+    ]
+    if fixtures:
+        _precompute_predictions_for_date(ist_date, fixtures)
+    return len(fixtures)
 
 
 async def _nightly_retrain_loop():

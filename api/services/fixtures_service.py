@@ -24,6 +24,7 @@ from typing import Any, Optional
 from fastapi import BackgroundTasks, HTTPException
 from src.config import logger, TOP_LEAGUES, APIFOOTBALL_API_KEY, APIFOOTBALL_HOST
 from src.db.database import get_db
+from src.db.competition_tracker import upsert_competition
 from api.services.logo_service import resolve_team_logo as _resolve_team_logo
 from api.services.match_analysis_service import _compute_match_analysis, _ANALYSIS_CACHE
 from src.data.sofascore_fetcher import fetch_fixtures_by_date

@@ -36,9 +36,9 @@ def serve_local_image(filename: str) -> Response:
 @router.get("/api/debug/logo-audit", dependencies=[Depends(verify_admin_key)])
 def logo_audit(date: str, background_tasks: BackgroundTasks) -> Dict[str, Any]:
     """Diagnose logo resolutions for fixtures on a date and auto-upgrade if poor."""
-    from api.main import get_fixtures_by_date
+    from api.services.fixtures_service import get_fixtures_by_date_service
 
-    return logo_service.audit_team_logos(date, background_tasks, get_fixtures_by_date)
+    return logo_service.audit_team_logos(date, background_tasks, get_fixtures_by_date_service)
 
 
 @router.get("/api/debug/logo-health", dependencies=[Depends(verify_admin_key)])

@@ -306,10 +306,7 @@ def audit_blind_predictions(date_str: str) -> dict:
     from src.ml.poisson_model import PoissonGoalModel
 
     # Import league mapping
-    try:
-        from api.main import LEAGUE_NAME_MAP
-    except ImportError:
-        LEAGUE_NAME_MAP = {}
+    from api.services.match_analysis_service import LEAGUE_NAME_MAP
 
     results = []
     quality_counts = {"high": 0, "medium": 0, "low": 0, "blind": 0}

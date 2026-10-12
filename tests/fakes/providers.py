@@ -56,13 +56,33 @@ class _ImageResponse:
     content = PNG_1X1
 
 
+class _OfflineResponse:
+    """Any non-image curl_cffi request: behaves like an unreachable upstream (HTTP 503)."""
+    status_code = 503
+    content = b""
+    text = ""
+
+    def json(self):
+        return {}
+
+
+def _curl_get(url, **kwargs):
+    return _ImageResponse() if "/image" in str(url) else _OfflineResponse()
+
+
 def install(monkeypatch) -> None:
     """Route every provider call made by the API layer to offline fakes."""
+    import api.services.debug_service as debug_service
     import api.services.fixtures_service as fixtures_service
     import curl_cffi.requests as curl_requests
     import src.data.live_score_provider as live_score_provider
+    import src.data.sofascore_fetcher as sofascore_fetcher
 
-    monkeypatch.setattr(fixtures_service, "_fetch_api_football_fixtures", api_football_fixtures)
-    monkeypatch.setattr(fixtures_service, "_fetch_sofascore_fixtures", lambda date_str: [])
+    for module in (fixtures_service, debug_service):
+        monkeypatch.setattr(module, "_fetch_api_football_fixtures", api_football_fixtures)
+        monkeypatch.setattr(module, "_fetch_sofascore_fixtures", lambda date_str: [])
+    monkeypatch.setattr(sofascore_fetcher, "fetch_fixtures_by_date", lambda date_str: [])
+    monkeypatch.setattr(fixtures_service, "fetch_fixtures_by_date", lambda date_str: [])
     monkeypatch.setattr(live_score_provider, "fetch_live_scores", lambda date_str: [])
-    monkeypatch.setattr(curl_requests, "get", lambda url, **kwargs: _ImageResponse())
+    monkeypatch.setattr(fixtures_service, "fetch_live_scores", lambda date_str: [])
+    monkeypatch.setattr(curl_requests, "get", _curl_get)
