@@ -14,6 +14,7 @@ Pipeline orchestrator: runs all agents in sequence for a given date.
 import json
 import logging
 import sqlite3
+import uuid
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -25,6 +26,7 @@ from src.engine.probability_engine import estimate_probabilities_from_inputs, re
 from src.engine.market_value import find_value, filter_positive_edge
 from src.engine.risk_control import get_league_profile, score_confidence, apply_risk_filter
 from src.engine.calibration import ProbabilityCalibrator
+from src.engine import decisions
 
 from src.models.pick import Pick, assign_grade
 
@@ -162,6 +164,9 @@ def run_pipeline(
 
     match_probs = {}
     match_records = {}
+    run_id = uuid.uuid4().hex
+    decided_at = datetime.now(timezone.utc).isoformat()
+    decision_rows: list[dict] = []
     for match in fixtures:
         try:
             inputs = resolve_probability_inputs(match)
@@ -179,6 +184,8 @@ def run_pipeline(
             }
         except Exception as e:
             logger.error(f"Probability engine failed for {match['id']}: {e}")
+            decision_rows.append({"match_id": match["id"], "decision": "NO_FORECAST", "reasons_json": [
+                {"code": decisions.PROBABILITY_ENGINE_FAILED, "detail": type(e).__name__}]})
 
     # ── Agent 4: Market Value ────────────────────────────────────
     all_candidates = []
@@ -189,6 +196,14 @@ def run_pipeline(
         candidates = find_value(match, probs, conn)
         positive = filter_positive_edge(candidates)
         all_candidates.extend(positive)
+        if not candidates:
+            decision_rows.append({"match_id": match["id"], "decision": "NO_ACTIONABLE_BET",
+                                  "reasons_json": [decisions.NO_REAL_ODDS], "forecast_json": probs})
+        for c in candidates:
+            if c not in positive:
+                decision_rows.append({"match_id": c["match_id"], "market": c["market"], "selection": c["selection"],
+                                      "decision": "REJECTED", **decisions.candidate_fields(c), "reasons_json": [
+                                          {"code": decisions.NO_POSITIVE_EDGE, "value": c["edge"], "threshold": 0.0}]})
 
     # ── Agent 5: Risk Control ────────────────────────────────────
     for candidate in all_candidates:
@@ -199,6 +214,11 @@ def run_pipeline(
 
     # Apply risk filter (removes candidates below league-specific edge threshold)
     filtered = apply_risk_filter(all_candidates)
+    for c in all_candidates:
+        if c.get("risk_rejections"):
+            decision_rows.append({"match_id": c["match_id"], "market": c["market"], "selection": c["selection"],
+                                  "decision": "REJECTED", **decisions.candidate_fields(c),
+                                  "reasons_json": c["risk_rejections"]})
 
     # ── Grading & Sizing ─────────────────────────────────────────
     picks: list[Pick] = []
@@ -212,6 +232,10 @@ def run_pipeline(
             odds=c["odds"]
         )
         if grade == "Pass":
+            decision_rows.append({"match_id": c["match_id"], "market": c["market"], "selection": c["selection"],
+                                  "decision": "REJECTED", **decisions.candidate_fields(c), "reasons_json": [
+                                      {"code": decisions.GRADE_PASS, "confidence": c["confidence"],
+                                       "league_reliability": c["league_reliability"]}]})
             continue
 
         pick = Pick(
@@ -234,6 +258,9 @@ def run_pipeline(
             odds_type=c["odds_type"],
         )
         picks.append(pick)
+        decision_rows.append({"match_id": c["match_id"], "market": c["market"], "selection": c["selection"],
+                              "decision": "PICK", **decisions.candidate_fields(c), "reasons_json": [],
+                              "grade": pick.grade, "stake_units": pick.stake_units})
         odds_used[(pick.match_id, pick.market, pick.selection)] = {
             "odds_type": c["odds_type"], "provider": c["odds_provider"], "bookmaker": c["bookmaker"],
             "decimal_odds": c["odds"], "observed_at": c["odds_observed_at"],
@@ -253,6 +280,22 @@ def run_pipeline(
         except Exception as e:
             logger.error(f"Failed to store pick: {e}")
 
+    # ── Record every decision (informational; never counted as picks) ──
+    picked_matches = {p.match_id for p in picks}
+    priced_matches = {row["match_id"] for row in decision_rows if row.get("market")}
+    for match_id in sorted(priced_matches):
+        decision_rows.append({"match_id": match_id, "forecast_json": match_probs.get(match_id), **(
+            {"decision": "ACTIONABLE", "reasons_json": []} if match_id in picked_matches
+            else {"decision": "NO_ACTIONABLE_BET", "reasons_json": [decisions.ALL_SELECTIONS_REJECTED]})})
+    provenance = baseline.provenance(manifest, decided_at)
+    try:
+        decisions.record(conn, [{**row, "run_id": run_id, "decided_at": decided_at,
+                                 "code_revision": provenance["code_revision"],
+                                 "baseline_version": provenance["baseline_version"]} for row in decision_rows])
+    except Exception as e:
+        logger.error(f"Failed to record selection decisions: {e}")
+    no_actionable = sum(1 for row in decision_rows if row["decision"] == "NO_ACTIONABLE_BET")
+
     # ── Build result ─────────────────────────────────────────────
     grade_counts = {}
     total_stake = 0.0
@@ -268,6 +311,8 @@ def run_pipeline(
         "candidates_found": len(all_candidates),
         "picks_after_filter": len(filtered),
         "final_picks": len(picks),
+        "no_actionable_bet": no_actionable,
+        "decision_run_id": run_id,
         "picks": [p.to_display_dict() for p in picks],
         "summary": {
             "grades": grade_counts,

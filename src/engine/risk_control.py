@@ -105,35 +105,51 @@ def score_confidence(
     return candidate
 
 
+def risk_rejection_reasons(c: dict) -> list[dict]:
+    """
+    Every risk threshold a scored candidate fails, as structured reasons.
+    An empty list means the candidate passes. Thresholds are unchanged:
+    edge >= league minimum, confidence >= floor (0.35 with data quality >= 60,
+    else 0.45), probability >= 0.46 (0.34 at odds >= 4, 0.24 at odds >= 7),
+    data quality >= 35.
+    """
+    min_edge = c.get("min_edge_threshold", 0.05)
+    min_prob = 0.46
+    if c.get("odds", 0) >= 4.0:
+        min_prob = 0.34
+    if c.get("odds", 0) >= 7.0:
+        min_prob = 0.24
+
+    data_quality = float(c.get("data_quality", 50.0))
+    confidence_floor = 0.35 if data_quality >= 60 else 0.45
+
+    reasons = []
+    if not c["edge"] >= min_edge:
+        reasons.append({"code": "EDGE_BELOW_LEAGUE_MINIMUM", "value": c["edge"], "threshold": min_edge})
+    if not c["confidence"] >= confidence_floor:
+        reasons.append({"code": "CONFIDENCE_BELOW_FLOOR", "value": c["confidence"], "threshold": confidence_floor})
+    if not c["model_prob"] >= min_prob:
+        reasons.append({"code": "PROBABILITY_BELOW_MINIMUM", "value": c["model_prob"], "threshold": min_prob})
+    if not data_quality >= 35:
+        reasons.append({"code": "DATA_QUALITY_BELOW_MINIMUM", "value": data_quality, "threshold": 35})
+    return reasons
+
+
 def apply_risk_filter(candidates: list[dict]) -> list[dict]:
     """
     Remove candidates that don't pass risk thresholds.
     A candidate must have edge > league-specific minimum.
+    Each removed candidate keeps its reasons in c["risk_rejections"].
     """
     passed = []
     for c in candidates:
-        min_edge = c.get("min_edge_threshold", 0.05)
-        min_prob = 0.46
-        if c.get("odds", 0) >= 4.0:
-            min_prob = 0.34
-        if c.get("odds", 0) >= 7.0:
-            min_prob = 0.24
-
-        data_quality = float(c.get("data_quality", 50.0))
-        confidence_floor = 0.35 if data_quality >= 60 else 0.45
-
-        if (
-            c["edge"] >= min_edge
-            and c["confidence"] >= confidence_floor
-            and c["model_prob"] >= min_prob
-            and data_quality >= 35
-        ):
+        reasons = risk_rejection_reasons(c)
+        if not reasons:
             passed.append(c)
         else:
+            c["risk_rejections"] = reasons
             logger.debug(
                 f"Risk filter removed: {c['home_team']} vs {c['away_team']} "
-                f"{c['market']}/{c['selection']} edge={c['edge']:.3f} "
-                f"(min={min_edge}) prob={c['model_prob']:.3f} "
-                f"quality={data_quality:.1f}"
+                f"{c['market']}/{c['selection']} reasons={[r['code'] for r in reasons]}"
             )
     return passed

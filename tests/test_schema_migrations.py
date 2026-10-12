@@ -95,7 +95,7 @@ M2_NEW_TABLES = {
     "calibration_models_frozen", "calibration_models_shadow",
     "model_confidence_adjustments_frozen", "model_confidence_adjustments_shadow",
     # M2.5 real-odds layer
-    "odds_quotes", "crowd_vote_signals", "fixture_identity", "provider_quota_log",
+    "odds_quotes", "crowd_vote_signals", "fixture_identity", "provider_quota_log", "selection_decisions",
 }
 
 

@@ -586,6 +586,8 @@ def init_db(conn: sqlite3.Connection) -> None:
     # Real bookmaker odds, crowd-vote signals, fixture identity, provider quota (M2.5).
     from src.odds.store import ensure_odds_tables
     ensure_odds_tables(conn)
+    from src.engine.decisions import ensure_decision_tables
+    ensure_decision_tables(conn)
 
     from src.baseline.tables import ensure_baseline_tables
     ensure_baseline_tables(conn)
