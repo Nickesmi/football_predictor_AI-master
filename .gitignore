@@ -29,6 +29,7 @@ data/logos/
 !frontend/package-lock.json
 !tests/golden/*.json
 !tests/golden/history/**/*.json
+!models/baseline/*/manifest.json
 benchmark_output.txt
 /analysis_*.py
 /audit_*.py

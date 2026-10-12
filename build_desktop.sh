@@ -34,14 +34,16 @@ success "npm $(npm --version) ✓"
 
 # ── Step 2: Create/activate virtual environment ──────────
 info "Setting up Python virtual environment..."
-python3 -m venv .venv
-source .venv/bin/activate
+# Separate environment: never rebuild the .venv the running app uses.
+command -v python3.11 >/dev/null 2>&1 || error "Python 3.11 not found (canonical runtime). brew install python@3.11"
+python3.11 -m venv .venv-desktop
+source .venv-desktop/bin/activate
 success "Virtual environment ready."
 
 # ── Step 3: Install Python packaging tools ────────────────
 info "Installing project dependencies, PyInstaller and PyWebView..."
 pip install --upgrade pip --quiet
-pip install -r requirements.txt --quiet
+pip install -r requirements-lock.txt --quiet
 pip install pywebview pyinstaller --quiet
 success "All Python dependencies installed."
 

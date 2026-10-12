@@ -1,5 +1,9 @@
 # Football Predictor AI - Mac Local Development Crontab
 # Install with: crontab scripts/orchestration/crontab.txt
+# Runtime: .venv must be the Python 3.11 environment (docs/CUTOVER_PYTHON311.md).
+# Frozen football baseline (M3 only, after scripts/freeze_baseline.py): uncomment
+# so every worker runs against the same frozen manifest as the API.
+# BASELINE_FREEZE=football-v1.0
 
 # Fetch all fixtures and compute predictions daily at 00:00
 0 0 * * * cd /Users/nikantehrani/Desktop/football_predictor_ai-master && .venv/bin/python scripts/collection_worker.py >> logs/collection_worker.log 2>&1

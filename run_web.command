@@ -45,6 +45,8 @@ elif [ -x "venv/bin/python" ]; then
 else
   PYTHON="python3"
 fi
+# shellcheck source=scripts/orchestration/check_runtime.sh
+source scripts/orchestration/check_runtime.sh || exit 1
 
 if ! command -v npm >/dev/null 2>&1; then
   echo "npm was not found. Please install Node.js first: https://nodejs.org"

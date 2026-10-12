@@ -5,6 +5,8 @@ cd "$(dirname "$0")"
 if [ -x ".venv/bin/python" ]; then PYTHON=".venv/bin/python"
 elif [ -x "venv/bin/python" ]; then PYTHON="venv/bin/python"
 else PYTHON="python3"; fi
+# shellcheck source=scripts/orchestration/check_runtime.sh
+source scripts/orchestration/check_runtime.sh || exit 1
 
 echo "Starting Tennis workers..."
 "$PYTHON" scripts/tennis_collection_worker.py &
