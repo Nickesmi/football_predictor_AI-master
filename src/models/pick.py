@@ -24,6 +24,8 @@ class Pick:
     grade: str               # "A+", "A", "B", "Pass", "Trap"
     stake_units: float       # 0 to 2.0
     model_source: str = "unknown"  # which model produced model_prob: "poisson", "hybrid", "xgboost", etc.
+    bookmaker: str = ""      # bookmaker whose real price supports the pick
+    odds_type: str = "bookmaker"  # "bookmaker", or "synthetic_test" in isolated tests only
 
     @property
     def expected_value(self) -> float:
@@ -60,6 +62,10 @@ class Pick:
             "grade": self.grade,
             "stake": f"{self.stake_units}u",
             "ev_per_unit": f"{self.expected_value:+.3f}",
+            "odds_source": (
+                "SYNTHETIC TEST ODDS (not a bookmaker price)"
+                if self.odds_type == "synthetic_test" else self.bookmaker
+            ),
         }
 
 

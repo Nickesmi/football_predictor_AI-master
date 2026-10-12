@@ -131,7 +131,7 @@ def test_no_imports_of_names_removed_from_api_main():
     assert stale == []
 
 
-def test_vote_odds_without_implied_probability_are_stored(engine_db):
+def test_crowd_votes_are_stored_as_vote_shares(engine_db):
     from src.engine.fixture_collector import collect_fixtures
 
     event = {
@@ -144,7 +144,7 @@ def test_vote_odds_without_implied_probability_are_stored(engine_db):
     }
     fixtures = collect_fixtures([event], "2030-01-01", engine_db)
     rows = engine_db.execute(
-        "SELECT selection, odds, implied_probability FROM odds_snapshots WHERE match_id = 'vote-1' ORDER BY selection"
+        "SELECT selection, votes, share FROM crowd_vote_signals WHERE fixture_id = 'vote-1' ORDER BY selection"
     ).fetchall()
     assert [f["id"] for f in fixtures] == ["vote-1"]
-    assert [tuple(r) for r in rows] == [("away", 4.0, 0.25), ("draw", 4.0, 0.25), ("home", 2.0, 0.5)]
+    assert [tuple(r) for r in rows] == [("away", 25, 0.25), ("draw", 25, 0.25), ("home", 50, 0.5)]

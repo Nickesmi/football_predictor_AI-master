@@ -138,14 +138,13 @@ def run_pipeline(
         logger.warning(f"No not-yet-started fixtures for {date_str}")
         return _empty_result(date_str, len(raw_events))
 
-    # ── Agent 2: Odds Fetcher ────────────────────────────────────
-    # SofaScore pseudo-odds were already inserted by fixture_collector's
-    # _extract_odds() during collect_fixtures() above. A previous attempt to
-    # cross-reference API-Football odds here was never completed (it imported a
-    # function that no longer exists in api.main, and its own cross-provider
-    # mapping loop was an empty `pass` even when it did run) — it never fetched
-    # anything usable and unconditionally raised ImportError before this fix.
-    odds_status = "sofascore_only"
+    # ── Agent 2: Odds ────────────────────────────────────────────
+    # Prices come only from odds_quotes: real bookmaker quotes collected by
+    # scripts/odds_worker.py within the approved request budget (and, in an
+    # isolated test database only, explicitly synthetic test prices). SofaScore
+    # crowd votes are stored separately as opinions and are never used as odds.
+    # Without a fresh real price a fixture gets a forecast but NO ACTIONABLE BET.
+    odds_status = "real_bookmaker_quotes"
 
     # ── Baseline integrity (frozen mode only) ────────────────────
     # Official picks are refused outright if the running code, runtime or
@@ -203,6 +202,7 @@ def run_pipeline(
 
     # ── Grading & Sizing ─────────────────────────────────────────
     picks: list[Pick] = []
+    odds_used: dict[tuple, dict] = {}
     for c in filtered:
         grade, stake = assign_grade(
             edge=c["edge"],
@@ -230,17 +230,25 @@ def run_pipeline(
             grade=grade,
             stake_units=min(stake, c.get("max_stake_units", 2.0)),
             model_source=c.get("model_source", "unknown"),
+            bookmaker=c["bookmaker"],
+            odds_type=c["odds_type"],
         )
         picks.append(pick)
+        odds_used[(pick.match_id, pick.market, pick.selection)] = {
+            "odds_type": c["odds_type"], "provider": c["odds_provider"], "bookmaker": c["bookmaker"],
+            "decimal_odds": c["odds"], "observed_at": c["odds_observed_at"],
+        }
 
     # ── Store picks in DB (with provenance) ──────────────────────
     for pick in picks:
         try:
             record = match_records[pick.match_id]
+            inputs = json.loads(record["inputs_json"])
+            inputs["odds"] = odds_used[(pick.match_id, pick.market, pick.selection)]
             insert_pick(conn, {
                 **pick.to_db_dict(),
                 **baseline.provenance(manifest, record["input_data_timestamp"]),
-                "inputs_json": record["inputs_json"],
+                "inputs_json": json.dumps(inputs, sort_keys=True),
             })
         except Exception as e:
             logger.error(f"Failed to store pick: {e}")

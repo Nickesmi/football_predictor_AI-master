@@ -13,9 +13,13 @@ from src.baseline.freeze import create_baseline
 from src.db.database import init_db
 from src.db.picks_repo import get_experiment_progress
 from src.engine.calibration import ProbabilityCalibrator
+from src.engine.fixture_collector import collect_fixtures
 from src.engine.pipeline import _pick_calibrator, reproduce_probabilities, run_pipeline
+from tests.fakes.odds import FAKE_BOOKMAKER, ingest_odds_api, odds_api_event, recent
 
 VERSION = "football-test-v1"
+MATCH_DATE = "2030-01-01"
+KICKOFF = "2030-01-01T00:00:00+00:00"
 
 
 def _seed(conn):
@@ -69,6 +73,17 @@ def _event(event_id, vote=(10, 45, 45)):
         "startTimestamp": 1893456000,
         "vote": {"vote1": vote[0], "votex": vote[1], "vote2": vote[2]},
     }
+
+
+def _priced_event(db, monkeypatch, event_id):
+    """The fixture plus a fresh real-shaped 1X2 price from a mocked provider (home is value)."""
+    event = _event(event_id)
+    collect_fixtures([event], MATCH_DATE, db)
+    report = ingest_odds_api(db, monkeypatch, [odds_api_event(
+        f"oa-{event_id}", "Liverpool", "Ipswich Town", KICKOFF, h2h=(2.2, 3.6, 3.4), observed=recent(),
+    )])
+    assert (report["mapped"], report["quotes_new"]) == (1, 3)
+    return event
 
 
 def _table_rows(conn, table):
@@ -212,8 +227,8 @@ def test_admin_retrain_endpoint_returns_409_while_frozen(db, frozen, monkeypatch
 
 # ── Official picks: provenance and point-in-time reproducibility ────────────
 
-def test_frozen_pipeline_records_full_provenance_and_reproduces_exactly(db, frozen):
-    result = run_pipeline("2026-01-10", [_event("off-1")], db)
+def test_frozen_pipeline_records_full_provenance_and_reproduces_exactly(db, frozen, monkeypatch):
+    result = run_pipeline(MATCH_DATE, [_priced_event(db, monkeypatch, "off-1")], db)
     assert result["final_picks"] == 1
     pick = dict(db.execute("SELECT * FROM picks WHERE match_id = 'off-1'").fetchone())
 
@@ -224,6 +239,10 @@ def test_frozen_pipeline_records_full_provenance_and_reproduces_exactly(db, froz
     assert pick["input_data_timestamp"].endswith("+00:00")
     record = json.loads(pick["inputs_json"])
     assert record["probability_inputs"]["home_team"] == "Liverpool"
+    assert (pick["market"], pick["selection"], pick["odds_at_pick"]) == ("1X2", "home", 2.2)
+    assert {k: record["odds"][k] for k in ("odds_type", "provider", "bookmaker", "decimal_odds")} == {
+        "odds_type": "bookmaker", "provider": "the_odds_api", "bookmaker": FAKE_BOOKMAKER, "decimal_odds": 2.2,
+    }
 
     calibrator = ProbabilityCalibrator.from_state(baseline.load_artifact(db, "pick_calibrator"))
     reproduced = reproduce_probabilities(pick["inputs_json"], calibrator)
@@ -258,9 +277,9 @@ def _corrupt_league_profiles(conn):
     (_corrupt_artifact, "frozen artifact modified: gate_market_stats"),
     (_corrupt_league_profiles, "league_profiles modified"),
 ])
-def test_tampered_frozen_state_blocks_official_picks(db, frozen, tamper, expected_problem):
+def test_tampered_frozen_state_blocks_official_picks(db, frozen, tamper, expected_problem, monkeypatch):
     tamper(db)
-    result = run_pipeline("2026-01-10", [_event("off-2")], db)
+    result = run_pipeline(MATCH_DATE, [_priced_event(db, monkeypatch, "off-2")], db)
     assert expected_problem in result["baseline_integrity_error"]
     assert result["final_picks"] == 0
     assert db.execute("SELECT COUNT(*) FROM picks").fetchone()[0] == 0
@@ -276,14 +295,14 @@ def test_modified_model_file_blocks_official_picks(db, frozen, monkeypatch):
         return hashes
 
     monkeypatch.setattr(fp, "file_hashes", tampered)
-    result = run_pipeline("2026-01-10", [_event("off-3")], db)
+    result = run_pipeline(MATCH_DATE, [_priced_event(db, monkeypatch, "off-3")], db)
     assert "model file modified: src/engine/probability_engine.py" in result["baseline_integrity_error"]
     assert db.execute("SELECT COUNT(*) FROM picks").fetchone()[0] == 0
 
 
 def test_runtime_mismatch_blocks_official_picks(db, frozen, monkeypatch):
     monkeypatch.setattr(fp, "runtime_fingerprint", lambda: {"python": "3.13", "requirements_lock_sha256": "x"})
-    result = run_pipeline("2026-01-10", [_event("off-4")], db)
+    result = run_pipeline(MATCH_DATE, [_priced_event(db, monkeypatch, "off-4")], db)
     assert result["baseline_integrity_error"].startswith("runtime mismatch")
     assert db.execute("SELECT COUNT(*) FROM picks").fetchone()[0] == 0
 
@@ -308,8 +327,8 @@ def test_elo_and_form_update_while_frozen(db, frozen):
 
 # ── Unfrozen behaviour unchanged ────────────────────────────────────────────
 
-def test_unfrozen_picks_record_provenance_but_never_count(db):
-    result = run_pipeline("2026-01-10", [_event("unf-1")], db)
+def test_unfrozen_picks_record_provenance_but_never_count(db, monkeypatch):
+    result = run_pipeline(MATCH_DATE, [_priced_event(db, monkeypatch, "unf-1")], db)
     assert result["final_picks"] == 1
     pick = dict(db.execute("SELECT * FROM picks WHERE match_id = 'unf-1'").fetchone())
     assert pick["baseline_version"] is None

@@ -8,7 +8,9 @@ Extracts odds from SofaScore event data when available.
 import logging
 import sqlite3
 from src.db.match_repo import upsert_match, upsert_matches_batch
-from src.db.odds_repo import insert_odds, insert_odds_batch
+from datetime import datetime, timezone
+
+from src.odds.store import store_crowd_votes
 
 logger = logging.getLogger("football_predictor")
 
@@ -47,7 +49,7 @@ def collect_fixtures(
     """
     fixtures = []
     skipped = 0
-    odds_snapshots = []
+    crowd_votes = []
 
     for ev in events:
         # Filter by league
@@ -79,13 +81,16 @@ def collect_fixtures(
 
         fixtures.append(match)
 
-        # Extract odds if present in SofaScore data
-        _extract_odds(ev, match["id"], odds_snapshots)
+        # SofaScore crowd votes are opinions, not prices: kept apart from odds
+        _extract_crowd_votes(ev, match["id"], crowd_votes)
 
     if fixtures:
         upsert_matches_batch(conn, fixtures)
-    if odds_snapshots:
-        insert_odds_batch(conn, odds_snapshots)
+    if crowd_votes:
+        observed_at = datetime.now(timezone.utc).isoformat()
+        with conn:
+            for fixture_id, votes in crowd_votes:
+                store_crowd_votes(conn, fixture_id, "sofascore_vote", votes, observed_at)
 
     logger.info(
         f"Fixture collector: {len(fixtures)} tracked, {skipped} skipped for {date_str}"
@@ -103,33 +108,9 @@ def _map_status(status_info: dict) -> str:
     return "NS"
 
 
-def _extract_odds(ev: dict, match_id: str, snapshots: list[dict]) -> None:
-    """Extract odds from SofaScore vote/odds data if available."""
-    # SofaScore sometimes includes vote percentages as a proxy
-    vote = ev.get("vote", {})
-    if not vote:
-        return
-
-    vote1 = vote.get("vote1", 0)
-    votex = vote.get("votex", 0)
-    vote2 = vote.get("vote2", 0)
-    total = vote1 + votex + vote2
-
-    if total <= 0:
-        return
-
-    # Convert crowd vote percentages → pseudo-odds (not real bookmaker odds)
-    # These are weak proxies — real odds API will replace this
-    for selection, vote_count in [("home", vote1), ("draw", votex), ("away", vote2)]:
-        pct = vote_count / total
-        if pct > 0.01:
-            pseudo_odds = round(1.0 / pct, 3)
-            snapshots.append({
-                "match_id": match_id,
-                "market": "1X2",
-                "selection": selection,
-                "odds": pseudo_odds,
-                "bookmaker": "sofascore_vote",
-                "is_opening": True,
-            })
-
+def _extract_crowd_votes(ev: dict, match_id: str, crowd_votes: list[tuple[str, dict]]) -> None:
+    """Collect SofaScore 1X2 crowd votes. They are never converted into odds."""
+    vote = ev.get("vote") or {}
+    votes = {"home": vote.get("vote1", 0), "draw": vote.get("votex", 0), "away": vote.get("vote2", 0)}
+    if sum(int(v or 0) for v in votes.values()) > 0:
+        crowd_votes.append((match_id, votes))

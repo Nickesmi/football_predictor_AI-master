@@ -30,7 +30,7 @@ def get_warehouse_stats(conn: sqlite3.Connection) -> Dict[str, Any]:
         "SELECT COUNT(*) FROM prediction_log WHERE actual_outcome IS NULL"
     ).fetchone()[0]
 
-    odds_snaps = conn.execute("SELECT COUNT(*) FROM odds_snapshots").fetchone()[0]
+    odds_snaps = conn.execute("SELECT COUNT(*) FROM odds_quotes WHERE odds_type = 'bookmaker'").fetchone()[0]
 
     # Raw picks-table row count — NOT the baseline_contract.md experiment
     # population (includes manual/placeholder rows). See "experiment" below for

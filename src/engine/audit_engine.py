@@ -223,15 +223,17 @@ def audit_realtime_freshness(date_str: str) -> dict:
                 "message": f"{len(stuck_live)} matches from {date_str} still show LIVE status",
             })
 
-    # Odds freshness — check if odds_snapshots table has recent data
+    # Odds freshness — check if real bookmaker quotes were collected recently
     odds_fresh = True
     try:
         from src.db.database import get_db
         conn = get_db()
         latest_odds = conn.execute(
-            "SELECT MAX(timestamp) FROM odds_snapshots"
+            "SELECT MAX(fetched_at) FROM odds_quotes WHERE odds_type = 'bookmaker'"
         ).fetchone()[0]
         if latest_odds:
+            # odds_quotes stores ISO UTC with an offset; drop it to compare with naive UTC below.
+            latest_odds = latest_odds[:19]
             # SQLite CURRENT_TIMESTAMP is UTC; compare against UTC "now" (naive, to
             # match SQLite's naive-string format) rather than server-local wall-clock
             # time, which would silently shift staleness detection by the UTC offset.
@@ -441,16 +443,16 @@ def audit_odds_integrity(date_str: str) -> dict:
     except Exception as e:
         return {"passed": False, "error": f"Cannot connect to DB: {e}"}
 
-    # Count odds snapshots
-    total_odds = conn.execute("SELECT COUNT(*) FROM odds_snapshots").fetchone()[0]
+    # Count real bookmaker quotes (crowd votes are not odds)
+    total_odds = conn.execute("SELECT COUNT(*) FROM odds_quotes WHERE odds_type = 'bookmaker'").fetchone()[0]
     today_odds = conn.execute(
-        "SELECT COUNT(*) FROM odds_snapshots WHERE DATE(timestamp) = ?",
+        "SELECT COUNT(*) FROM odds_quotes WHERE odds_type = 'bookmaker' AND substr(fetched_at, 1, 10) = ?",
         (date_str,)
     ).fetchone()[0]
 
     # Check for stale odds
     stale_odds = []
-    latest = conn.execute("SELECT MAX(timestamp) FROM odds_snapshots").fetchone()[0]
+    latest = conn.execute("SELECT MAX(fetched_at) FROM odds_quotes WHERE odds_type = 'bookmaker'").fetchone()[0]
 
     # Market math violations — check from picks table
     total_picks = conn.execute("SELECT COUNT(*) FROM picks").fetchone()[0]
@@ -808,7 +810,7 @@ def audit_warehouse() -> dict:
 
     # Table counts
     tables = {}
-    for t in ["matches", "odds_snapshots", "picks", "prediction_log",
+    for t in ["matches", "odds_quotes", "picks", "prediction_log",
               "match_history", "team_state", "prediction_errors",
               "calibration_models", "daily_performance", "competitions"]:
         try:
@@ -868,8 +870,8 @@ def audit_warehouse() -> dict:
     failures = []
     if tables.get("matches", 0) == 0:
         failures.append("'matches' table is empty — odds pipeline never registered matches")
-    if tables.get("odds_snapshots", 0) == 0:
-        failures.append("'odds_snapshots' table is empty — no real odds data")
+    if tables.get("odds_quotes", 0) == 0:
+        failures.append("'odds_quotes' table is empty — no real bookmaker odds collected")
     if tables.get("calibration_models", 0) == 0:
         failures.append("'calibration_models' table is empty — no isotonic models fitted")
     if duplicates > 0:

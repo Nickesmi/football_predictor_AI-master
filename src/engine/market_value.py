@@ -6,38 +6,62 @@ to find mispriced markets (positive expected value).
 """
 
 import logging
+import os
 import sqlite3
-from src.db.odds_repo import get_odds_for_match
+from datetime import datetime, timedelta, timezone
+
+from src.odds.store import actionable_quotes, synthetic_odds_allowed
 
 logger = logging.getLogger("football_predictor")
+
+# Canonical (market, line) of a real quote -> the model's market key.
+MODEL_MARKETS = {("1X2", ""): "1X2", ("TOTALS", "2.5"): "O/U 2.5", ("BTTS", ""): "BTTS"}
+
+
+def odds_max_age() -> timedelta:
+    """How old a bookmaker price may be and still support a decision (ODDS_MAX_AGE_MINUTES, default 60)."""
+    try:
+        minutes = int(os.getenv("ODDS_MAX_AGE_MINUTES", "60"))
+    except ValueError:
+        minutes = 60
+    return timedelta(minutes=max(1, minutes))
 
 
 def find_value(
     match: dict,
     model_probs: dict,
     conn: sqlite3.Connection,
+    now: datetime | None = None,
 ) -> list[dict]:
     """
-    Compare model probabilities to bookmaker odds for all markets.
+    Compare model probabilities to real bookmaker odds for all markets.
     Returns a list of value candidates with edge calculations.
 
+    Only fresh, pre-match quotes from odds_quotes are used: each bookmaker's
+    latest price, then the best of those across bookmakers. Crowd votes and
+    model fair odds are never prices. Explicitly synthetic test prices are only
+    read in an isolated test database. No usable quote means no candidate.
+
     Each candidate:
-        match_id, market, selection, model_prob, implied_prob, edge, odds
+        match_id, market, selection, model_prob, implied_prob, edge, odds,
+        bookmaker, odds_provider, odds_type, odds_observed_at
     """
     match_id = match["id"]
-    odds_rows = get_odds_for_match(conn, match_id)
+    quotes = actionable_quotes(
+        conn, match_id, now or datetime.now(timezone.utc), odds_max_age(),
+        include_synthetic=synthetic_odds_allowed(conn),
+    )
 
-    if not odds_rows:
-        logger.debug(f"No odds for match {match_id}, skipping value scan")
+    if not quotes:
+        logger.debug(f"No fresh bookmaker odds for match {match_id}, skipping value scan")
         return []
 
-    # Build odds lookup: (market, selection) → best odds
-    odds_lookup: dict[tuple[str, str], float] = {}
-    for row in odds_rows:
-        key = (row["market"], row["selection"])
-        current_best = odds_lookup.get(key, 0)
-        if row["odds"] > current_best:
-            odds_lookup[key] = row["odds"]
+    # (model market, selection) -> best fresh quote (quotes arrive best price first)
+    best: dict[tuple[str, str], dict] = {}
+    for quote in quotes:
+        model_market = MODEL_MARKETS.get((quote["market"], quote["line"]))
+        if model_market:
+            best.setdefault((model_market, quote["selection"]), quote)
 
     candidates = []
 
@@ -47,12 +71,12 @@ def find_value(
             continue
 
         for selection, model_prob in model_probs[market].items():
-            odds_key = (market, selection)
-            if odds_key not in odds_lookup:
+            quote = best.get((market, selection))
+            if quote is None:
                 continue
 
-            decimal_odds = odds_lookup[odds_key]
-            implied_prob = 1.0 / decimal_odds if decimal_odds > 1.0 else 1.0
+            decimal_odds = quote["decimal_odds"]
+            implied_prob = 1.0 / decimal_odds
             edge = model_prob - implied_prob
 
             candidates.append({
@@ -67,6 +91,10 @@ def find_value(
                 "implied_prob": round(implied_prob, 4),
                 "edge": round(edge, 4),
                 "odds": round(decimal_odds, 3),
+                "bookmaker": quote["bookmaker"],
+                "odds_provider": quote["provider"],
+                "odds_type": quote["odds_type"],
+                "odds_observed_at": quote["observed_at"],
                 "data_quality": float(model_probs.get("data_quality", 50.0)),
                 "model_source": model_probs.get("source", "unknown"),
             })

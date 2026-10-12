@@ -64,7 +64,7 @@ def run_audit():
 
         fixtures_count = conn.execute("SELECT COUNT(*) FROM matches").fetchone()[0]
         prediction_count = conn.execute("SELECT COUNT(*) FROM prediction_log").fetchone()[0]
-        odds_count = conn.execute("SELECT COUNT(*) FROM odds_snapshots").fetchone()[0]
+        odds_count = conn.execute("SELECT COUNT(*) FROM odds_quotes WHERE odds_type = 'bookmaker'").fetchone()[0]
         picks_count = conn.execute("SELECT COUNT(*) FROM picks").fetchone()[0]
         # NOTE: this is the raw picks-table row count, NOT the baseline_contract.md
         # 1,000-pick experiment population — it includes manual/placeholder rows.
@@ -88,7 +88,7 @@ def run_audit():
             
         log(f"fixtures_master count: {fixtures_count}")
         log(f"prediction_log count: {prediction_count}")
-        log(f"odds_snapshots count: {odds_count}")
+        log(f"real bookmaker odds quotes: {odds_count}")
         log(f"picks count: {picks_count}")
         log(f"settled picks count (experiment-eligible, authoritative): {settled_picks}")
         log(f"  excluded (manual/non-pipeline model_source): {experiment['excluded_non_pipeline']}")

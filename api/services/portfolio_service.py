@@ -269,7 +269,7 @@ def trigger_odds_fetch(conn: sqlite3.Connection) -> Dict[str, Any]:
         if events:
             fetched += 1
 
-    count = conn.execute("SELECT COUNT(*) FROM odds_snapshots").fetchone()[0]
+    count = conn.execute("SELECT COUNT(*) FROM odds_quotes WHERE odds_type = 'bookmaker'").fetchone()[0]
     return {
         "status": "ok",
         "leagues_fetched": fetched,

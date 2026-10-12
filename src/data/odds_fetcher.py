@@ -5,7 +5,6 @@ import urllib.request
 import sqlite3
 from datetime import datetime, timezone
 from typing import Optional, List, Dict
-from src.db.odds_repo import insert_odds, insert_odds_batch
 from src.data.odds_provider import OddsProvider
 
 logger = logging.getLogger("football_predictor")
@@ -59,65 +58,36 @@ class TheOddsAPIProvider(OddsProvider):
         return self.last_update
 
     def _fetch_from_api(self, sport_key: str, regions: str = "eu", markets: str = None, odds_format: str = "decimal") -> List[Dict]:
-        if markets is None:
-            markets = REQUESTED_MARKETS
+        """Fetch a competition through the request budget guard and store mapped real quotes.
+
+        Regions and markets come from ODDS_API_REGIONS / ODDS_API_MARKETS (the
+        arguments are kept for compatibility). Without an approved budget
+        (ODDS_REQUEST_BUDGET) no request is sent and no odds are returned.
+        """
+        from src.odds import collector, quota
+        from src.odds.model import iso_utc
+        from src.odds.providers import the_odds_api
 
         api_key = get_api_key()
         if not api_key:
             logger.warning("ODDS_API_KEY not set — cannot fetch real odds")
             return []
 
-        url = f"{API_BASE}/sports/{sport_key}/odds?apiKey={api_key}&regions={regions}&markets={markets}&oddsFormat={odds_format}"
-
+        now = datetime.now(timezone.utc)
         try:
-            req = urllib.request.Request(url, headers={"Accept": "application/json"})
-            with urllib.request.urlopen(req, timeout=15) as resp:
-                data = json.loads(resp.read().decode())
-                self.last_update = datetime.now(timezone.utc)
-                remaining = resp.headers.get("x-requests-remaining", "?")
-                logger.info(f"Odds API: {len(data)} events for {sport_key} (requests remaining: {remaining})")
-                
-                self._store_snapshots(data)
-                return data
-        except Exception as e:
-            logger.error(f"Odds API error for {sport_key}: {e}")
+            data = the_odds_api.fetch_competition(self.db_conn, sport_key, api_key, now=now)
+        except (quota.BudgetExceeded, quota.ProviderUnavailable) as e:
+            logger.warning(f"Odds API {sport_key}: {e}")
             return []
-
-    def _store_snapshots(self, events: List[Dict]):
-        """Parse raw events and store in odds_snapshots table."""
-        snapshots = []
-        for event in events:
-            match_id = event.get("id")
-            for bookmaker in event.get("bookmakers", []):
-                bm_key = bookmaker.get("key")
-                timestamp_str = bookmaker.get("last_update")
-                try:
-                    ts = datetime.strptime(timestamp_str, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc).isoformat()
-                except:
-                    ts = datetime.now(timezone.utc).isoformat()
-                    
-                for market in bookmaker.get("markets", []):
-                    market_key = market.get("key")
-                    for outcome in market.get("outcomes", []):
-                        selection = outcome.get("name")
-                        odds = outcome.get("price")
-                        if odds and odds > 1.0:
-                            implied_prob = 1.0 / odds
-                            
-                            snapshot = {
-                                "match_id": match_id,
-                                "market": market_key,
-                                "selection": selection,
-                                "odds": odds,
-                                "bookmaker": bm_key,
-                                "is_opening": 0,
-                                "implied_probability": implied_prob,
-                                "timestamp": ts
-                            }
-                            snapshots.append(snapshot)
-        if snapshots:
-            insert_odds_batch(self.db_conn, snapshots)
-
+        self.last_update = now
+        report = collector.empty_report(the_odds_api.PROVIDER)
+        parsed, skipped = the_odds_api.parse_events(data)
+        collector.store_parsed(self.db_conn, parsed, skipped, report, iso_utc(now))
+        logger.info(
+            f"Odds API: {len(data)} events for {sport_key}; {report['mapped']} mapped, "
+            f"{report['quotes_new']} new quotes, {len(report['unmapped'])} unmapped"
+        )
+        return data
 
     def get_normalized_odds_for_match(self, sport_key: str, home_team: str, away_team: str, preferred_bookmakers: list[str] = None) -> list[dict]:
         if preferred_bookmakers is None:
