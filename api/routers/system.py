@@ -26,3 +26,9 @@ async def websocket_live_scores(websocket: WebSocket):
 @router.get("/api/health")
 def health_check():
     return system_service.health_check_service()
+
+
+@router.get("/api/baseline/status")
+def baseline_status():
+    """Frozen-baseline integrity (versions and any mismatch); read-only."""
+    return system_service.baseline_status_service()

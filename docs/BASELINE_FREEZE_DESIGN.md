@@ -86,3 +86,29 @@ When `BASELINE_FREEZE` is unset, behaviour is exactly today's (golden test uncha
 ## 3. Open points for the owner
 - P11 (team Elo/form updating after each match) is treated as **input data** that keeps evolving — that is how the Poisson model is meant to see current form. Confirm, or the v1.0 definition must snapshot team state too (which would make predictions increasingly stale).
 - P13: the official baseline should run on the canonical 3.11 runtime; the running app moves from `.venv` (3.13) to 3.11 at the cutover.
+
+## 4. Implementation (M2 package C)
+
+Implemented in `src/baseline/` (`state.py`, `freeze.py`, `fingerprint.py`, `tables.py`), `scripts/freeze_baseline.py`, and freeze-aware branches in the modules below. With `BASELINE_FREEZE` unset every branch takes the pre-M2 path (golden references unchanged).
+
+| Pathway | Frozen-mode behaviour (as built) | Where |
+|---|---|---|
+| P1 nightly isotonic refit | runs on a separate `IsotonicCalibrator(production=False)` that writes `calibration_models_shadow` | `system_service.run_nightly_refit`, `isotonic_calibrator._store_model` (`write_target`) |
+| P2 nightly league rebuild | `_update_league_profile` writes `model_confidence_adjustments_shadow` | `error_intelligence` (`write_target`) |
+| **P18 (new, found in M2)** per-result league update `settle_prediction → _update_league_profile` (results pipeline, every finished match) | same shadow routing as P2 | `error_intelligence` |
+| P3 `POST /api/admin/retrain-engine` | production singleton refuses (`BaselineFrozenError`) → HTTP 409 | `isotonic_calibrator.fit_all`, handler in `api/main.py` |
+| P4 `GET /api/debug/settle-date/{d}` | not refused: outcome data and team ratings are inputs (Decision 1); its league rebuild is routed to shadow | — |
+| P5 per-run pick calibrator | loads the frozen `pick_calibrator` state; never refits | `pipeline._pick_calibrator` |
+| P6 BILQE history | frozen `qualification_history` artifact | `qualification_engine._pick_history_for_qualification` |
+| P7 runtime gate | frozen `gate_market_stats`; league reliability from the frozen adjustments | `performance_gate` (`read_source`) |
+| P9 isotonic load / league-adjustment reads | read `*_frozen WHERE baseline_version = <active>` | `read_source` in `isotonic_calibrator`, `error_intelligence`, `performance_gate` |
+| P10/P12/P13 code, artifacts, runtime | content SHA-256 of model / calibration / selection files and model pickles, Python minor + lock hash, frozen-table and artifact hashes, `league_profiles` hash, manifest file = DB copy | `state.integrity_report` |
+| Official picks | `run_pipeline` calls `require_official_integrity` first; any mismatch → no picks, `baseline_integrity_error` in the result, CRITICAL log | `pipeline.run_pipeline` |
+| Provenance | every stored pick: `baseline_version`, `model_version`, `calibration_version`, `selection_policy_version`, `code_revision` (git SHA, `+dirty` if modified), `runtime`, `input_data_timestamp` (UTC, when inputs were resolved), `inputs_json` (resolved team stats, raw and calibrated probabilities) | `picks` columns, `picks_repo` |
+| Point-in-time reproducibility | `reproduce_probabilities(inputs_json, frozen calibrator)` recomputes stored probabilities exactly | `pipeline` |
+| Experiment count | counts a settled pick only if all provenance fields are present and equal the active manifest | `picks_repo.get_experiment_progress` |
+| Status | `GET /api/baseline/status`; integrity logged at API startup | `system_service` |
+
+Deviation from §2.2: frozen calibration/adjustment data live in `<table>_frozen` copies (same columns + `baseline_version`) instead of separately named tables; JSON artifacts live in `baseline_frozen_artifacts`. The guarantee is the same: production readers cannot see later writes, and any edit to the frozen rows is detected by hash.
+
+Evidence: `tests/test_baseline_freeze.py` (14 tests: immutability, routing, counterfactual drift without the freeze, 409, tamper → refusal for frozen table / artifact / league profiles / model file / runtime, provenance + exact reproduction, Elo/form still updating), `docs/M2_FREEZE_SIMULATION.md` (30 simulated days on a copy of the production DB, 0 invariant violations).

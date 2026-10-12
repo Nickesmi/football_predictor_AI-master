@@ -274,6 +274,30 @@ async def _daily_fixture_refresh_loop():
                 await loop.run_in_executor(None, _prewarm, iran_date)
 
 
+def baseline_status_service() -> dict:
+    """Integrity of the frozen football baseline; {'frozen': False} when none is active."""
+    from src.baseline import state as baseline
+    from src.db.database import get_db
+
+    if not baseline.is_frozen():
+        return {"frozen": False, "baseline_version": None}
+    report = baseline.integrity_report(get_db())
+    return {"frozen": True, **report}
+
+
+def log_baseline_status_at_startup() -> None:
+    status = baseline_status_service()
+    if not status["frozen"]:
+        logger.info("Football baseline: not frozen (BASELINE_FREEZE unset).")
+    elif status["ok"]:
+        logger.info(f"Football baseline {status['baseline_version']}: integrity OK {status['manifest']}")
+    else:
+        logger.critical(
+            f"Football baseline {status['baseline_version']}: INTEGRITY FAILED — official picks refused: "
+            + "; ".join(status["problems"])
+        )
+
+
 def prewarm_predictions_for_date(ist_date: str) -> int:
     """Pre-compute analyses for the cached fixtures of one Istanbul date; returns the fixture count."""
     from api.services.fixtures_service import _precompute_predictions_for_date, _read_fixture_cache
@@ -285,6 +309,28 @@ def prewarm_predictions_for_date(ist_date: str) -> int:
     if fixtures:
         _precompute_predictions_for_date(ist_date, fixtures)
     return len(fixtures)
+
+
+def run_nightly_refit(conn) -> str:
+    """Nightly isotonic refit + league-adjustment rebuild.
+
+    While the football baseline is frozen both run in shadow mode: a separate
+    calibrator instance writes calibration_models_shadow and the rebuild writes
+    model_confidence_adjustments_shadow; production state is untouched.
+    """
+    from src.baseline import state as baseline
+    from src.db.error_intelligence import rebuild_confidence_adjustments
+    from src.engine.isotonic_calibrator import IsotonicCalibrator, get_isotonic_calibrator
+
+    if baseline.is_frozen():
+        IsotonicCalibrator(production=False).fit_all(conn)
+        rebuild_confidence_adjustments(conn)
+        logger.info(f"Nightly refit ran in SHADOW mode (baseline {baseline.active_version()} frozen).")
+        return "shadow"
+    get_isotonic_calibrator(conn).fit_all(conn)
+    rebuild_confidence_adjustments(conn)
+    logger.info("Nightly engine retrain complete.")
+    return "production"
 
 
 async def _nightly_retrain_loop():
@@ -315,12 +361,7 @@ async def _nightly_retrain_loop():
                 logger.info("Starting automated nightly engine retrain...")
                 from src.db.database import get_db
                 conn = get_db()
-                from src.engine.isotonic_calibrator import get_isotonic_calibrator
-                cal = get_isotonic_calibrator(conn)
-                cal.fit_all(conn)
-                from src.db.error_intelligence import rebuild_confidence_adjustments
-                rebuild_confidence_adjustments(conn)
-                logger.info("Nightly engine retrain complete.")
+                run_nightly_refit(conn)
         except Exception as e:
             logger.error(f"Nightly retrain failed: {e}")
 

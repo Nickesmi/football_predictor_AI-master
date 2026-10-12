@@ -94,13 +94,13 @@ def test_post_match_leakage_scenario_produces_zero_picks_and_never_consults_team
     engine_db.commit()
 
     calls = []
-    original = pipeline_module.estimate_probabilities
+    original = pipeline_module.resolve_probability_inputs  # first step that reads team_state
 
     def spy(match):
         calls.append(match["id"])
         return original(match)
 
-    monkeypatch.setattr(pipeline_module, "estimate_probabilities", spy)
+    monkeypatch.setattr(pipeline_module, "resolve_probability_inputs", spy)
 
     # Run 2: same match, now FT, with post-match team_state already updated.
     result = run_pipeline("2026-01-01", [_sofascore_event("m_leak", "finished")], engine_db)

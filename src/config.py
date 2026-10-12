@@ -78,6 +78,21 @@ CORS_ALLOW_ORIGINS: list[str] = (
 )
 
 
+# ---------------------------------------------------------------------------
+# Frozen football baseline (docs/BASELINE_FREEZE_DESIGN.md). Unset = not frozen,
+# behaviour unchanged. Set to a version created by scripts/freeze_baseline.py.
+# ---------------------------------------------------------------------------
+_BASELINE_VERSION_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"
+BASELINE_FREEZE: str | None = os.getenv("BASELINE_FREEZE", "").strip() or None
+if BASELINE_FREEZE is not None:
+    import re as _re
+    if not _re.match(_BASELINE_VERSION_PATTERN, BASELINE_FREEZE):
+        raise RuntimeError(f"Invalid BASELINE_FREEZE value {BASELINE_FREEZE!r}")
+BASELINE_MANIFEST_DIR: Path = Path(
+    os.getenv("BASELINE_MANIFEST_DIR", "") or (_PROJECT_ROOT / "models" / "baseline")
+)
+
+
 def validate_security_config() -> list[str]:
     """Return a list of security misconfigurations (empty when safe to run)."""
     problems = []

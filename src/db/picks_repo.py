@@ -18,62 +18,91 @@ _AUTOMATED_PIPELINE_MODEL_SOURCES = ("poisson", "fallback", "hybrid")
 
 def get_experiment_progress(conn: sqlite3.Connection) -> dict:
     """
-    Canonical count of genuine automated gated-pipeline picks that have reached
-    a real win/loss outcome — the population baseline_contract.md's 1,000-pick
-    evidence gate is measured against.
+    Canonical count of settled picks that belong to the official frozen football
+    baseline — the population baseline_contract.md's 1,000-pick gate is measured on.
 
-    Excludes, by construction (not by trying to blocklist every bad case):
-    - Anything not produced by estimate_probabilities() (model_source must be in
-      _AUTOMATED_PIPELINE_MODEL_SOURCES) — this alone excludes:
-        - manual entries (api/services/portfolio_service.py::place_pick sets
-          model_source='manual')
-        - collection_worker.py's raw "NO PICK" placeholder INSERT, which sets no
-          model_source at all and so falls back to the schema default 'unknown'
-        - any pick whose model_source is missing/unrecognized for any other reason
-    - result NOT IN ('won', 'lost') — a pending (NULL) or voided pick is a real
-      row but contributes no win/loss evidence, so it doesn't count toward the
-      1,000 either way.
-
-    Legacy prediction_log rows and qualification_log rows can never appear here
-    at all — this function only ever queries the picks table.
+    A settled (won/lost) pick counts only if ALL hold:
+    - model_source is a genuine automated pipeline source (allowlist; excludes
+      manual picks, the collection worker's "NO PICK" placeholder, unknown tags);
+    - it was produced under the ACTIVE baseline: baseline_version, model_version,
+      calibration_version and selection_policy_version equal the active manifest;
+    - its provenance is complete (code_revision, runtime, input_data_timestamp,
+      inputs_json present).
+    Without an active baseline (BASELINE_FREEZE unset) nothing counts.
+    Pending and voided picks never count. Legacy prediction_log and
+    qualification_log rows cannot appear (different tables).
     """
-    placeholders = ",".join("?" for _ in _AUTOMATED_PIPELINE_MODEL_SOURCES)
+    from src.baseline import state as baseline
 
-    settled_eligible = conn.execute(
-        f"""SELECT COUNT(*) FROM picks
-            WHERE result IN ('won', 'lost')
-              AND model_source IN ({placeholders})""",
-        _AUTOMATED_PIPELINE_MODEL_SOURCES,
-    ).fetchone()[0]
+    sources = ",".join("?" for _ in _AUTOMATED_PIPELINE_MODEL_SOURCES)
+    version = baseline.active_version()
+    manifest = None
+    if version is not None:
+        try:
+            manifest = baseline.load_manifest(version)
+        except (OSError, ValueError):
+            manifest = None
 
-    excluded_voided = conn.execute(
-        f"""SELECT COUNT(*) FROM picks
-            WHERE result = 'void'
-              AND model_source IN ({placeholders})""",
-        _AUTOMATED_PIPELINE_MODEL_SOURCES,
-    ).fetchone()[0]
+    if manifest is None:
+        official_clause, official_params = "0", ()
+    else:
+        complete = " AND ".join(f"{c} IS NOT NULL" for c in (
+            "code_revision", "runtime", "input_data_timestamp", "inputs_json",
+        ))
+        official_clause = (
+            "baseline_version = ? AND model_version = ? AND calibration_version = ? "
+            f"AND selection_policy_version = ? AND {complete}"
+        )
+        official_params = (
+            manifest["baseline_version"], manifest["model_version"],
+            manifest["calibration_version"], manifest["selection_policy_version"],
+        )
 
+    def count(where: str, params: tuple = ()) -> int:
+        return conn.execute(
+            f"SELECT COUNT(*) FROM picks WHERE model_source IN ({sources}) AND {where}",
+            (*_AUTOMATED_PIPELINE_MODEL_SOURCES, *params),
+        ).fetchone()[0]
+
+    settled_eligible = count(f"result IN ('won', 'lost') AND {official_clause}", official_params)
+    settled_pipeline = count("result IN ('won', 'lost')")
     excluded_non_pipeline = conn.execute(
-        f"""SELECT COUNT(*) FROM picks
-            WHERE model_source NOT IN ({placeholders})""",
-        _AUTOMATED_PIPELINE_MODEL_SOURCES,
-    ).fetchone()[0]
-
-    pending_eligible = conn.execute(
-        f"""SELECT COUNT(*) FROM picks
-            WHERE result IS NULL
-              AND model_source IN ({placeholders})""",
+        f"SELECT COUNT(*) FROM picks WHERE model_source NOT IN ({sources})",
         _AUTOMATED_PIPELINE_MODEL_SOURCES,
     ).fetchone()[0]
 
     return {
+        "baseline_version": manifest["baseline_version"] if manifest else None,
         "settled_eligible": settled_eligible,
         "target": 1000,
         "progress_pct": round(min(100.0, settled_eligible / 1000.0 * 100.0), 2),
-        "excluded_voided": excluded_voided,
+        "excluded_voided": count(f"result = 'void' AND {official_clause}", official_params),
         "excluded_non_pipeline": excluded_non_pipeline,
-        "pending_eligible": pending_eligible,
+        "excluded_missing_or_mismatched_provenance": settled_pipeline - settled_eligible,
+        "pending_eligible": count(f"result IS NULL AND {official_clause}", official_params),
     }
+
+
+PROVENANCE_COLUMNS = (
+    "baseline_version", "model_version", "calibration_version", "selection_policy_version",
+    "code_revision", "runtime", "input_data_timestamp", "inputs_json",
+)
+
+_INSERT_PICK_SQL = f"""INSERT INTO picks
+               (match_id, market, selection, model_prob, implied_prob, edge,
+                odds_at_pick, confidence, league_reliability, grade, stake_units,
+                model_source, {", ".join(PROVENANCE_COLUMNS)})
+               VALUES (:match_id, :market, :selection, :model_prob, :implied_prob,
+                       :edge, :odds_at_pick, :confidence, :league_reliability,
+                       :grade, :stake_units, :model_source,
+                       {", ".join(":" + c for c in PROVENANCE_COLUMNS)})"""
+
+
+def _pick_row(pick: dict) -> dict:
+    row = {**pick, "model_source": pick.get("model_source", "unknown")}
+    for column in PROVENANCE_COLUMNS:
+        row.setdefault(column, None)
+    return row
 
 
 @retry_on_db_lock()
@@ -81,14 +110,8 @@ def insert_pick(conn: sqlite3.Connection, pick: dict) -> int:
     """Insert a pick and return its ID."""
     with conn:
         cursor = conn.execute(
-            """INSERT INTO picks
-               (match_id, market, selection, model_prob, implied_prob, edge,
-                odds_at_pick, confidence, league_reliability, grade, stake_units,
-                model_source)
-               VALUES (:match_id, :market, :selection, :model_prob, :implied_prob,
-                       :edge, :odds_at_pick, :confidence, :league_reliability,
-                       :grade, :stake_units, :model_source)""",
-            {**pick, "model_source": pick.get("model_source", "unknown")},
+            _INSERT_PICK_SQL,
+            _pick_row(pick),
         )
         return cursor.lastrowid
 
@@ -100,14 +123,8 @@ def insert_picks_batch(conn: sqlite3.Connection, picks: list[dict]) -> None:
         return
     with conn:
         conn.executemany(
-            """INSERT INTO picks
-               (match_id, market, selection, model_prob, implied_prob, edge,
-                odds_at_pick, confidence, league_reliability, grade, stake_units,
-                model_source)
-               VALUES (:match_id, :market, :selection, :model_prob, :implied_prob,
-                       :edge, :odds_at_pick, :confidence, :league_reliability,
-                       :grade, :stake_units, :model_source)""",
-            [{**p, "model_source": p.get("model_source", "unknown")} for p in picks],
+            _INSERT_PICK_SQL,
+            [_pick_row(p) for p in picks],
         )
 
 

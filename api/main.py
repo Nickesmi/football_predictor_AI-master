@@ -15,7 +15,8 @@ from fastapi.middleware.cors import CORSMiddleware
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    from api.services.system_service import start_background_tasks
+    from api.services.system_service import log_baseline_status_at_startup, start_background_tasks
+    log_baseline_status_at_startup()
     await start_background_tasks()
     yield
 
@@ -35,6 +36,17 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+from fastapi import Request  # noqa: E402
+from fastapi.responses import JSONResponse  # noqa: E402
+
+from src.baseline.state import BaselineFrozenError  # noqa: E402
+
+
+@app.exception_handler(BaselineFrozenError)
+async def _baseline_frozen_handler(request: Request, exc: BaselineFrozenError):
+    return JSONResponse(status_code=409, content={"detail": str(exc)})
+
 
 # Include routers
 from api.routers.analytics import router as analytics_router

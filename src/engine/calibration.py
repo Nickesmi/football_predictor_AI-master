@@ -88,6 +88,31 @@ class ProbabilityCalibrator:
             f"Calibrator fitted on {len(rows)} picks across {self.n_bins} bins"
         )
 
+    def to_state(self) -> dict:
+        """Exact, JSON-serialisable state (used to freeze the calibrator for the baseline)."""
+        return {
+            "n_bins": self.n_bins,
+            "fitted": self._fitted,
+            "bins": {str(i): dict(b) for i, b in self.bins.items()},
+            "group_bins": {
+                f"{m}\x1f{s}": {str(i): dict(b) for i, b in bins.items()}
+                for (m, s), bins in self.group_bins.items()
+            },
+            "group_counts": {f"{m}\x1f{s}": n for (m, s), n in self.group_counts.items()},
+        }
+
+    @classmethod
+    def from_state(cls, state: dict) -> "ProbabilityCalibrator":
+        cal = cls(n_bins=state["n_bins"])
+        cal._fitted = state["fitted"]
+        cal.bins = {int(i): dict(b) for i, b in state["bins"].items()}
+        cal.group_bins = {
+            tuple(key.split("\x1f", 1)): {int(i): dict(b) for i, b in bins.items()}
+            for key, bins in state["group_bins"].items()
+        }
+        cal.group_counts = {tuple(key.split("\x1f", 1)): n for key, n in state["group_counts"].items()}
+        return cal
+
     def calibrate(
         self,
         raw_prob: float,

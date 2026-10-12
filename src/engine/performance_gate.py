@@ -12,6 +12,8 @@ import sqlite3
 from dataclasses import dataclass
 from typing import Iterable
 
+from src.baseline.tables import read_source
+
 
 @dataclass(frozen=True)
 class GateDecision:
@@ -61,7 +63,19 @@ def _row_value(row, key: str, index: int):
 
 
 def load_market_performance(conn: sqlite3.Connection) -> dict[str, dict]:
-    """Return settled performance by market type from prediction_log."""
+    """Return settled performance by market type from prediction_log.
+
+    While the football baseline is frozen, the gate uses the statistics frozen
+    with it, so accumulating results cannot change which picks qualify.
+    """
+    from src.baseline import state as baseline
+
+    if baseline.is_frozen():
+        return baseline.load_artifact(conn, "gate_market_stats")
+    return _live_market_performance(conn)
+
+
+def _live_market_performance(conn: sqlite3.Connection) -> dict[str, dict]:
     rows = conn.execute(
         """SELECT market_type,
                   COUNT(*) AS samples,
@@ -101,7 +115,7 @@ def load_league_reliability(
     rows = conn.execute(
         f"""SELECT league_name, sample_count, actual_hit_rate,
                    reliability_score, status
-            FROM model_confidence_adjustments
+            FROM {read_source("model_confidence_adjustments")}
             WHERE league_name IN ({placeholders})
             ORDER BY sample_count DESC, reliability_score DESC
             LIMIT 1""",

@@ -576,6 +576,16 @@ def init_db(conn: sqlite3.Connection) -> None:
     conn.commit()
 
     _migrate_add_column(conn, "picks", "model_source", "TEXT DEFAULT 'unknown'")
+    # Provenance of every stored prediction (frozen football baseline, M2).
+    for column in (
+        "baseline_version", "model_version", "calibration_version", "selection_policy_version",
+        "code_revision", "runtime", "input_data_timestamp", "inputs_json",
+    ):
+        _migrate_add_column(conn, "picks", column, "TEXT")
+
+    from src.baseline.tables import ensure_baseline_tables
+    ensure_baseline_tables(conn)
+    conn.commit()
 
     _seed_league_profiles(conn)
 

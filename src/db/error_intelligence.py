@@ -23,6 +23,8 @@ import logging
 from datetime import datetime
 from typing import Optional
 
+from src.baseline.tables import read_source, write_target
+
 logger = logging.getLogger("football_predictor")
 
 # ── Constants ─────────────────────────────────────────────────────────────────
@@ -112,9 +114,9 @@ def _comp_type(league_name: str, country: str) -> str:
 def get_league_adjustment(conn: sqlite3.Connection, league_name: str) -> dict:
     """Look up the learned adjustment parameters for a league."""
     row = conn.execute(
-        """SELECT sample_count, avg_confidence, actual_hit_rate,
+        f"""SELECT sample_count, avg_confidence, actual_hit_rate,
                   adjustment_factor, overconfidence, brier_score, reliability_score, status
-           FROM model_confidence_adjustments
+           FROM {read_source("model_confidence_adjustments")}
            WHERE league_name = ?""",
         (league_name,),
     ).fetchone()
@@ -501,7 +503,7 @@ def _update_league_profile(conn: sqlite3.Connection, league_name: str) -> None:
     country_val = country[0] if country else ""
 
     conn.execute(
-        """INSERT INTO model_confidence_adjustments
+        f"""INSERT INTO {write_target("model_confidence_adjustments")}
                (league_name, country, sample_count, avg_confidence, actual_hit_rate,
                 adjustment_factor, overconfidence, brier_score, reliability_score,
                 confidence_penalty, confidence_boost, status, last_updated)
@@ -564,11 +566,11 @@ def rebuild_confidence_adjustments(conn: sqlite3.Connection) -> int:
 def get_league_profiles(conn: sqlite3.Connection, min_samples: int = 1) -> list[dict]:
     """Return all league profiles sorted by reliability score descending."""
     rows = conn.execute(
-        """SELECT league_name, country, sample_count, avg_confidence,
+        f"""SELECT league_name, country, sample_count, avg_confidence,
                   actual_hit_rate, adjustment_factor, overconfidence,
                   brier_score, reliability_score,
                   confidence_penalty, confidence_boost, status, last_updated
-           FROM model_confidence_adjustments
+           FROM {read_source("model_confidence_adjustments")}
            WHERE sample_count >= ?
            ORDER BY reliability_score DESC""",
         (min_samples,),

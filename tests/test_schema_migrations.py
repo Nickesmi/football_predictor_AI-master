@@ -86,16 +86,42 @@ def test_existing_db_with_data_is_left_untouched():
     assert conn.execute("SELECT COUNT(*) FROM prediction_errors").fetchone()[0] == 1
 
 
+M2_PICK_COLUMNS = [
+    "baseline_version", "model_version", "calibration_version", "selection_policy_version",
+    "code_revision", "runtime", "input_data_timestamp", "inputs_json",
+]
+M2_NEW_TABLES = {
+    "baseline_versions", "baseline_frozen_artifacts",
+    "calibration_models_frozen", "calibration_models_shadow",
+    "model_confidence_adjustments_frozen", "model_confidence_adjustments_shadow",
+}
+
+
 @pytest.mark.skipif(not os.getenv("M0_EXISTING_DB_COPY"), reason="set M0_EXISTING_DB_COPY to a COPY of a real engine.db")
-def test_real_database_copy_schema_and_rows_unchanged(tmp_path):
+def test_real_database_copy_migrates_additively(tmp_path):
+    """On a copy of the production DB, init_db only ADDS: provenance columns on picks and the
+    baseline tables. Every existing object and every existing row is unchanged."""
     work = tmp_path / "engine_copy.db"
     shutil.copy(os.environ["M0_EXISTING_DB_COPY"], work)
     conn = sqlite3.connect(work)
-    all_tables = tuple(n for (n,) in conn.execute("SELECT name FROM sqlite_master WHERE type='table'"))
-    schema_before, rows_before = _objects(conn, all_tables), _row_counts(conn)
+    old_tables = tuple(n for (n,) in conn.execute("SELECT name FROM sqlite_master WHERE type='table'"))
+    schema_before, rows_before = _objects(conn, old_tables), _row_counts(conn)
+    picks_cols_before = [r[1] for r in conn.execute("PRAGMA table_info(picks)")]
+    already_migrated = set(M2_PICK_COLUMNS) <= set(picks_cols_before)
 
     init_db(conn)
+    init_db(conn)  # idempotent
 
-    assert _objects(conn, all_tables) == schema_before
-    assert _row_counts(conn) == rows_before
+    schema_after = _objects(conn, old_tables)
+    changed = {k for k in schema_before if schema_before[k] != schema_after.get(k)}
+    assert changed == (set() if already_migrated else {("table", "picks")})
+    picks_cols_after = [r[1] for r in conn.execute("PRAGMA table_info(picks)")]
+    expected_cols = picks_cols_before if already_migrated else picks_cols_before + M2_PICK_COLUMNS
+    assert picks_cols_after == expected_cols
+
+    new_tables = {n for (n,) in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")} - set(old_tables)
+    assert new_tables == (set() if already_migrated else M2_NEW_TABLES)
+    rows_after = _row_counts(conn)
+    assert {t: rows_after[t] for t in rows_before} == rows_before
+    assert all(rows_after[t] == 0 for t in new_tables)
     assert conn.execute("PRAGMA integrity_check").fetchone()[0] == "ok"

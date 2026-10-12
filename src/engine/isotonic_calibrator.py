@@ -35,6 +35,8 @@ import numpy as np
 from datetime import datetime
 from typing import Optional
 
+from src.baseline.tables import read_source, write_target
+
 logger = logging.getLogger("football_predictor")
 
 # Minimum samples required for isotonic fit (below this, use shrinkage)
@@ -127,7 +129,10 @@ class IsotonicCalibrator:
         calibrated = cal.calibrate(82.5, "goals")  # raw → calibrated
     """
 
-    def __init__(self):
+    def __init__(self, production: bool = False):
+        # The production singleton is never refit while the baseline is frozen;
+        # shadow instances (production=False) may be.
+        self.production = production
         # market_type → fitted IsotonicRegression model
         self._models: dict = {}
         # market_type → {"samples": int, "fitted_at": str}
@@ -138,7 +143,11 @@ class IsotonicCalibrator:
         """Fit isotonic models for all market types with enough data.
 
         Returns summary dict: {market_type: {samples, fitted, gap_before, gap_after}}
+        Refused on the production instance while the football baseline is frozen.
         """
+        if self.production:
+            from src.baseline import state as baseline
+            baseline.assert_mutation_allowed("isotonic calibration refit")
         from sklearn.isotonic import IsotonicRegression
 
         rows = _fetch_settled_predictions(conn)
@@ -323,7 +332,7 @@ class IsotonicCalibrator:
         }
 
         conn.execute(
-            """INSERT INTO calibration_models
+            f"""INSERT INTO {write_target("calibration_models")}
                (market_type, fitted_json, samples, brier_score, log_loss, created_at)
                VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)""",
             (market_type, json.dumps(model_data), n, brier_score, log_loss),
@@ -337,11 +346,12 @@ class IsotonicCalibrator:
         """
         from sklearn.isotonic import IsotonicRegression
 
+        source = read_source("calibration_models")
         rows = conn.execute(
-            """SELECT market_type, fitted_json, samples, created_at
-               FROM calibration_models
+            f"""SELECT market_type, fitted_json, samples, created_at
+               FROM {source} AS cm
                WHERE id IN (
-                   SELECT MAX(id) FROM calibration_models GROUP BY market_type
+                   SELECT MAX(id) FROM {source} AS latest GROUP BY market_type
                )"""
         ).fetchall()
 
@@ -458,7 +468,7 @@ def get_isotonic_calibrator(conn: sqlite3.Connection = None) -> IsotonicCalibrat
     """
     global _calibrator_instance
     if _calibrator_instance is None:
-        _calibrator_instance = IsotonicCalibrator()
+        _calibrator_instance = IsotonicCalibrator(production=True)
         if conn is not None:
             _calibrator_instance.load_from_db(conn)
     return _calibrator_instance

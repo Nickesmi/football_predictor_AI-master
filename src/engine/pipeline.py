@@ -11,14 +11,17 @@ Pipeline orchestrator: runs all agents in sequence for a given date.
     7. Store picks in DB
 """
 
+import json
 import logging
 import sqlite3
+from datetime import datetime, timezone
 from typing import Optional
 
+from src.baseline import state as baseline
 from src.db.database import get_db
 from src.db.picks_repo import insert_pick, get_picks_by_date
 from src.engine.fixture_collector import collect_fixtures
-from src.engine.probability_engine import estimate_probabilities
+from src.engine.probability_engine import estimate_probabilities_from_inputs, resolve_probability_inputs
 from src.engine.market_value import find_value, filter_positive_edge
 from src.engine.risk_control import get_league_profile, score_confidence, apply_risk_filter
 from src.engine.calibration import ProbabilityCalibrator
@@ -29,6 +32,62 @@ logger = logging.getLogger("football_predictor")
 
 # Singleton calibrator
 _calibrator = ProbabilityCalibrator(n_bins=10)
+
+
+def _pick_calibrator(conn: sqlite3.Connection) -> ProbabilityCalibrator:
+    """Frozen calibrator while the baseline is frozen; otherwise refit from settled picks (legacy behaviour)."""
+    if baseline.is_frozen():
+        return ProbabilityCalibrator.from_state(baseline.load_artifact(conn, "pick_calibrator"))
+    _calibrator.fit_from_db(conn)
+    return _calibrator
+
+
+def calibrate_probabilities(raw: dict, calibrator: ProbabilityCalibrator) -> dict:
+    """Apply pick calibration while preserving market coherence."""
+    probs = {k: (dict(v) if isinstance(v, dict) else v) for k, v in raw.items()}
+    if "1X2" in probs:
+        calibrated = {
+            sel: calibrator.calibrate(value, "1X2", sel)
+            for sel, value in probs["1X2"].items()
+        }
+        total = sum(calibrated.values())
+        if total > 0:
+            probs["1X2"] = {
+                sel: round(value / total, 4)
+                for sel, value in calibrated.items()
+            }
+
+    if "O/U 2.5" in probs:
+        over = calibrator.calibrate(
+            probs["O/U 2.5"].get("over", 0.5),
+            "O/U 2.5",
+            "over",
+        )
+        over = max(0.01, min(0.99, over))
+        probs["O/U 2.5"] = {
+            "over": round(over, 4),
+            "under": round(1.0 - over, 4),
+        }
+
+    if "BTTS" in probs:
+        yes = calibrator.calibrate(
+            probs["BTTS"].get("yes", 0.5),
+            "BTTS",
+            "yes",
+        )
+        yes = max(0.01, min(0.99, yes))
+        probs["BTTS"] = {
+            "yes": round(yes, 4),
+            "no": round(1.0 - yes, 4),
+        }
+    return probs
+
+
+def reproduce_probabilities(inputs_json: str, calibrator: ProbabilityCalibrator) -> dict:
+    """Recompute a stored pick's probabilities from its recorded point-in-time inputs."""
+    record = json.loads(inputs_json)
+    raw = estimate_probabilities_from_inputs(record["probability_inputs"])
+    return {"raw": raw, "calibrated": calibrate_probabilities(raw, calibrator)}
 
 
 def run_pipeline(
@@ -88,53 +147,37 @@ def run_pipeline(
     # anything usable and unconditionally raised ImportError before this fix.
     odds_status = "sofascore_only"
 
+    # ── Baseline integrity (frozen mode only) ────────────────────
+    # Official picks are refused outright if the running code, runtime or
+    # frozen artifacts differ from the baseline manifest.
+    try:
+        manifest = baseline.require_official_integrity(conn)
+    except baseline.BaselineIntegrityError as exc:
+        logger.critical(f"Official pick generation refused for {date_str}: {exc}")
+        refused = _empty_result(date_str, len(raw_events))
+        refused["baseline_integrity_error"] = str(exc)
+        return refused
+
     # ── Agent 3: Probability Engine ──────────────────────────────
-    # Fit calibrator from historical data (if available)
-    _calibrator.fit_from_db(conn)
+    calibrator = _pick_calibrator(conn)
 
     match_probs = {}
+    match_records = {}
     for match in fixtures:
         try:
-            probs = estimate_probabilities(match)
-
-            # Apply calibration while preserving market coherence.
-            if "1X2" in probs:
-                calibrated = {
-                    sel: _calibrator.calibrate(raw, "1X2", sel)
-                    for sel, raw in probs["1X2"].items()
-                }
-                total = sum(calibrated.values())
-                if total > 0:
-                    probs["1X2"] = {
-                        sel: round(value / total, 4)
-                        for sel, value in calibrated.items()
-                    }
-
-            if "O/U 2.5" in probs:
-                over = _calibrator.calibrate(
-                    probs["O/U 2.5"].get("over", 0.5),
-                    "O/U 2.5",
-                    "over",
-                )
-                over = max(0.01, min(0.99, over))
-                probs["O/U 2.5"] = {
-                    "over": round(over, 4),
-                    "under": round(1.0 - over, 4),
-                }
-
-            if "BTTS" in probs:
-                yes = _calibrator.calibrate(
-                    probs["BTTS"].get("yes", 0.5),
-                    "BTTS",
-                    "yes",
-                )
-                yes = max(0.01, min(0.99, yes))
-                probs["BTTS"] = {
-                    "yes": round(yes, 4),
-                    "no": round(1.0 - yes, 4),
-                }
-
+            inputs = resolve_probability_inputs(match)
+            input_data_timestamp = datetime.now(timezone.utc).isoformat()
+            raw = estimate_probabilities_from_inputs(inputs)
+            probs = calibrate_probabilities(raw, calibrator)
             match_probs[match["id"]] = probs
+            match_records[match["id"]] = {
+                "input_data_timestamp": input_data_timestamp,
+                "inputs_json": json.dumps({
+                    "probability_inputs": inputs,
+                    "raw_probabilities": raw,
+                    "calibrated_probabilities": probs,
+                }, sort_keys=True),
+            }
         except Exception as e:
             logger.error(f"Probability engine failed for {match['id']}: {e}")
 
@@ -190,10 +233,15 @@ def run_pipeline(
         )
         picks.append(pick)
 
-    # ── Store picks in DB ────────────────────────────────────────
+    # ── Store picks in DB (with provenance) ──────────────────────
     for pick in picks:
         try:
-            insert_pick(conn, pick.to_db_dict())
+            record = match_records[pick.match_id]
+            insert_pick(conn, {
+                **pick.to_db_dict(),
+                **baseline.provenance(manifest, record["input_data_timestamp"]),
+                "inputs_json": record["inputs_json"],
+            })
         except Exception as e:
             logger.error(f"Failed to store pick: {e}")
 

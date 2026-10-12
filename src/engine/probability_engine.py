@@ -6,8 +6,10 @@ Wraps existing Poisson + XGBoost models to produce per-market probabilities.
 
 import logging
 import math
+from dataclasses import asdict
+
 from src.ml.poisson_model import PoissonGoalModel
-from src.ml.team_stats_db import get_team_stats
+from src.ml.team_stats_db import TeamVenueStats, get_team_stats
 from src.ml.predictor import XGBoostPredictor
 from src.ml.feature_builder import FeatureBuilder, TeamProfile
 
@@ -101,6 +103,22 @@ def _market_weight(xgb_prediction, market: str, data_quality: float) -> float:
     return 0.0
 
 
+def resolve_probability_inputs(match: dict) -> dict:
+    """Point-in-time inputs of estimate_probabilities (JSON-serialisable, stored with official picks)."""
+    league_name = match.get("league_name", "")
+    league_key = LEAGUE_KEY_MAP.get(league_name, "default")
+    # Home team gets home venue stats, away team gets away venue stats
+    return {
+        "home_team": match["home_team"],
+        "away_team": match["away_team"],
+        "league_name": league_name,
+        "country": match.get("country", ""),
+        "league_key": league_key,
+        "home_stats": asdict(get_team_stats(match["home_team"], "home", league_key)),
+        "away_stats": asdict(get_team_stats(match["away_team"], "away", league_key)),
+    }
+
+
 def estimate_probabilities(match: dict) -> dict:
     """
     Produce probability estimates for all supported markets.
@@ -112,14 +130,18 @@ def estimate_probabilities(match: dict) -> dict:
         "goals": {"exp_home": float, "exp_away": float},
         "source": "poisson" | "xgboost" | "hybrid"
     """
-    home_team = match["home_team"]
-    away_team = match["away_team"]
-    league_name = match.get("league_name", "")
-    league_key = LEAGUE_KEY_MAP.get(league_name, "default")
+    return estimate_probabilities_from_inputs(resolve_probability_inputs(match))
 
-    # Get team stats - home team gets home venue stats, away gets away
-    home_stats = get_team_stats(home_team, "home", league_key)
-    away_stats = get_team_stats(away_team, "away", league_key)
+
+def estimate_probabilities_from_inputs(inputs: dict) -> dict:
+    """Deterministic computation from resolved inputs (reproduces a stored prediction exactly)."""
+    home_team = inputs["home_team"]
+    away_team = inputs["away_team"]
+    league_name = inputs["league_name"]
+    league_key = inputs["league_key"]
+    match = {"country": inputs["country"]}
+    home_stats = TeamVenueStats(**inputs["home_stats"])
+    away_stats = TeamVenueStats(**inputs["away_stats"])
 
     # --- Poisson model ---
     data_quality = 50.0

@@ -879,34 +879,15 @@ def qualify_picks(
     # ══════════════════════════════════════════════════════
     # CLV + ROI (match-level, soft)
     # ══════════════════════════════════════════════════════
-    historical_clv = 0.0
-    clv_samples = 0
-    league_roi = 0.0
-    league_roi_samples = 0
-
+    history = {"historical_clv": 0.0, "clv_samples": 0, "league_roi": 0.0, "league_roi_samples": 0}
     try:
         if conn:
-            # CLV from picks table
-            clv_row = conn.execute(
-                "SELECT AVG(clv_pct), COUNT(*) FROM picks WHERE clv_pct IS NOT NULL"
-            ).fetchone()
-            if clv_row and clv_row[1] > 0:
-                historical_clv = clv_row[0] or 0.0
-                clv_samples = clv_row[1]
-
-            # ROI from picks table by league
-            roi_row = conn.execute(
-                """SELECT SUM(pnl_units), COUNT(*) FROM picks
-                   WHERE result IS NOT NULL AND pnl_units IS NOT NULL""",
-            ).fetchone()
-            if roi_row and roi_row[1] > 0:
-                league_roi = (roi_row[0] / roi_row[1]) * 100 if roi_row[1] > 0 else 0
-                league_roi_samples = roi_row[1]
+            history = _pick_history_for_qualification(conn)
     except Exception:
         pass
 
-    l7 = _layer7_clv(historical_clv, clv_samples)
-    l8 = _layer8_historical_roi(league_roi, league_roi_samples, 0.0, 0)
+    l7 = _layer7_clv(history["historical_clv"], history["clv_samples"])
+    l8 = _layer8_historical_roi(history["league_roi"], history["league_roi_samples"], 0.0, 0)
 
     result.layer_gate_results["clv"] = {
         "passed": l7.passed, "score": round(l7.score, 1),
@@ -1071,6 +1052,34 @@ def qualify_picks(
 # ═══════════════════════════════════════════════════════════════════════
 # HELPERS
 # ═══════════════════════════════════════════════════════════════════════
+
+def load_pick_history(conn) -> dict:
+    """Historical CLV/ROI aggregates from settled picks (layers 7 and 8 inputs)."""
+    history = {"historical_clv": 0.0, "clv_samples": 0, "league_roi": 0.0, "league_roi_samples": 0}
+    clv_row = conn.execute(
+        "SELECT AVG(clv_pct), COUNT(*) FROM picks WHERE clv_pct IS NOT NULL"
+    ).fetchone()
+    if clv_row and clv_row[1] > 0:
+        history["historical_clv"] = clv_row[0] or 0.0
+        history["clv_samples"] = clv_row[1]
+    roi_row = conn.execute(
+        """SELECT SUM(pnl_units), COUNT(*) FROM picks
+           WHERE result IS NOT NULL AND pnl_units IS NOT NULL""",
+    ).fetchone()
+    if roi_row and roi_row[1] > 0:
+        history["league_roi"] = (roi_row[0] / roi_row[1]) * 100
+        history["league_roi_samples"] = roi_row[1]
+    return history
+
+
+def _pick_history_for_qualification(conn) -> dict:
+    """Live history, or the frozen snapshot while the baseline is frozen (results must not move the rules)."""
+    from src.baseline import state as baseline
+
+    if baseline.is_frozen():
+        return baseline.load_artifact(conn, "qualification_history")
+    return load_pick_history(conn)
+
 
 def _market_to_xgb_key(market_name: str) -> str | None:
     """Map an internal market name to XGBoost market key."""

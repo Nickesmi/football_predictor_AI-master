@@ -11,8 +11,37 @@ Confirms every known contamination source is excluded:
 - qualification_log rows (can't appear at all — different table)
 - unsettled (pending) picks
 - voided picks
+- picks with missing provenance or produced under another model/calibration/policy version
 """
+import json
+
+import pytest
+
+from src import config
 from src.db.picks_repo import get_experiment_progress, insert_pick
+
+MANIFEST = {
+    "baseline_version": "football-test-v1",
+    "model_version": "model-aaaaaaaaaaaa",
+    "calibration_version": "cal-bbbbbbbbbbbb",
+    "selection_policy_version": "sel-cccccccccccc",
+}
+PROVENANCE = {
+    **{k: MANIFEST[k] for k in ("baseline_version", "model_version", "calibration_version", "selection_policy_version")},
+    "code_revision": "abc123",
+    "runtime": '{"python": "3.11"}',
+    "input_data_timestamp": "2026-01-01T12:00:00+00:00",
+    "inputs_json": "{}",
+}
+
+
+@pytest.fixture(autouse=True)
+def active_baseline(tmp_path, monkeypatch):
+    manifest_dir = tmp_path / "baselines"
+    (manifest_dir / MANIFEST["baseline_version"]).mkdir(parents=True)
+    (manifest_dir / MANIFEST["baseline_version"] / "manifest.json").write_text(json.dumps(MANIFEST))
+    monkeypatch.setattr(config, "BASELINE_FREEZE", MANIFEST["baseline_version"])
+    monkeypatch.setattr(config, "BASELINE_MANIFEST_DIR", manifest_dir)
 
 
 def _insert_match(conn, match_id):
@@ -23,8 +52,9 @@ def _insert_match(conn, match_id):
     )
 
 
-def _insert_settled_pick(conn, match_id, model_source, result, market="1X2", selection="home"):
+def _insert_settled_pick(conn, match_id, model_source, result, market="1X2", selection="home", provenance=None):
     pick_id = insert_pick(conn, {
+        **(PROVENANCE if provenance is None else provenance),
         "match_id": match_id,
         "market": market,
         "selection": selection,
@@ -172,3 +202,39 @@ def test_mixed_population_counts_only_genuine_settled_automated_picks(engine_db)
     assert progress["excluded_non_pipeline"] == 1
     assert progress["excluded_voided"] == 1
     assert progress["pending_eligible"] == 1
+
+
+def test_pick_without_provenance_is_excluded(engine_db):
+    _insert_match(engine_db, "m1")
+    _insert_settled_pick(engine_db, "m1", "poisson", "won", provenance={})
+
+    progress = get_experiment_progress(engine_db)
+    assert progress["settled_eligible"] == 0
+    assert progress["excluded_missing_or_mismatched_provenance"] == 1
+
+
+@pytest.mark.parametrize("field, value", [
+    ("baseline_version", "football-other"),
+    ("model_version", "model-changed00000"),
+    ("calibration_version", "cal-changed000000"),
+    ("selection_policy_version", "sel-changed000000"),
+    ("input_data_timestamp", None),
+    ("code_revision", None),
+])
+def test_pick_with_inconsistent_provenance_is_excluded(engine_db, field, value):
+    _insert_match(engine_db, "m1")
+    _insert_settled_pick(engine_db, "m1", "poisson", "won", provenance={**PROVENANCE, field: value})
+
+    progress = get_experiment_progress(engine_db)
+    assert progress["settled_eligible"] == 0
+    assert progress["excluded_missing_or_mismatched_provenance"] == 1
+
+
+def test_nothing_counts_without_an_active_baseline(engine_db, monkeypatch):
+    _insert_match(engine_db, "m1")
+    _insert_settled_pick(engine_db, "m1", "poisson", "won")
+    monkeypatch.setattr(config, "BASELINE_FREEZE", None)
+
+    progress = get_experiment_progress(engine_db)
+    assert progress["baseline_version"] is None
+    assert progress["settled_eligible"] == 0
