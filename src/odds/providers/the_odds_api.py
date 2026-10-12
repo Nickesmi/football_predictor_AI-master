@@ -43,6 +43,31 @@ SPORT_KEYS = {
     17015: "soccer_uefa_europa_conference_league",
 }
 
+# The same competitions under API-Football league ids (used by fixtures stored
+# with provider 'api_football' or 'matches_db'). The two id spaces overlap, so
+# the provider decides which table applies.
+API_FOOTBALL_SPORT_KEYS = {
+    39: "soccer_epl",
+    140: "soccer_spain_la_liga",
+    135: "soccer_italy_serie_a",
+    78: "soccer_germany_bundesliga",
+    61: "soccer_france_ligue_one",
+    40: "soccer_efl_champ",
+    88: "soccer_netherlands_eredivisie",
+    94: "soccer_portugal_primeira_liga",
+    144: "soccer_belgium_first_div",
+    203: "soccer_turkey_super_league",
+    179: "soccer_spl",
+    2: "soccer_uefa_champs_league",
+    3: "soccer_uefa_europa_league",
+    848: "soccer_uefa_europa_conference_league",
+}
+
+
+def sport_for(fixture: dict) -> str | None:
+    table = API_FOOTBALL_SPORT_KEYS if fixture.get("provider") in ("api_football", "matches_db") else SPORT_KEYS
+    return table.get(fixture.get("league_id"))
+
 
 def requested_markets() -> list[str]:
     return [m for m in os.getenv("ODDS_API_MARKETS", "h2h,totals,spreads").split(",") if m.strip()]

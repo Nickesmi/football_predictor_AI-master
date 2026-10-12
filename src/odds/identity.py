@@ -1,4 +1,4 @@
-"""Map a provider's event to exactly one canonical fixture (matches.id), or to none.
+"""Map a provider's event to its canonical fixture rows (matches.id), at most one per provider, or to none.
 
 Mapping is deliberately strict. A wrong mapping would attach another match's
 prices to a fixture, which is worse than having no prices: an unmapped event
@@ -12,7 +12,10 @@ Rules:
   3. When the fixture's kickoff is an absolute time, it must lie within
      KICKOFF_TOLERANCE of the provider's commence time. Stored kickoffs that
      are only "HH:MM" cannot be compared and fall back to names + date.
-  4. Zero or several candidates: unmapped, with the reason.
+  4. The same real match may be stored once per provider (for example a
+     SofaScore pipeline row and an API-Football row); the event then maps to
+     each of them. Two candidates from the same provider, or none at all,
+     leave the event unmapped, with the reason.
 """
 from __future__ import annotations
 
@@ -74,9 +77,13 @@ class ProviderEvent:
 
 @dataclass(frozen=True)
 class Mapping:
-    fixture_id: str | None
+    fixture_ids: tuple[str, ...]
     method: str
     reason: str = ""
+
+    @property
+    def mapped(self) -> bool:
+        return bool(self.fixture_ids)
 
 
 def _absolute_kickoff(kickoff) -> datetime | None:
@@ -91,17 +98,17 @@ def _absolute_kickoff(kickoff) -> datetime | None:
 
 def resolve_fixture(conn: sqlite3.Connection, event: ProviderEvent) -> Mapping:
     stored = conn.execute(
-        "SELECT fixture_id FROM fixture_identity WHERE provider = ? AND provider_event_id = ?",
+        "SELECT fixture_id FROM fixture_identity WHERE provider = ? AND provider_event_id = ? ORDER BY fixture_id",
         (event.provider, event.event_id),
-    ).fetchone()
+    ).fetchall()
     if stored:
-        return Mapping(stored[0], "stored")
+        return Mapping(tuple(r[0] for r in stored), "stored")
 
     commence = datetime.fromisoformat(iso_utc(event.commence_time))
     dates = [(commence + timedelta(days=d)).strftime("%Y-%m-%d") for d in (-1, 0, 1)]
     home, away = normalise_team(event.home_team), normalise_team(event.away_team)
     rows = conn.execute(
-        f"SELECT id, home_team, away_team, kickoff FROM matches WHERE date IN ({','.join('?' * len(dates))})",
+        f"SELECT id, home_team, away_team, kickoff, provider FROM matches WHERE date IN ({','.join('?' * len(dates))})",
         dates,
     ).fetchall()
 
@@ -111,26 +118,29 @@ def resolve_fixture(conn: sqlite3.Connection, event: ProviderEvent) -> Mapping:
             continue
         kickoff = _absolute_kickoff(row["kickoff"])
         if kickoff is None:
-            candidates.append((row["id"], "names+date"))
+            candidates.append((row["id"], row["provider"], "names+date"))
         elif abs(kickoff - commence) <= KICKOFF_TOLERANCE:
-            candidates.append((row["id"], "names+kickoff"))
+            candidates.append((row["id"], row["provider"], "names+kickoff"))
 
     if not candidates:
-        return Mapping(None, "unmapped", "no fixture with these teams near this kickoff")
-    if len(candidates) > 1:
-        return Mapping(None, "unmapped", f"ambiguous: {len(candidates)} fixtures match")
-    fixture_id, method = candidates[0]
-    return Mapping(fixture_id, method)
+        return Mapping((), "unmapped", "no fixture with these teams near this kickoff")
+    providers = [provider for _, provider, _ in candidates]
+    duplicated = sorted({p for p in providers if providers.count(p) > 1}, key=str)
+    if duplicated:
+        return Mapping((), "unmapped", f"ambiguous: {len(candidates)} fixtures match ({', '.join(map(str, duplicated))})")
+    methods = {method for _, _, method in candidates}
+    return Mapping(tuple(sorted(fid for fid, _, _ in candidates)),
+                   "names+kickoff" if methods == {"names+kickoff"} else "names+date")
 
 
 def remember(conn: sqlite3.Connection, event: ProviderEvent, mapping: Mapping, mapped_at: str) -> None:
-    if mapping.fixture_id is None or mapping.method == "stored":
+    if not mapping.mapped or mapping.method == "stored":
         return
-    conn.execute(
+    conn.executemany(
         """INSERT OR IGNORE INTO fixture_identity
                (provider, provider_event_id, fixture_id, provider_home, provider_away,
                 commence_time, method, mapped_at)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-        (event.provider, event.event_id, mapping.fixture_id, event.home_team, event.away_team,
-         iso_utc(event.commence_time), mapping.method, mapped_at),
+        [(event.provider, event.event_id, fixture_id, event.home_team, event.away_team,
+          iso_utc(event.commence_time), mapping.method, mapped_at) for fixture_id in mapping.fixture_ids],
     )

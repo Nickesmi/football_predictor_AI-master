@@ -24,7 +24,7 @@ CREATE TABLE IF NOT EXISTS fixture_identity (
     commence_time       TEXT NOT NULL,
     method              TEXT NOT NULL,
     mapped_at           TEXT NOT NULL,
-    PRIMARY KEY (provider, provider_event_id)
+    PRIMARY KEY (provider, provider_event_id, fixture_id)
 );
 
 CREATE TABLE IF NOT EXISTS odds_quotes (

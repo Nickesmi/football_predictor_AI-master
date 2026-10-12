@@ -27,14 +27,15 @@ def store_parsed(conn: sqlite3.Connection, parsed, skipped, report: dict, fetche
     for event, quotes in parsed:
         report["events"] += 1
         mapping = identity.resolve_fixture(conn, event)
-        if mapping.fixture_id is None:
+        if not mapping.mapped:
             report["unmapped"].append(f"{event.home_team} v {event.away_team} {event.commence_time}: {mapping.reason}")
             continue
         report["mapped"] += 1
         identity.remember(conn, event, mapping, fetched_at)
-        new = store.store_quotes(conn, mapping.fixture_id, quotes, fetched_at)
-        report["quotes_new"] += new
-        report["quotes_duplicate"] += len(quotes) - new
+        for fixture_id in mapping.fixture_ids:
+            new = store.store_quotes(conn, fixture_id, quotes, fetched_at)
+            report["quotes_new"] += new
+            report["quotes_duplicate"] += len(quotes) - new
     conn.commit()
 
 
@@ -43,7 +44,7 @@ def collect_the_odds_api(conn: sqlite3.Connection, fixtures: list[dict], api_key
     report = empty_report(the_odds_api.PROVIDER)
     sports = defaultdict(int)
     for fixture in fixtures:
-        sport = the_odds_api.SPORT_KEYS.get(fixture.get("league_id"))
+        sport = the_odds_api.sport_for(fixture)
         if sport:
             sports[sport] += 1
         else:
@@ -88,6 +89,6 @@ def collect_api_football(conn: sqlite3.Connection, fixtures: list[dict], api_key
         # The provider id is the stored fixture id: record that identity directly.
         for event, _ in parsed:
             if event.event_id == str(fixture["id"]):
-                identity.remember(conn, event, identity.Mapping(str(fixture["id"]), "provider_id"), iso_utc(moment))
+                identity.remember(conn, event, identity.Mapping((str(fixture["id"]),), "provider_id"), iso_utc(moment))
         store_parsed(conn, parsed, skipped, report, iso_utc(moment))
     return report

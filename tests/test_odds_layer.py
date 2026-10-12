@@ -134,10 +134,10 @@ def _event(home="Liverpool", away="Ipswich Town", commence=KICKOFF, event_id="ev
 def test_event_maps_to_the_unique_fixture_and_is_remembered(engine_db):
     _fixture(engine_db)
     mapping = identity.resolve_fixture(engine_db, _event())
-    assert mapping == identity.Mapping("fx-1", "names+kickoff")
+    assert mapping == identity.Mapping(("fx-1",), "names+kickoff")
     identity.remember(engine_db, _event(), mapping, _ago(0))
     engine_db.execute("UPDATE matches SET home_team = 'Renamed' WHERE id = 'fx-1'")
-    assert identity.resolve_fixture(engine_db, _event()) == identity.Mapping("fx-1", "stored")
+    assert identity.resolve_fixture(engine_db, _event()) == identity.Mapping(("fx-1",), "stored")
 
 
 @pytest.mark.parametrize("event, reason", [
@@ -148,15 +148,15 @@ def test_event_maps_to_the_unique_fixture_and_is_remembered(engine_db):
 def test_events_that_do_not_match_stay_unmapped(engine_db, event, reason):
     _fixture(engine_db)
     mapping = identity.resolve_fixture(engine_db, event)
-    assert mapping.fixture_id is None and reason in mapping.reason
+    assert not mapping.mapped and reason in mapping.reason
 
 
 def test_time_only_kickoffs_map_by_names_and_date_and_ambiguity_is_refused(engine_db):
     _fixture(engine_db, "fx-1", kickoff="15:00")
-    assert identity.resolve_fixture(engine_db, _event()) == identity.Mapping("fx-1", "names+date")
-    _fixture(engine_db, "fx-2", kickoff="15:00", provider="espn")
+    assert identity.resolve_fixture(engine_db, _event()) == identity.Mapping(("fx-1",), "names+date")
+    _fixture(engine_db, "fx-2", kickoff="15:00")
     mapping = identity.resolve_fixture(engine_db, _event())
-    assert mapping.fixture_id is None and mapping.reason == "ambiguous: 2 fixtures match"
+    assert not mapping.mapped and mapping.reason == "ambiguous: 2 fixtures match (sofascore)"
 
 
 # ── Storage and freshness ────────────────────────────────────────────────────
@@ -389,3 +389,38 @@ def test_legacy_odds_fetcher_sends_nothing_without_a_budget(engine_db, monkeypat
     monkeypatch.delenv("ODDS_REQUEST_BUDGET", raising=False)
     assert TheOddsAPIProvider(engine_db)._fetch_from_api("soccer_epl") == []
     assert engine_db.execute("SELECT status FROM provider_quota_log").fetchone()[0] == "refused"
+
+
+def test_sport_keys_follow_the_fixture_providers_league_id_scheme():
+    assert the_odds_api.sport_for({"provider": "sofascore", "league_id": 17}) == "soccer_epl"
+    assert the_odds_api.sport_for({"provider": "api_football", "league_id": 39}) == "soccer_epl"
+    assert the_odds_api.sport_for({"provider": "matches_db", "league_id": 17}) is None
+    assert the_odds_api.sport_for({"provider": "matches_db", "league_id": 71}) is None  # Brazil Serie A
+
+
+def test_odds_worker_dry_run_reports_cost_and_sends_nothing(engine_db, monkeypatch, capsys):
+    import json as _json
+    import scripts.odds_worker as worker
+
+    _fixture(engine_db, "a", date=datetime.now(timezone.utc).strftime("%Y-%m-%d"))
+    _fixture(engine_db, "b", home="Arsenal", away="Chelsea", date=datetime.now(timezone.utc).strftime("%Y-%m-%d"))
+    _fixture(engine_db, "c", home="Inter", away="Milan", league_id=23,
+             date=datetime.now(timezone.utc).strftime("%Y-%m-%d"))
+    monkeypatch.setattr(worker, "get_db", lambda: engine_db)
+    monkeypatch.setattr("sys.argv", ["odds_worker.py", "--dry-run"])
+    monkeypatch.setenv("ODDS_API_MARKETS", "h2h,totals")
+    worker.main()
+    plan = _json.loads(capsys.readouterr().out)["plan"]
+    assert (plan["requests"], plan["estimated_cost"], plan["approved_daily_budget"]) == (2, 4, 0)
+    assert plan["competitions"] == ["soccer_epl", "soccer_italy_serie_a"]
+    assert engine_db.execute("SELECT COUNT(*) FROM provider_quota_log").fetchone()[0] == 0
+
+
+def test_one_real_match_stored_by_two_providers_receives_the_same_quotes(engine_db, monkeypatch):
+    _fixture(engine_db, "fx-sofa")                                         # official pipeline row
+    _fixture(engine_db, "1545382", kickoff="15:00", provider="matches_db")  # same match, another feed
+    report = ingest_odds_api(engine_db, monkeypatch, [
+        odds_api_event("ev-1", "Liverpool", "Ipswich Town", KICKOFF, h2h=(1.3, 5.5, 9.0), observed=_ago(5)),
+    ], now=NOW)
+    assert (report["mapped"], report["quotes_new"]) == (1, 6)
+    assert [r[0] for r in engine_db.execute("SELECT fixture_id FROM fixture_identity ORDER BY 1")] == ["1545382", "fx-sofa"]

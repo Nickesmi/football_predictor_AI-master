@@ -1,103 +1,81 @@
 #!/usr/bin/env python3
 """
-Odds Worker — Post-BILQE Data Warehouse Expansion
+Odds Worker — collect real bookmaker odds for upcoming tracked fixtures (M2.5).
 
-Automated odds collection script.
-To be scheduled via cron (e.g., every hour or every 4 hours).
-Captures:
-- 4-hourly snapshots
-- Kickoff -1h pre-match odds
-- Kickoff closing odds
+    python scripts/odds_worker.py --dry-run          # plan and cost only, sends nothing
+    python scripts/odds_worker.py                    # collect within the approved budget
+    python scripts/odds_worker.py --provider api_football
+
+Nothing is sent unless the operator has approved a daily request budget
+(ODDS_REQUEST_BUDGET or ODDS_REQUEST_BUDGET_<PROVIDER>; default 0). The Odds
+API costs (markets x regions) per competition request; API-Football costs one
+request per fixture and shares its daily limit with the fixture feeds.
+Every request, refusal and failure is logged in provider_quota_log. Events
+that cannot be mapped to exactly one stored fixture are reported, not guessed.
 """
 
+import argparse
+import json
+import os
 import sys
-import time
-import logging
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.config import logger
-from src.db.database import get_db
-from src.db.match_repo import get_matches_by_date
-from src.data.odds_fetcher import TheOddsAPIProvider, LEAGUE_TO_SPORT
+from src import config  # noqa: E402
+from src.db.database import get_db  # noqa: E402
+from src.odds import collector, quota, store  # noqa: E402
+from src.odds.providers import api_football, the_odds_api  # noqa: E402
 
-def run_odds_collection():
-    logger.info("==================================================")
-    logger.info("STARTING AUTOMATED ODDS COLLECTION")
-    logger.info("==================================================")
-    
+
+def upcoming_fixtures(conn, now, days):
+    dates = [(now + timedelta(days=d)).strftime("%Y-%m-%d") for d in range(-1, days + 1)]
+    rows = conn.execute(
+        f"SELECT * FROM matches WHERE status IN ('NS', 'TBD') AND date IN ({','.join('?' * len(dates))})",
+        dates,
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def plan(conn, provider, fixtures, now):
+    if provider == the_odds_api.PROVIDER:
+        sports = sorted({s for s in map(the_odds_api.sport_for, fixtures) if s})
+        requests, cost = len(sports), len(sports) * the_odds_api.request_cost()
+        detail = {"competitions": sports, "markets": the_odds_api.requested_markets(),
+                  "regions": the_odds_api.requested_regions()}
+    else:
+        eligible = [f["id"] for f in fixtures if f.get("provider") == "api_football" and str(f["id"]).isdigit()]
+        requests, cost = len(eligible), len(eligible) * api_football.REQUEST_COST
+        detail = {"fixtures": len(eligible)}
+    return {
+        "provider": provider, "upcoming_fixtures": len(fixtures), "requests": requests,
+        "estimated_cost": cost, "approved_daily_budget": quota.daily_budget(provider),
+        "used_today": store.requests_used_today(conn, provider, now), **detail,
+    }
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--provider", choices=[the_odds_api.PROVIDER, api_football.PROVIDER],
+                        default=the_odds_api.PROVIDER)
+    parser.add_argument("--days", type=int, default=1, help="collect for fixtures up to this many days ahead")
+    parser.add_argument("--dry-run", action="store_true", help="report the plan and cost; send nothing")
+    args = parser.parse_args()
+
     conn = get_db()
-    provider = TheOddsAPIProvider(conn)
-    
-    today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    matches = get_matches_by_date(conn, today_str)
-    
-    # Filter upcoming matches
-    upcoming = [m for m in matches if m.get("status") in ("NS", "TBD")]
-    logger.info(f"Found {len(upcoming)} upcoming matches today")
-    
     now = datetime.now(timezone.utc)
-    
-    success_count = 0
-    for match in upcoming:
-        home_team = match["home_team"]
-        away_team = match["away_team"]
-        league_id = match.get("league_id")
-        kickoff_str = match.get("kickoff")
-        
-        sport_key = LEAGUE_TO_SPORT.get(league_id)
-        if not sport_key:
-            continue
-            
-        # Determine if we should scan based on kickoff time
-        should_scan = False
-        scan_reason = "4-hourly snapshot"
-        
-        if kickoff_str:
-            try:
-                # Assuming kickoff is stored in ISO format
-                kickoff = datetime.fromisoformat(kickoff_str)
-                if kickoff.tzinfo is None:
-                    kickoff = kickoff.replace(tzinfo=timezone.utc)
-                
-                time_to_kickoff = (kickoff - now).total_seconds() / 3600.0
-                
-                if 0 <= time_to_kickoff <= 0.25:
-                    should_scan = True
-                    scan_reason = "Closing odds (kickoff)"
-                elif 0.75 <= time_to_kickoff <= 1.25:
-                    should_scan = True
-                    scan_reason = "Pre-match odds (kickoff -1h)"
-                else:
-                    # Every 4 hours roughly. This script should be run by cron.
-                    # We will scan if it hasn't been scanned recently.
-                    # (Simple proxy: we just scan if it's a generic run)
-                    should_scan = True
-            except Exception:
-                should_scan = True # Fallback if time parsing fails
+    fixtures = upcoming_fixtures(conn, now, args.days)
+    report = {"plan": plan(conn, args.provider, fixtures, now)}
+    if not args.dry_run:
+        if args.provider == the_odds_api.PROVIDER:
+            report["result"] = collector.collect_the_odds_api(conn, fixtures, os.getenv("ODDS_API_KEY", ""), now=now)
         else:
-            should_scan = True
-            
-        if not should_scan:
-            continue
-            
-        try:
-            logger.info(f"Fetching odds for {home_team} vs {away_team} [{scan_reason}]")
-            # This automatically inserts into `odds_snapshots`
-            provider.get_normalized_odds_for_match(sport_key, home_team, away_team)
-            success_count += 1
-            # Sleep to respect rate limits
-            time.sleep(1.0)
-            
-        except Exception as e:
-            logger.error(f"Failed to fetch odds for {home_team} vs {away_team}: {e}")
-            
-    logger.info("==================================================")
-    logger.info(f"ODDS COLLECTION COMPLETE: {success_count} matches scanned")
-    logger.info("==================================================")
+            report["result"] = collector.collect_api_football(
+                conn, fixtures, config.APIFOOTBALL_API_KEY, config.APIFOOTBALL_HOST, now=now)
+    print(json.dumps(report, indent=2))
+
 
 if __name__ == "__main__":
-    run_odds_collection()
+    main()
