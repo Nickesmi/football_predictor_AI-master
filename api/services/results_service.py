@@ -669,13 +669,14 @@ def get_results_verification_service(date_str: str, background_tasks: Background
 
         # ── Phase 1.6: ERROR INTELLIGENCE — settle 1X2 prediction ──
         try:
-            from src.db.error_intelligence import store_prediction_record, settle_prediction
+            from src.db.error_intelligence import prediction_from_analysis, store_prediction_record, settle_prediction
             db = get_db()
-            # Get 1X2 probs from the fresh analysis
-            result_mkt = analysis.get("prediction", {}).get("result", {})
-            h_pct = float(result_mkt.get("home_win", 33.0))
-            d_pct = float(result_mkt.get("draw", 33.0))
-            a_pct = float(result_mkt.get("away_win", 33.0))
+            # The analysis's real 1X2 prediction (it lives under "poisson"; the old
+            # "prediction" key never existed, so every record became 33/33/33).
+            predicted = prediction_from_analysis(analysis)
+            if predicted is None:
+                raise ValueError("analysis has no 1X2 prediction; nothing recorded")
+            h_pct, d_pct, a_pct = predicted["home_win_pct"], predicted["draw_pct"], predicted["away_win_pct"]
             country = fixture.get("league", {}).get("country", "")
             # Upsert the prediction record (safe if already stored from UI click)
             store_prediction_record(
@@ -691,8 +692,8 @@ def get_results_verification_service(date_str: str, background_tasks: Background
                 away_win_pct=a_pct,
             )
             # Settle it with the actual goals
-            pred_h = analysis.get("prediction", {}).get("home_goals", None)
-            pred_a = analysis.get("prediction", {}).get("away_goals", None)
+            pred_h = predicted["pred_home_goals"]
+            pred_a = predicted["pred_away_goals"]
             settle_prediction(
                 conn=db,
                 fixture_id=str(event_id),

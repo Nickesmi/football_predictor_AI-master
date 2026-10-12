@@ -183,15 +183,15 @@ def settle_date_endpoint_service(date_str: str):
 
                 # Compute fresh prediction for this match
                 analysis = _compute_match_analysis(home, away, league, shuffle_tiers=False)
-                result_mkt = analysis.get("poisson", {}).get("result", {})
-                h_pct = float(result_mkt.get("home_win", 33.0))
-                d_pct = float(result_mkt.get("draw", 33.0))
-                a_pct = float(result_mkt.get("away_win", 33.0))
+                from src.db.error_intelligence import prediction_from_analysis
+                predicted = prediction_from_analysis(analysis)
+                if predicted is None:
+                    continue  # no real prediction -> record nothing (never a 33/33/33 placeholder)
 
-                store_prediction_record(conn, fid, date_str, league, country,
-                                        home, away, h_pct, d_pct, a_pct)
-                pred_h = analysis.get("score_prediction", {}).get("expected_goals", {}).get("home")
-                pred_a = analysis.get("score_prediction", {}).get("expected_goals", {}).get("away")
+                store_prediction_record(conn, fid, date_str, league, country, home, away,
+                                        predicted["home_win_pct"], predicted["draw_pct"], predicted["away_win_pct"])
+                pred_h = predicted["pred_home_goals"]
+                pred_a = predicted["pred_away_goals"]
                 settle_prediction(conn, fid, home_goals, away_goals,
                                   float(pred_h) if pred_h is not None else None,
                                   float(pred_a) if pred_a is not None else None)
@@ -199,8 +199,8 @@ def settle_date_endpoint_service(date_str: str):
                 # ── Dynamic Team Learning System Update ──
                 from src.db.team_intelligence import update_team_ratings
                 update_team_ratings(conn, fid, date_str, league,
-                                    home, away, h_pct, d_pct, a_pct,
-                                    home_goals, away_goals)
+                                    home, away, predicted["home_win_pct"], predicted["draw_pct"],
+                                    predicted["away_win_pct"], home_goals, away_goals)
                                     
                 settled += 1
             except Exception as fe:

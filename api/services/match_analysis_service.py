@@ -1609,7 +1609,10 @@ def get_match_analysis(
         # ── Store 1X2 prediction in error intelligence system ──
         try:
             conn = get_db()
-            result_mkt = analysis.get("poisson", {}).get("result", {})
+            from src.db.error_intelligence import prediction_from_analysis
+            predicted = prediction_from_analysis(analysis)
+            if predicted is None:
+                raise ValueError("analysis has no 1X2 prediction; nothing recorded")
             store_prediction_record(
                 conn=conn,
                 fixture_id=fixture_id,
@@ -1618,9 +1621,9 @@ def get_match_analysis(
                 country="",
                 home_team=home_name,
                 away_team=away_name,
-                home_win_pct=float(result_mkt.get("home_win", 33.0)),
-                draw_pct=float(result_mkt.get("draw", 33.0)),
-                away_win_pct=float(result_mkt.get("away_win", 33.0)),
+                home_win_pct=predicted["home_win_pct"],
+                draw_pct=predicted["draw_pct"],
+                away_win_pct=predicted["away_win_pct"],
             )
 
             # Phase 5: Scoreline Intelligence Reform

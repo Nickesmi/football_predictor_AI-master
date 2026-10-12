@@ -208,6 +208,24 @@ def apply_league_adjustment(
 
 # ── Store prediction record ────────────────────────────────────────────────────
 
+def prediction_from_analysis(analysis: dict) -> Optional[dict]:
+    """The 1X2 prediction a match analysis actually made, or None if it has none.
+
+    Never substitutes defaults: a missing prediction must not be recorded as a
+    33/33/33 "home" pick (that placeholder used to feed league reliability).
+    """
+    result = (analysis.get("poisson") or {}).get("result") or {}
+    try:
+        home, draw, away = (float(result[k]) for k in ("home_win", "draw", "away_win"))
+    except (KeyError, TypeError, ValueError):
+        return None
+    expected = (analysis.get("score_prediction") or {}).get("expected_goals") or {}
+    return {
+        "home_win_pct": home, "draw_pct": draw, "away_win_pct": away,
+        "pred_home_goals": expected.get("home"), "pred_away_goals": expected.get("away"),
+    }
+
+
 def store_prediction_record(
     conn: sqlite3.Connection,
     fixture_id: str,
