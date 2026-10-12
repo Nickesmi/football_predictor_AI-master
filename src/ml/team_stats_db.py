@@ -964,10 +964,14 @@ def get_team_stats(team_name: str, venue: str, league: str = "") -> TeamVenueSta
         corners = 3.0 + ((h >> 32) % 25) / 10       # 3.0–5.5
         cards = 1.8 + ((h >> 48) % 15) / 10         # 1.8–3.3
 
+    # No real observations behind this placeholder: matches_played must be 0
+    # (not the dataclass default of 20) so data-quality scoring treats it as blind.
     return TeamVenueStats(
         scored=round(scored, 2),
         conceded=round(conceded, 2),
         corners=round(corners, 1),
         cards=round(cards, 1),
+        matches_played=0,
+        form_last5=0.5,
     )
 

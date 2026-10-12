@@ -90,21 +90,15 @@ def _blend(poisson_prob: float, xgb_prob: float | None, weight: float) -> float:
 
 def _market_weight(xgb_prediction, market: str, data_quality: float) -> float:
     """
-    Choose a conservative XGBoost blend weight.
+    XGBoost blend weight: always 0.0.
 
-    The bundled models are useful as a second opinion, but the stored metrics show
-    modest AUC, so Poisson remains the anchor until richer real match history exists.
+    The bundled models (src/ml/trainer.py) were trained only on synthetic data
+    (src/ml/dataset_builder.py) and are never production-validated
+    (src/ml/model_provenance.synthetic_model_provenance). Their AUC measures
+    reconstruction of the synthetic generator, not real skill. Changing this
+    requires a provenance-validated real-data model and owner approval.
     """
-    if xgb_prediction is None or data_quality < 45:
-        return 0.0
-
-    metrics = getattr(_xgb.trainer, "metrics", {}).get(market, {})
-    auc = float(metrics.get("roc_auc_mean", 0.5) or 0.5)
-    if auc < 0.53:
-        return 0.10
-    if auc < 0.57:
-        return 0.18
-    return 0.25
+    return 0.0
 
 
 def estimate_probabilities(match: dict) -> dict:

@@ -19,6 +19,7 @@ from src.config import logger
 from src.ml.poisson_model import PoissonGoalModel, PoissonPrediction
 from src.ml.predictor import XGBoostPredictor, MatchPrediction
 from src.ml.feature_builder import TeamProfile
+from src.ml.model_provenance import synthetic_model_provenance
 
 
 @dataclass
@@ -136,10 +137,13 @@ class HybridPredictor:
         for pred in xgb.predictions:
             xgb_lookup[pred.display_name] = pred.confidence_pct
 
+        # Synthetic-trained XGBoost is shown for reference only; it gets no blend weight.
+        xgb_blend_allowed = synthetic_model_provenance()["production_validated"]
+
         for market, prob in poisson_markets.items():
             xgb_prob = xgb_lookup.get(market)
-            
-            if xgb_prob is not None:
+
+            if xgb_prob is not None and xgb_blend_allowed:
                 # Blend: 60% Poisson + 40% XGBoost for goals
                 blended = prob * 0.6 + xgb_prob * 0.4
                 source = "hybrid"

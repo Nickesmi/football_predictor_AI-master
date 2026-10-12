@@ -1,7 +1,7 @@
 """Golden-probability regression test.
 
 Freezes the production probability outputs of `estimate_probabilities()` (the
-Poisson + synthetic-XGBoost blend used by run_pipeline) and of
+probability engine used by run_pipeline) and of
 `_compute_match_analysis()` (the user-facing analysis, incl. tiers, runtime
 gate and BILQE verdicts) on a fixed, fully isolated input set.
 
@@ -9,8 +9,11 @@ Tolerance: absolute 1e-9 on every float. Production code already rounds its
 outputs to <= 4 decimals, so this is effectively exact equality; the epsilon
 only absorbs float repr noise.
 
-One reference file per Python minor version. Python 3.11 is the canonical
-runtime; the 3.13 reference is kept for comparison. The two references may
+References are versioned by behaviour version and Python minor version.
+Current behaviour version: v2-m2 (M2: synthetic XGBoost weight 0, unknown
+teams report 0 matches). Superseded references are kept byte-identical under
+history/ and pinned by SHA-256. Python 3.11 is the canonical runtime; the 3.13
+reference is kept for comparison. The two references may
 differ ONLY at the paths listed in KNOWN_RUNTIME_DIFFERENCES (enforced below):
 Python 3.12+ sums floats with compensated summation, which moves a value that
 sits on a rounding boundary.
@@ -35,9 +38,14 @@ from src.db.team_state import TeamState, upsert_team_state
 
 GOLDEN_DIR = Path(__file__).parent
 CANONICAL_RUNTIME = (3, 11)
+GOLDEN_VERSION = "v2-m2"
 GOLDEN_FILES = {
-    (3, 11): GOLDEN_DIR / "golden_probabilities.py311.json",
-    (3, 13): GOLDEN_DIR / "golden_probabilities.py313.json",
+    (3, 11): GOLDEN_DIR / "golden_probabilities.v2-m2.py311.json",
+    (3, 13): GOLDEN_DIR / "golden_probabilities.v2-m2.py313.json",
+}
+HISTORY = {
+    "history/v1-pre-m2/golden_probabilities.py311.json": "2be660c4a7bea730b3031f46317c3f327ffc558582821cf6b700499a1557da77",
+    "history/v1-pre-m2/golden_probabilities.py313.json": "658355c70c46d8d931a5174786bd2f01a8bf7a7111eec4a8874c7b3a6ae0971e",
 }
 GOLDEN_FILE = GOLDEN_FILES.get(sys.version_info[:2])
 KNOWN_RUNTIME_DIFFERENCES = {
@@ -184,6 +192,13 @@ def test_canonical_runtime_reference_exists():
     assert GOLDEN_FILES[CANONICAL_RUNTIME].exists()
 
 
+def test_historical_references_are_preserved_byte_identical():
+    import hashlib
+
+    for rel, sha in HISTORY.items():
+        assert hashlib.sha256((GOLDEN_DIR / rel).read_bytes()).hexdigest() == sha, rel
+
+
 def test_runtime_references_differ_only_at_documented_paths():
     py311 = json.loads(GOLDEN_FILES[(3, 11)].read_text())
     py313 = json.loads(GOLDEN_FILES[(3, 13)].read_text())
@@ -192,8 +207,30 @@ def test_runtime_references_differ_only_at_documented_paths():
     assert diffs == expected
 
 
-def test_golden_inputs_exercise_the_synthetic_xgb_blend_both_ways():
+def test_v1_history_exercised_both_synthetic_xgb_paths():
+    data = json.loads((GOLDEN_DIR / "history/v1-pre-m2/golden_probabilities.py311.json").read_text())
+    sources = {v["source"] for v in data["estimate_probabilities"].values()}
+    assert sources == {"hybrid", "poisson"}
+    assert any(v["data_quality"] < 45 for v in data["estimate_probabilities"].values())
+
+
+def test_canonical_reference_has_no_synthetic_xgb_influence():
     data = json.loads(GOLDEN_FILES[CANONICAL_RUNTIME].read_text())["estimate_probabilities"]
-    sources = {v["source"] for v in data.values()}
-    assert "hybrid" in sources, "no fixture exercises the nonzero synthetic-XGB weight path"
-    assert any(v["data_quality"] < 45 for v in data.values()), "no fixture exercises the DQ<45 zero-weight path"
+    assert {v["source"] for v in data.values()} == {"poisson"}
+
+
+def test_v1_to_v2_differences_are_all_attributed(tmp_path, monkeypatch):
+    import importlib.util
+
+    monkeypatch.setattr(database, "_connection", database._connection)
+    spec = importlib.util.spec_from_file_location("compare_refs", GOLDEN_DIR.parent.parent / "scripts" / "compare_golden_references.py")
+    compare = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(compare)
+    rc = compare.main(
+        str(GOLDEN_DIR / "history/v1-pre-m2/golden_probabilities.py311.json"),
+        str(GOLDEN_FILES[CANONICAL_RUNTIME]),
+        str(tmp_path / "report.md"),
+    )
+    report = (tmp_path / "report.md").read_text()
+    assert rc == 0
+    assert "| **UNINTENDED** | not explained by E1–E3 | **0** |" in report

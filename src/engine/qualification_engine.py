@@ -54,6 +54,8 @@ import math
 from dataclasses import dataclass, field
 from typing import Optional
 
+from src.ml.model_provenance import synthetic_model_provenance
+
 logger = logging.getLogger("football_predictor")
 
 
@@ -955,9 +957,10 @@ def qualify_picks(
         # ── Layer 2: Model Consensus ──
         model_probs = {"poisson": probability}
 
-        # Map pick to XGBoost market key
+        # The bundled XGBoost is synthetic-trained and never production-validated
+        # (model_provenance), so it must not vote in consensus or trip the spread gate.
         xgb_key = _market_to_xgb_key(market_name)
-        if xgb_key and xgb_key in xgb_lookup:
+        if xgb_key and xgb_key in xgb_lookup and synthetic_model_provenance()["production_validated"]:
             model_probs["xgboost"] = xgb_lookup[xgb_key]
 
         l2 = _layer2_model_consensus(model_probs)
