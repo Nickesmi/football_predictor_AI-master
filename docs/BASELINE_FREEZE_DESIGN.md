@@ -1,6 +1,6 @@
-# Football v1.0 Baseline — Freeze Architecture (design, not implemented)
+# Football v1.0 Baseline — Freeze Architecture
 
-Date: 2026-10-11 · Status: **design for approval** · Owner policy (2026-10-11):
+Date: 2026-10-11 · Status: **implemented in M2 (see §4), not activated** · Owner policy (2026-10-11):
 
 - no automatic production retraining, isotonic replacement, league-adjustment update, or recalibration of pick probabilities from accumulating results;
 - no silent change to model weights, qualification thresholds or market-selection rules;

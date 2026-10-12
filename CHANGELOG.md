@@ -1,5 +1,12 @@
 # Changelog
 
+## M2 — governed fixes and frozen baseline (2026-10-12, `m2/governed-fixes-and-freeze`)
+
+- A (runtime correctness, no model change): missing imports and stale `api.main` references fixed (competition tracking, prediction pre-warm, admin date-trace/date-validation, logo audit, audit_engine league map); vote-derived odds snapshots no longer crash on insert; static undefined-name/import guard (pyflakes); admin GET smoke test; frontend field contract test.
+- B (governed probability changes, approved): synthetic XGBoost has zero influence (blend weight, BILQE consensus, live-odds hybrid); unknown teams report 0 matches. Golden v1 preserved under `tests/golden/history/`, canonical v2-m2 added; every change attributed (`docs/M2_PROBABILITY_COMPARISON.md`, 0 unintended).
+- C (frozen baseline, switch off by default): manifest + frozen snapshots, shadow learning, integrity checks that refuse official picks on any mismatch, full provenance and exact reproducibility of every pick, experiment count restricted to matching provenance, `/api/baseline/status`; 30-day simulation with 0 violations.
+- D (runtime cutover preparation): launcher preflight, cutover/rollback scripts, desktop build isolated in `.venv-desktop`, runbook `docs/CUTOVER_PYTHON311.md`.
+
 ## M1.1 — stabilization (2026-10-11, `m1.1/stabilization`)
 
 No change to prediction outputs or calibration behaviour.
