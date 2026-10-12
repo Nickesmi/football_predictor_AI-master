@@ -10,8 +10,9 @@ outputs to <= 4 decimals, so this is effectively exact equality; the epsilon
 only absorbs float repr noise.
 
 References are versioned by behaviour version and Python minor version.
-Current behaviour version: v2-m2 (M2: synthetic XGBoost weight 0, unknown
-teams report 0 matches). Superseded references are kept byte-identical under
+Current behaviour version: v3-m2.5 (M2: synthetic XGBoost weight 0, unknown
+teams report 0 matches; M2.5: BILQE league reliability read correctly, no
+qualification without real bookmaker odds, structured rejections). Superseded references are kept byte-identical under
 history/ and pinned by SHA-256. Python 3.11 is the canonical runtime; the 3.13
 reference is kept for comparison. The two references may
 differ ONLY at the paths listed in KNOWN_RUNTIME_DIFFERENCES (enforced below):
@@ -38,12 +39,14 @@ from src.db.team_state import TeamState, upsert_team_state
 
 GOLDEN_DIR = Path(__file__).parent
 CANONICAL_RUNTIME = (3, 11)
-GOLDEN_VERSION = "v2-m2"
+GOLDEN_VERSION = "v3-m2.5"
 GOLDEN_FILES = {
-    (3, 11): GOLDEN_DIR / "golden_probabilities.v2-m2.py311.json",
-    (3, 13): GOLDEN_DIR / "golden_probabilities.v2-m2.py313.json",
+    (3, 11): GOLDEN_DIR / "golden_probabilities.v3-m2.5.py311.json",
+    (3, 13): GOLDEN_DIR / "golden_probabilities.v3-m2.5.py313.json",
 }
 HISTORY = {
+    "history/v2-m2/golden_probabilities.py311.json": "c8085e7cabaceef22d76abd3d4e49d5d81c3fd8e29d38543aa1c93f043d02011",
+    "history/v2-m2/golden_probabilities.py313.json": "a3bb0c81c52e878623cb0be3e5fbd7c380cfec8927fc0ee609d1e80e51125a87",
     "history/v1-pre-m2/golden_probabilities.py311.json": "2be660c4a7bea730b3031f46317c3f327ffc558582821cf6b700499a1557da77",
     "history/v1-pre-m2/golden_probabilities.py313.json": "658355c70c46d8d931a5174786bd2f01a8bf7a7111eec4a8874c7b3a6ae0971e",
 }
@@ -228,9 +231,26 @@ def test_v1_to_v2_differences_are_all_attributed(tmp_path, monkeypatch):
     spec.loader.exec_module(compare)
     rc = compare.main(
         str(GOLDEN_DIR / "history/v1-pre-m2/golden_probabilities.py311.json"),
-        str(GOLDEN_FILES[CANONICAL_RUNTIME]),
+        str(GOLDEN_DIR / "history/v2-m2/golden_probabilities.py311.json"),
         str(tmp_path / "report.md"),
     )
     report = (tmp_path / "report.md").read_text()
     assert rc == 0
     assert "| **UNINTENDED** | not explained by E1–E3 | **0** |" in report
+
+
+def test_v2_to_v3_changes_are_confined_to_bilqe_qualification(tmp_path, monkeypatch):
+    import importlib.util
+
+    monkeypatch.setattr(database, "_connection", database._connection)
+    spec = importlib.util.spec_from_file_location("compare_refs", GOLDEN_DIR.parent.parent / "scripts" / "compare_golden_references.py")
+    compare = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(compare)
+    rc = compare.main(
+        str(GOLDEN_DIR / "history/v2-m2/golden_probabilities.py311.json"),
+        str(GOLDEN_FILES[CANONICAL_RUNTIME]),
+        str(tmp_path / "report.md"),
+        causes="m2.5",
+    )
+    assert rc == 0
+    assert "| **UNINTENDED** | not explained by E4 | **0** |" in (tmp_path / "report.md").read_text()

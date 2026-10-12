@@ -87,6 +87,9 @@ class QualifiedPick:
     implied_prob: float = 0.0
     model_consensus: float = 0.0
     similar_match_hit_rate: float = 0.0
+    # Every layer's verdict for this pick (not only the first failure):
+    # {layer_key: {"passed": bool, "score": float, "reason": str}}
+    layer_outcomes: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -126,6 +129,16 @@ class QualificationResult:
                 for p in self.qualified_picks
             ],
             "rejected_count": len(self.rejected_picks),
+            "rejected_picks": [
+                {
+                    "market": p.market,
+                    "probability": p.probability,
+                    "pick_quality_score": p.pick_quality_score,
+                    "rejection_reason": p.rejection_reason,
+                    "failed_layers": [k for k, o in p.layer_outcomes.items() if not o["passed"]],
+                }
+                for p in self.rejected_picks
+            ],
             "match_data_quality": round(self.match_data_quality, 1),
             "has_qualified_picks": self.has_qualified_picks,
             "summary": self.summary,
@@ -133,6 +146,8 @@ class QualificationResult:
             "layer_gate_results": self.layer_gate_results,
         }
 
+
+NO_REAL_ODDS_REASON = "NO ACTIONABLE BET: no real bookmaker odds"
 
 _TIER_LABELS = {
     "S": "Elite Pick",
@@ -366,18 +381,20 @@ def _layer4_market_edge(
 ) -> LayerResult:
     """
     Hard gate: edge < 4% → reject.
-    
     edge = model_prob - implied_prob
-    
-    If no odds available (implied_prob=0), pass through with neutral score.
+
+    Without real bookmaker odds (implied_prob=0) there is no measurable edge,
+    so the selection is not actionable (owner directive, M2.5): a missing price
+    must never let a pick qualify. The match forecast itself is unaffected.
     """
     if implied_prob <= 0:
         return LayerResult(
             layer_name="Market Edge",
             layer_number=4,
-            passed=True,
-            score=50.0,  # neutral — no odds data
-            details={"note": "No bookmaker odds available", "edge": 0},
+            passed=False,
+            score=0.0,
+            details={"note": "No real bookmaker odds available", "edge": None},
+            rejection_reason=NO_REAL_ODDS_REASON,
         )
 
     edge = model_prob - implied_prob
@@ -816,9 +833,13 @@ def qualify_picks(
         if conn:
             from src.db.error_intelligence import get_league_adjustment
             adj = get_league_adjustment(conn, league_name)
-            if adj:
-                league_reliability = getattr(adj, 'reliability', 50.0)
-                calibration_gap = getattr(adj, 'calibration_gap', 0.0)
+            # get_league_adjustment returns a dict. Reading it with getattr()
+            # always fell back to 50, so Layer 3 (< 60) rejected every pick.
+            # Only an active adjustment (enough settled samples) carries a
+            # measured reliability; otherwise the league stays "unknown" (65).
+            if adj and adj.get("active"):
+                league_reliability = float(adj.get("reliability") or 0.0)
+                calibration_gap = float(adj.get("cal_gap") or 0.0)
     except Exception:
         pass
 
@@ -972,6 +993,14 @@ def qualify_picks(
 
         # ── Check hard gates ──
         layers = [l1, l2, l3, l4, l5, l6, l7, l8, l9, l10]
+        layer_outcomes = {
+            key: {"passed": layer.passed, "score": round(layer.score, 1), "reason": layer.rejection_reason}
+            for key, layer in zip(
+                ("data_quality", "model_consensus", "calibration", "market_edge", "volatility",
+                 "xg_reality", "clv", "historical_roi", "liquidity", "similar_match"),
+                layers,
+            )
+        }
         failed_layer = None
         for layer in layers:
             if not layer.passed:
@@ -1018,6 +1047,7 @@ def qualify_picks(
             implied_prob=round(implied_prob, 1),
             model_consensus=round(l2.details.get("raw_spread", 0), 1),
             similar_match_hit_rate=round(sim_hit_rate, 1),
+            layer_outcomes=layer_outcomes,
         )
 
         if failed_layer or tier == "C":

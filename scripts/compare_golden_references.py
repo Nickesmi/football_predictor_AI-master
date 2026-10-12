@@ -1,12 +1,16 @@
 """Compare two golden-probability references and attribute every difference to an approved cause.
 
 Usage:
-    python scripts/compare_golden_references.py BEFORE.json AFTER.json OUT.md
+    python scripts/compare_golden_references.py BEFORE.json AFTER.json OUT.md [m2|m2.5]
 
 Approved M2 causes:
   E1  synthetic XGBoost blend weight -> 0   (estimate_probabilities: fixtures whose source was "hybrid")
   E2  unknown club teams report 0 matches   (any output of a fixture containing a hash-fallback team)
   E3  synthetic XGBoost removed from BILQE consensus (match_analysis "qualification" block, any fixture)
+Approved M2.5 cause (mode "m2.5"):
+  E4  BILQE fixes — league reliability read from the adjustment dict, no
+      qualification without real bookmaker odds, structured rejected picks
+      (match_analysis "qualification" block only; no probability may change)
 Any difference not covered by these is reported as UNINTENDED; the script exits 1 if one exists.
 """
 from __future__ import annotations
@@ -88,7 +92,49 @@ def _fmt(v):
     return f"{v:.4f}".rstrip("0").rstrip(".") if isinstance(v, float) else str(v)
 
 
-def main(before_path: str, after_path: str, out_path: str) -> int:
+def main_m25(before_path: str, after_path: str, out_path: str) -> int:
+    from collections import Counter
+
+    before = json.loads(Path(before_path).read_text())
+    after = json.loads(Path(after_path).read_text())
+    attributed, unintended = [], []
+    for section in ("estimate_probabilities", "match_analysis"):
+        for fixture in sorted(set(before[section]) | set(after[section])):
+            prefix = f"$.{section}.{fixture}.qualification"
+            for line in _diff(before[section].get(fixture), after[section].get(fixture), f"$.{section}.{fixture}"):
+                (attributed if section == "match_analysis" and line.startswith(prefix) else unintended).append(line)
+
+    lines = [
+        "# M2.5 — Golden Comparison v2-m2 → v3-m2.5 (BILQE fixes)",
+        "",
+        f"Before: `{Path(before_path).resolve().relative_to(ROOT)}` · After: `{Path(after_path).resolve().relative_to(ROOT)}`",
+        "",
+        "| Cause | Description | Changed values |",
+        "|---|---|---|",
+        f"| E4 | BILQE fixes (qualification block only) | {len(attributed)} |",
+        f"| **UNINTENDED** | not explained by E4 | **{len(unintended)}** |",
+        "",
+        "| Fixture | Calibration gate (before → after) | Rejected picks | Rejection reasons after |",
+        "|---|---|---|---|",
+    ]
+    for key in after["match_analysis"]:
+        qb, qa = before["match_analysis"][key]["qualification"], after["match_analysis"][key]["qualification"]
+        gb, ga = qb["layer_gate_results"].get("calibration", {}), qa["layer_gate_results"].get("calibration", {})
+        reasons = Counter(p["rejection_reason"] for p in qa.get("rejected_picks", []))
+        lines.append(
+            f"| {key} | {gb.get('score')} {'pass' if gb.get('passed') else 'reject'} → {ga.get('score')} "
+            f"{'pass' if ga.get('passed') else 'reject'} | {qb['rejected_count']} → {qa['rejected_count']} | "
+            + "; ".join(f"{r} ({n})" for r, n in reasons.most_common()) + " |"
+        )
+    lines += ["", "## Unintended differences", ""] + ([f"- `{u}`" for u in unintended] or ["None."])
+    Path(out_path).write_text("\n".join(lines) + "\n")
+    print(f"E4={len(attributed)} UNINTENDED={len(unintended)}")
+    return 1 if unintended else 0
+
+
+def main(before_path: str, after_path: str, out_path: str, causes: str = "m2") -> int:
+    if causes == "m2.5":
+        return main_m25(before_path, after_path, out_path)
     before = json.loads(Path(before_path).read_text())
     after = json.loads(Path(after_path).read_text())
     blind = _blind_fixtures()
@@ -196,4 +242,4 @@ def main(before_path: str, after_path: str, out_path: str) -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main(*sys.argv[1:4]))
+    sys.exit(main(*sys.argv[1:5]))
