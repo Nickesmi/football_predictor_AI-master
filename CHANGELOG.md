@@ -1,5 +1,13 @@
 # Changelog
 
+## M2.5 — operational readiness, real odds, qualification audit (2026-10-13, `m2.5/operational-readiness`)
+
+- BILQE (`97ef889`): Layer 3 read league reliability from a dict with `getattr` and always got 50 (every pick tier C); Layer 4 passed picks without odds. Both fixed; no threshold changed. Golden v3-m2.5 (22 BILQE changes, 0 unintended).
+- Outcome records (`927e402`): results verification and settle-date stored 33/33/33 instead of the real prediction; fixed. 10,808 existing fabricated live rows left untouched pending owner decision.
+- Real odds (`61bba8c`, `93a8b28`): crowd votes were the pipeline's only "odds" (a vote alone produced an A+ pick). New canonical layer: bookmaker / crowd-vote / model-fair / synthetic-test separated, strict fixture identity, dedupe, freshness, provider attribution, budget guard (default 0 requests), quota log, The Odds API and API-Football parsers, budgeted `odds_worker.py` with `--dry-run`.
+- Decisions (`65738f0`): every pipeline decision recorded in `selection_decisions` with structured reasons; NO ACTIONABLE BET without fresh real odds while the forecast is kept.
+- Docs: `M2_5_REPORT.md`, `BILQE_DIAGNOSTIC_REPORT.md`, `REAL_ODDS_INTEGRATION.md`, `OPERATIONAL_READINESS.md`; `scripts/diagnose_bilqe.py`.
+
 ## M2 — governed fixes and frozen baseline (2026-10-12, `m2/governed-fixes-and-freeze`)
 
 - A (runtime correctness, no model change): missing imports and stale `api.main` references fixed (competition tracking, prediction pre-warm, admin date-trace/date-validation, logo audit, audit_engine league map); vote-derived odds snapshots no longer crash on insert; static undefined-name/import guard (pyflakes); admin GET smoke test; frontend field contract test.
