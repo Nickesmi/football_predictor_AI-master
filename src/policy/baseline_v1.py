@@ -117,7 +117,10 @@ def risk_adjusted_ev(model_prob: float, odds: float, config: PolicyConfig) -> fl
 
 
 def candidate_reasons(c: dict, decided_at: datetime, provenance: dict,
-                      league_records: dict[str, LeagueRecord], config: PolicyConfig) -> list[dict]:
+                      league_records: dict[str, LeagueRecord], config: PolicyConfig,
+                      league_check=None, min_ev: float | None = None) -> list[dict]:
+    """All failed rules. league_check(c) -> reason dict or None replaces the v1 league rule
+    (used by v1.1); min_ev overrides config.min_ev for that candidate."""
     reasons: list[dict] = []
     if not (provenance.get("model_version") and provenance.get("calibration_version")
             and provenance.get("calibration_frozen")):
@@ -154,16 +157,22 @@ def candidate_reasons(c: dict, decided_at: datetime, provenance: dict,
     if c.get("model_source") in (None, "fallback", "unknown"):
         reasons.append(_reason("MODEL_FALLBACK", model_source=c.get("model_source")))
 
-    ok, why = league_qualified(c.get("league_name", ""), league_records.get(c.get("league_name", "")), config)
-    if not ok:
-        reasons.append(why)
+    if league_check is not None:
+        why = league_check(c)
+        if why:
+            reasons.append(why)
+    else:
+        ok, why = league_qualified(c.get("league_name", ""), league_records.get(c.get("league_name", "")), config)
+        if not ok:
+            reasons.append(why)
 
     edge = float(c.get("edge") or 0.0)
     if edge > config.max_edge:
         reasons.append(_reason("EDGE_IMPLAUSIBLE", edge=edge, max=config.max_edge))
     ev = risk_adjusted_ev(float(c.get("model_prob") or 0.0), odds, config) if odds > 0 else None
-    if ev is None or ev < config.min_ev:
-        reasons.append(_reason("RISK_ADJUSTED_EV_TOO_LOW", value=ev, min=config.min_ev,
+    required_ev = config.min_ev if min_ev is None else min_ev
+    if ev is None or ev < required_ev:
+        reasons.append(_reason("RISK_ADJUSTED_EV_TOO_LOW", value=ev, min=required_ev,
                                uncertainty_margin=config.uncertainty_margin))
     return reasons
 
