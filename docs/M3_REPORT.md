@@ -11,7 +11,7 @@ Branch `m3/data-integrity-shadow`, created from the M2.5 completion commit `fe69
 | `d1b0afb` | D | `src/policy/baseline_v1.py` (proposal, inactive); comparison harness |
 | `22b8534` | E | Operator service hold on the production DB (`src/ops/service_hold.py`; checked in `get_db()` and at API import) |
 | `3889d0a` | F | `src/shadow/` cycle and report, league-date odds mode, provider-error accounting, CLIs, launchd/cron templates (not installed) |
-| (docs commit) | G | This report and the five companion documents; `KNOWN_ISSUES.md` K32–K34 updated, K43–K47 added |
+| `b0d4e7a` | G | This report and the five companion documents; `KNOWN_ISSUES.md` K32–K34 updated, K43–K47 added |
 
 Changed production code paths:
 - `src/odds/*`
