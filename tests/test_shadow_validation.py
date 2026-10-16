@@ -245,3 +245,22 @@ def test_scheduler_templates_are_disabled():
     assert "__BUDGET__" in plist and "__SHADOW_DB__" in plist           # cannot run without explicit values
     active = [l for l in (d / "crontab.txt").read_text().splitlines() if l.strip() and not l.lstrip().startswith("#")]
     assert active == []
+
+
+def test_offline_replay_reproduces_and_never_uses_later_prices(shadow_db):
+    from src.shadow.replay import replay
+
+    _seed_history(shadow_db)
+    p = FakeProvider()
+    p.odds = [_odds_item(T0 - timedelta(minutes=30))]
+    _run(shadow_db, p, T0)
+    # a later price arrives after the decision; the replay must not see it
+    p.odds = [_odds_item(KICKOFF - timedelta(minutes=20))]
+    _run(shadow_db, p, KICKOFF - timedelta(minutes=10))
+    calls = len(p.calls)
+    [entry] = replay(shadow_db)
+    assert len(p.calls) == calls                       # offline
+    assert entry["kind"] == "RETROSPECTIVE_REPLAY" and entry["identity"] == "RESOLVED"
+    recorded = json.loads(shadow_db.execute("SELECT candidates_json FROM shadow_observations").fetchone()[0])
+    assert entry["candidates"] == len(recorded)
+    assert shadow_db.execute("SELECT COUNT(*) FROM shadow_observations").fetchone()[0] == 1
