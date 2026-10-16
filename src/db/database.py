@@ -93,6 +93,9 @@ def get_db() -> sqlite3.Connection:
     """Get or create a SQLite connection (singleton per process)."""
     global _connection
     if _connection is None:
+        from src.ops import service_hold
+
+        service_hold.check(DB_PATH)
         DB_PATH.parent.mkdir(parents=True, exist_ok=True)
         _connection = sqlite3.connect(str(DB_PATH), timeout=30.0, check_same_thread=False)
         _connection.row_factory = sqlite3.Row

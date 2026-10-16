@@ -26,6 +26,13 @@ _security_problems = validate_security_config()
 if _security_problems:
     raise RuntimeError(f"Refusing to start (APP_ENV={APP_ENV}): " + "; ".join(_security_problems))
 
+# An operator hold on the production database stops the app here, before any
+# background task (fixture refresh, nightly refit) can start or spend quota.
+from src.db.database import DB_PATH as _DB_PATH  # noqa: E402
+from src.ops import service_hold as _service_hold  # noqa: E402
+
+_service_hold.check(_DB_PATH)
+
 # ── Instantiate App ──────────────────────────────────────────────────────────
 app = FastAPI(title="Football Predictor AI API", version="5.0", lifespan=lifespan)
 

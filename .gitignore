@@ -19,6 +19,7 @@ data/*.db-wal
 data/**/*.db
 data/**/*.db-shm
 data/**/*.db-wal
+data/SERVICE_HOLD.json
 .cache/
 catboost_info/
 data/logos/
