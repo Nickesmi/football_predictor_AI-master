@@ -62,11 +62,23 @@ def shadow_db(engine_db, monkeypatch):
     return engine_db
 
 
+def _seed_history(conn, teams=("Liverpool", "Ipswich Town"), label="Premier League", league_id=39):
+    for i, name in enumerate(teams):
+        conn.execute("INSERT INTO team_state (team_name, team_name_lower, league, venue, rolling_scored, "
+                     "rolling_conceded, matches_played, form_last5) VALUES (?, ?, ?, 'overall', 1.6, 1.1, 8, 0.6)",
+                     (name, name.lower(), label))
+        conn.execute("INSERT INTO matches (id, date, home_team, away_team, league_name, league_id, status, provider) "
+                     "VALUES (?, '2029-12-01', ?, 'Somebody', ?, ?, 'FT', 'api_football')",
+                     (f"hist-{name}", name, label, league_id))
+    conn.commit()
+
+
 def _run(conn, provider, now, cfg=ShadowConfig(), **kw):
     return cycle.run_cycle(conn, "key", HOST, cfg, now=now, transport=provider, sleep=lambda s: None, **kw)
 
 
 def test_full_cycle_discovers_collects_observes_and_settles(shadow_db):
+    _seed_history(shadow_db)
     p = FakeProvider()
     p.odds = [_odds_item(T0 - timedelta(minutes=150))]
     r1 = _run(shadow_db, p, T0)
@@ -77,6 +89,10 @@ def test_full_cycle_discovers_collects_observes_and_settles(shadow_db):
     assert obs["quote_status"] == "QUOTED" and obs["quote_bucket"] == "121-240"
     assert obs["is_shadow"] == 1 and obs["counts_toward_baseline"] == 0
     assert json.loads(obs["candidates_json"]) and json.loads(obs["bilqe_json"])["tier_counts"]
+    identity = json.loads(obs["identity_json"])
+    assert identity["resolved"] and identity["home"]["history_league"] == "Premier League"
+    assert json.loads(obs["v1_1_json"])["funnel"]["selected"] == 0          # no evidence, no provisional list
+    assert all(c["competition_key"] == "england-premier-league" for c in json.loads(obs["candidates_json"]))
     assert shadow_db.execute("SELECT COUNT(*) FROM picks").fetchone()[0] == 0
 
     # Closing capture before kickoff, then the result after the match.
@@ -142,7 +158,7 @@ def test_shadow_cycle_script_refuses_live_db_without_flag(tmp_path):
     root = Path(__file__).resolve().parent.parent
     r = subprocess.run([sys.executable, str(root / "scripts" / "shadow_cycle.py"), "--db",
                         str(root / "data" / "engine.db"), "--budget", "0"], capture_output=True, text=True, cwd=root)
-    assert r.returncode == 2 and "allow-production" in r.stderr
+    assert r.returncode == 2 and ("allow-production" in r.stderr or "service hold" in r.stderr)
 
 
 def test_league_date_mode_for_paid_plans(shadow_db):
@@ -169,3 +185,63 @@ def test_free_plan_season_error_is_a_failure_not_silence(engine_db, monkeypatch)
     r = collector.collect_api_football_by_league(engine_db, rows, {"777": 2029}, "k", HOST, transport, T0,
                                                  sleep=lambda s: None)
     assert (r["requests_ok"], r["requests_failed"]) == (0, 1) and "Free plans" in r["notes"][0]
+
+
+def test_unresolved_team_identity_records_no_forecast(shadow_db):
+    p = FakeProvider()
+    p.odds = [_odds_item(T0 - timedelta(minutes=30))]
+    r = _run(shadow_db, p, T0)                      # no team_state history for either team
+    assert r["observations"] == 1 and r.get("identity_unresolved") == 1 and not r["errors"]
+    obs = shadow_db.execute("SELECT * FROM shadow_observations").fetchone()
+    assert obs["error"] == "NO_FORECAST: TEAM_IDENTITY_UNRESOLVED"
+    assert json.loads(obs["candidates_json"]) == [] and obs["forecast_json"] is None
+    ident = json.loads(obs["identity_json"])
+    assert not ident["resolved"] and ident["home"]["status"] == "UNRESOLVED_NO_HISTORY"
+    assert ident["home"]["provider_team_id"] is None or ident["home"]["provider"] == "api_football"
+
+
+def test_request_cap_per_cycle(shadow_db):
+    p = FakeProvider()
+    r = _run(shadow_db, p, T0, cfg=ShadowConfig(max_requests_per_cycle=1))
+    assert len(p.calls) == 1 and r["requests_sent"] == 1
+    assert any("request cap" in e for e in r["errors"])
+
+
+def test_cycle_never_freezes_counts_or_recalibrates(shadow_db):
+    _seed_history(shadow_db)
+    before = {t: shadow_db.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0]
+              for t in ("calibration_models", "model_confidence_adjustments", "baseline_versions", "picks")}
+    p = FakeProvider()
+    p.odds = [_odds_item(T0 - timedelta(minutes=30))]
+    _run(shadow_db, p, T0)
+    p.fixtures = [_fixture_item("FT", (1, 1))]
+    _run(shadow_db, p, KICKOFF + timedelta(hours=3))
+    after = {t: shadow_db.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0] for t in before}
+    assert after == before
+    assert shadow_db.execute("SELECT COUNT(*) FROM shadow_selection_results "
+                             "WHERE counts_toward_baseline != 0").fetchone()[0] == 0
+
+
+def test_shadow_cycle_refuses_live_db_under_hold_even_with_allow_production(tmp_path, monkeypatch):
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parent.parent
+    hold = root / "data" / "SERVICE_HOLD.json"
+    if not hold.exists():
+        pytest.skip("no service hold in this checkout")
+    r = subprocess.run([sys.executable, str(root / "scripts" / "shadow_cycle.py"), "--db", str(root / "data" / "engine.db"),
+                        "--budget", "0", "--allow-production"], capture_output=True, text=True, cwd=root)
+    assert r.returncode == 2 and "service hold" in r.stderr
+
+
+def test_scheduler_templates_are_disabled():
+    from pathlib import Path
+
+    d = Path(__file__).resolve().parent.parent / "scripts" / "orchestration" / "shadow"
+    plist = (d / "com.footballpredictor.shadow.plist").read_text()
+    assert "<key>Disabled</key><true/>" in plist and "<key>RunAtLoad</key><false/>" in plist
+    assert "__BUDGET__" in plist and "__SHADOW_DB__" in plist           # cannot run without explicit values
+    active = [l for l in (d / "crontab.txt").read_text().splitlines() if l.strip() and not l.lstrip().startswith("#")]
+    assert active == []

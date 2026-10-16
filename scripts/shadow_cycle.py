@@ -30,9 +30,13 @@ def main() -> int:
     parser.add_argument("--allow-production", action="store_true")
     parser.add_argument("--force-discovery", action="store_true")
     parser.add_argument("--max-age", type=int, default=240, help="ODDS_MAX_AGE_MINUTES for the shadow (provisional)")
+    parser.add_argument("--max-requests-per-cycle", type=int, default=12)
     args = parser.parse_args()
 
     db = args.db.resolve()
+    if db == LIVE_DB and (PROJECT_ROOT / "data" / "SERVICE_HOLD.json").exists():
+        print("refusing: data/engine.db is under a service hold; shadow cycles never release it", file=sys.stderr)
+        return 2
     if db == LIVE_DB and not args.allow_production:
         print("refusing: data/engine.db needs --allow-production (after the cutover is approved)", file=sys.stderr)
         return 2
@@ -49,7 +53,10 @@ def main() -> int:
     from src.db.database import get_db  # noqa: E402
     from src.shadow.cycle import run_cycle  # noqa: E402
 
+    from src.shadow.cycle import ShadowConfig  # noqa: E402
+
     report = run_cycle(get_db(), config.APIFOOTBALL_API_KEY, config.APIFOOTBALL_HOST,
+                       ShadowConfig(max_requests_per_cycle=max(0, args.max_requests_per_cycle)),
                        force_discovery=args.force_discovery)
     print(json.dumps(report, indent=1, default=str))
     return 0

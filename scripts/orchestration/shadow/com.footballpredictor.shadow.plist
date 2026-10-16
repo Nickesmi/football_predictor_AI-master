@@ -2,11 +2,12 @@
 <!-- TEMPLATE (M3 Phase F). Not installed. Owner approval needed before:
        cp scripts/orchestration/shadow/com.footballpredictor.shadow.plist ~/Library/LaunchAgents/
        launchctl load ~/Library/LaunchAgents/com.footballpredictor.shadow.plist
-     Replace __REPO__, __SHADOW_DB__ and __BUDGET__ first. Unload with launchctl unload <same path>. -->
+     Replace __REPO__, __SHADOW_DB__ and __BUDGET__ first and remove the Disabled key. Unload with launchctl unload <same path>. -->
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
   <key>Label</key><string>com.footballpredictor.shadow</string>
+  <key>Disabled</key><true/>
   <key>WorkingDirectory</key><string>__REPO__</string>
   <key>ProgramArguments</key>
   <array>
@@ -14,6 +15,7 @@
     <string>scripts/shadow_cycle.py</string>
     <string>--db</string><string>__SHADOW_DB__</string>
     <string>--budget</string><string>__BUDGET__</string>
+    <string>--max-requests-per-cycle</string><string>12</string>
   </array>
   <key>StartInterval</key><integer>1800</integer>
   <key>RunAtLoad</key><false/>

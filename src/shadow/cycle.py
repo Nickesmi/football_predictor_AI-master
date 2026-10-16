@@ -56,12 +56,25 @@ class ShadowConfig:
     closing_window_minutes: int = 45
     pre_decision_margin_minutes: int = 15
     odds_mode: str = "per_fixture"
+    max_requests_per_cycle: int = 12
 
 
 DEFAULT = ShadowConfig()
 
+_ADDED_COLUMNS = {
+    "shadow_fixtures": (("home_team_id", "TEXT"), ("away_team_id", "TEXT")),
+    "shadow_observations": (("identity_json", "TEXT"), ("v1_1_policy_version", "TEXT"), ("v1_1_json", "TEXT"),
+                            ("v1_1_assuming_frozen_json", "TEXT")),
+}
+
+
 def _ensure(conn: sqlite3.Connection) -> None:
     ensure_shadow_tables(conn)
+    for table, columns in _ADDED_COLUMNS.items():
+        existing = {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
+        for name, kind in columns:
+            if name not in existing:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {kind}")
 
 
 def _code_revision() -> str:
@@ -91,6 +104,7 @@ def _ingest_fixture_list(conn, payload: dict, now: datetime, report: dict) -> No
             kickoff = iso_utc(fx["date"])
             status = (fx.get("status") or {}).get("short") or ""
             home, away = teams["home"]["name"], teams["away"]["name"]
+            home_id, away_id = teams["home"].get("id"), teams["away"].get("id")
         except (KeyError, TypeError, ValueError, InvalidQuote):
             report["discovery_skipped"] += 1
             continue
@@ -113,6 +127,8 @@ def _ingest_fixture_list(conn, payload: dict, now: datetime, report: dict) -> No
                    kickoff_utc = excluded.kickoff_utc, season = excluded.season""",
             (fid, league["id"], league.get("season"), iso_utc(now), iso_utc(now), kickoff, inserted),
         )
+        conn.execute("UPDATE shadow_fixtures SET home_team_id = ?, away_team_id = ? WHERE fixture_id = ?",
+                     (None if home_id is None else str(home_id), None if away_id is None else str(away_id), fid))
         own = conn.execute("SELECT inserted_by_shadow FROM shadow_fixtures WHERE fixture_id = ?", (fid,)).fetchone()[0]
         full = ((item.get("score") or {}).get("fulltime") or {})
         if own:
@@ -137,8 +153,12 @@ def _ingest_fixture_list(conn, payload: dict, now: datetime, report: dict) -> No
 def discover(conn, dates: list[str], api_key: str, host: str, transport, now: datetime,
              sleep: Callable[[float], None], report: dict) -> None:
     for index, date in enumerate(dates):
+        if report["requests_sent"] >= report["request_cap"]:
+            report["errors"].append(f"fixtures {date}: per-cycle request cap {report['request_cap']} reached")
+            return
         if index:
             sleep(collector.api_football_interval())
+        report["requests_sent"] += 1
         try:
             payload = api_football.fetch_fixtures_by_date(conn, date, api_key, host, transport, now)
         except quota.BudgetExceeded as exc:
@@ -212,8 +232,12 @@ def _collect_per_fixture(conn, cfg: ShadowConfig, now: datetime, api_key: str, h
               "quotes_after_kickoff": 0, "rejected_events": []}
     for index, f in enumerate(sorted(decision, key=lambda x: x["kickoff_utc"]) +
                               sorted(closing, key=lambda x: x["kickoff_utc"])):
+        if report["requests_sent"] >= report["request_cap"]:
+            report["errors"].append(f"odds: per-cycle request cap {report['request_cap']} reached")
+            break
         if index:
             sleep(collector.api_football_interval())
+        report["requests_sent"] += 1
         fixture = {**f, "provider": "api_football", "league_id": f["af_league_id"], "kickoff": f["kickoff_utc"]}
         result = collector.collect_api_football(conn, [fixture], api_key, host, transport, now, sleep=lambda s: None)
         for key in ("requests_ok", "requests_failed", "requests_refused", "quotes_new", "quotes_after_kickoff"):
@@ -234,6 +258,9 @@ def collect(conn, cfg: ShadowConfig, now: datetime, api_key: str, host: str, tra
             sleep: Callable[[float], None], report: dict) -> None:
     if cfg.odds_mode == "per_fixture":
         _collect_per_fixture(conn, cfg, now, api_key, host, transport, sleep, report)
+        return
+    if report["requests_sent"] >= report["request_cap"]:
+        report["errors"].append("odds: per-cycle request cap reached")
         return
     upcoming = _upcoming(conn, now, timedelta(hours=cfg.lookahead_hours))
     due_groups = {(f["af_league_id"], f["kickoff_utc"][:10]) for f in upcoming if _odds_due(f, cfg, now)}
@@ -277,12 +304,21 @@ def _bilqe(match: dict) -> dict:
     }
 
 
+class _Recorded(Exception):
+    """The observation row already describes why there is no forecast."""
+
+
 def observe(conn, match: dict, kickoff_utc: str, now: datetime, cycle_id: str) -> dict:
     from src.baseline import state as baseline
     from src.engine.market_value import find_value
     from src.engine.pipeline import _pick_calibrator, calibrate_probabilities
-    from src.engine.probability_engine import estimate_probabilities_from_inputs, resolve_probability_inputs
+    from src.engine.probability_engine import estimate_probabilities_from_inputs
+    from src.identity.competitions import competition_for_fixture
+    from src.identity.inputs import UnresolvedTeamIdentity, resolve_probability_inputs_v2
+    from src.identity.teams import TEAM_IDENTITY_VERSION
     from src.policy import baseline_v1 as v1
+    from src.policy import baseline_v1_1 as v11
+    from src.policy.league_evidence import load_league_evidence
 
     decided_at = iso_utc(now)
     prov = baseline.provenance(None, decided_at)
@@ -293,17 +329,39 @@ def observe(conn, match: dict, kickoff_utc: str, now: datetime, cycle_id: str) -
            "code_revision": _code_revision(), "model_version": provenance["model_version"],
            "calibration_version": provenance["calibration_version"],
            "legacy_policy_version": LEGACY_POLICY_VERSION, "v1_policy_version": v1.version(),
-           "candidates_json": "[]", "legacy_json": "{}", "v1_json": "{}", "v1_assuming_frozen_json": "{}"}
+           "candidates_json": "[]", "legacy_json": "{}", "v1_json": "{}", "v1_assuming_frozen_json": "{}",
+           "v1_1_policy_version": v11.version()}
+    competition = competition_for_fixture(match.get("provider"), match.get("league_id"))
+    status = freshness.fixture_quote_status(conn, str(match["id"]), now)
+    row.update({"quote_status": status["status"], "quote_age_minutes": status["age_minutes"],
+                "quote_bucket": status["bucket"]})
     try:
-        inputs = resolve_probability_inputs(match)
+        try:
+            inputs = resolve_probability_inputs_v2(conn, match, competition, remember=True)
+        except UnresolvedTeamIdentity as exc:
+            # Fail closed: no forecast, no candidates, the identity failure is the record.
+            row["identity_json"] = json.dumps({"version": TEAM_IDENTITY_VERSION, "resolved": False,
+                                               **{side: r.to_dict() for side, r in exc.resolutions.items()}},
+                                              sort_keys=True, default=str)
+            row["error"] = "NO_FORECAST: TEAM_IDENTITY_UNRESOLVED"
+            raise _Recorded() from None
+        row["identity_json"] = json.dumps({**inputs["identity"], "resolved": True}, sort_keys=True, default=str)
         raw = estimate_probabilities_from_inputs(inputs)
         probs = calibrate_probabilities(raw, _pick_calibrator(conn))
         candidates = find_value(match, probs, conn, now=now)
-        status = freshness.fixture_quote_status(conn, str(match["id"]), now)
+        for c in candidates:
+            c.update({"competition_key": competition.key if competition else None, "identity_resolved": True,
+                      "identity_version": TEAM_IDENTITY_VERSION})
         records = v1.load_league_records(conn)
+        evidence = load_league_evidence(conn)
         legacy_picks, legacy_reasons = legacy_select(conn, candidates)
         actual = v1.evaluate(candidates, now, provenance, records)
         frozen = v1.evaluate(candidates, now, {**provenance, "calibration_frozen": True}, records)
+        actual11 = v11.evaluate(candidates, now, provenance, evidence)
+        frozen11 = v11.evaluate(candidates, now, {**provenance, "calibration_frozen": True}, evidence)
+
+        def picked11(decisions):
+            return [v11.decision_dict(d) for d in decisions if d.selected]
 
         def picked(decisions):
             return [d.to_dict() for d in decisions if d.selected]
@@ -315,8 +373,9 @@ def observe(conn, match: dict, kickoff_utc: str, now: datetime, cycle_id: str) -
                                                                    "data_quality")}, sort_keys=True),
             "data_quality": probs.get("data_quality"),
             "model_source": probs.get("source"),
-            "quote_status": status["status"], "quote_age_minutes": status["age_minutes"],
-            "quote_bucket": status["bucket"],
+            "v1_1_json": json.dumps({"selected": picked11(actual11), "funnel": v1.funnel(actual11)}, sort_keys=True),
+            "v1_1_assuming_frozen_json": json.dumps({"selected": picked11(frozen11), "funnel": v1.funnel(frozen11)},
+                                                    sort_keys=True),
             "candidates_json": json.dumps(candidates, sort_keys=True, default=str),
             "legacy_json": json.dumps({"picks": [{k: p.get(k) for k in (
                 "market", "selection", "model_prob", "odds", "edge", "bookmaker", "odds_observed_at",
@@ -326,6 +385,8 @@ def observe(conn, match: dict, kickoff_utc: str, now: datetime, cycle_id: str) -
             "v1_assuming_frozen_json": json.dumps({"selected": picked(frozen), "funnel": v1.funnel(frozen)},
                                                   sort_keys=True),
         })
+    except _Recorded:
+        pass
     except Exception as exc:  # recorded, never filled in
         row["error"] = f"{type(exc).__name__}: {exc}"[:500]
     try:
@@ -341,7 +402,8 @@ def observe(conn, match: dict, kickoff_utc: str, now: datetime, cycle_id: str) -
 
 def decide(conn, cfg: ShadowConfig, now: datetime, cycle_id: str, report: dict) -> None:
     rows = conn.execute(
-        """SELECT m.*, s.kickoff_utc FROM shadow_fixtures s JOIN matches m ON m.id = s.fixture_id
+        """SELECT m.*, s.kickoff_utc, s.home_team_id, s.away_team_id
+           FROM shadow_fixtures s JOIN matches m ON m.id = s.fixture_id
            LEFT JOIN shadow_observations o ON o.fixture_id = s.fixture_id
            WHERE o.fixture_id IS NULL AND s.kickoff_utc > ? AND s.kickoff_utc <= ?
              AND m.status IN ('NS', 'TBD')""",
@@ -350,7 +412,9 @@ def decide(conn, cfg: ShadowConfig, now: datetime, cycle_id: str, report: dict) 
     for r in rows:
         row = observe(conn, dict(r), r["kickoff_utc"], now, cycle_id)
         report["observations"] += 1
-        if row.get("error"):
+        if row.get("error", "").startswith("NO_FORECAST"):
+            report["identity_unresolved"] = report.get("identity_unresolved", 0) + 1
+        elif row.get("error"):
             report["errors"].append(f"observe {r['id']}: {row['error']}")
 
 
@@ -382,7 +446,8 @@ def _closing(conn, fixture_id: str, pick: dict) -> tuple[float | None, str | Non
 
 def settle(conn, now: datetime, report: dict) -> None:
     rows = conn.execute(
-        """SELECT o.fixture_id, o.legacy_json, o.v1_json, o.v1_assuming_frozen_json, o.candidates_json,
+        """SELECT o.fixture_id, o.legacy_json, o.v1_json, o.v1_assuming_frozen_json, o.v1_1_json,
+                  o.v1_1_assuming_frozen_json, o.candidates_json,
                   r.home_goals_ft, r.away_goals_ft
            FROM shadow_observations o JOIN shadow_outcomes r ON r.fixture_id = o.fixture_id
            WHERE NOT EXISTS (SELECT 1 FROM shadow_selection_results s WHERE s.fixture_id = o.fixture_id)""",
@@ -390,8 +455,9 @@ def settle(conn, now: datetime, report: dict) -> None:
     for r in rows:
         candidates = {(c["market"], c["selection"]): c for c in json.loads(r["candidates_json"] or "[]")}
         selections = [("legacy", p) for p in json.loads(r["legacy_json"] or "{}").get("picks", [])]
-        for policy, column in (("v1", "v1_json"), ("v1_assuming_frozen", "v1_assuming_frozen_json")):
-            for d in json.loads(r[column] or "{}").get("selected", []):
+        for policy, column in (("v1", "v1_json"), ("v1_assuming_frozen", "v1_assuming_frozen_json"),
+                               ("v1_1", "v1_1_json"), ("v1_1_assuming_frozen", "v1_1_assuming_frozen_json")):
+            for d in json.loads((r[column] if column in r.keys() else None) or "{}").get("selected", []):
                 c = candidates.get((d["market"], d["selection"]), {})
                 selections.append((policy, {**c, "market": d["market"], "selection": d["selection"]}))
         for policy, pick in selections:
@@ -421,7 +487,8 @@ def run_cycle(conn: sqlite3.Connection, api_key: str, host: str, cfg: ShadowConf
     cycle_id = uuid.uuid4().hex
     report = {"cycle_id": cycle_id, "started_at": iso_utc(now), "discovery_requests": 0, "discovery_skipped": 0,
               "fixtures_inserted": 0, "outcomes_recorded": 0, "odds_groups_due": 0, "observations": 0,
-              "selections_settled": 0, "errors": []}
+              "selections_settled": 0, "errors": [], "requests_sent": 0,
+              "request_cap": cfg.max_requests_per_cycle}
     run_discovery = force_discovery or _discovery_due(conn, cfg, now)
     conn.execute("INSERT INTO shadow_cycles (cycle_id, started_at, discovery_ran) VALUES (?, ?, ?)",
                  (cycle_id, iso_utc(now), int(run_discovery)))

@@ -9,7 +9,7 @@ from datetime import datetime
 
 from src.odds.freshness import BUCKETS
 
-POLICIES = ("legacy", "v1", "v1_assuming_frozen")
+POLICIES = ("legacy", "v1", "v1_assuming_frozen", "v1_1", "v1_1_assuming_frozen")
 
 
 def _loads(text, default):
@@ -43,7 +43,7 @@ def _coverage(obs: list[sqlite3.Row], max_age: int) -> dict:
 
 
 def _funnels(obs) -> dict:
-    legacy, v1, frozen = Counter(), Counter(), Counter()
+    legacy, v1, frozen, v11, v11_frozen = Counter(), Counter(), Counter(), Counter(), Counter()
     selections = {p: Counter() for p in POLICIES}
     by_league = {p: Counter() for p in POLICIES}
     candidates = positive = 0
@@ -56,8 +56,10 @@ def _funnels(obs) -> dict:
         for p in lj.get("picks", []):
             selections["legacy"][p["market"]] += 1
             by_league["legacy"][o["league_name"]] += 1
-        for name, column, counter in (("v1", "v1_json", v1), ("v1_assuming_frozen", "v1_assuming_frozen_json", frozen)):
-            data = _loads(o[column], {})
+        for name, column, counter in (("v1", "v1_json", v1), ("v1_assuming_frozen", "v1_assuming_frozen_json", frozen),
+                                      ("v1_1", "v1_1_json", v11),
+                                      ("v1_1_assuming_frozen", "v1_1_assuming_frozen_json", v11_frozen)):
+            data = _loads(o[column] if column in o.keys() else None, {})
             counter.update((data.get("funnel") or {}).get("rejections_by_reason", {}))
             for d in data.get("selected", []):
                 selections[name][d["market"]] += 1
@@ -65,8 +67,25 @@ def _funnels(obs) -> dict:
     return {"candidates": candidates, "positive_edge_candidates": positive,
             "legacy_rejections": dict(legacy.most_common()), "v1_rejections": dict(v1.most_common()),
             "v1_assuming_frozen_rejections": dict(frozen.most_common()),
+            "v1_1_rejections": dict(v11.most_common()),
+            "v1_1_assuming_frozen_rejections": dict(v11_frozen.most_common()),
             "selections_by_market": {p: dict(c) for p, c in selections.items()},
             "selections_by_league": {p: dict(c.most_common()) for p, c in by_league.items()}}
+
+
+def _identity(obs) -> dict:
+    statuses, versions, unresolved = Counter(), Counter(), []
+    for o in obs:
+        data = _loads(o["identity_json"] if "identity_json" in o.keys() else None, None)
+        if data is None:
+            statuses["NOT_RECORDED (legacy inputs)"] += 1
+            continue
+        versions[data.get("version")] += 1
+        statuses["RESOLVED" if data.get("resolved") else "UNRESOLVED"] += 1
+        if not data.get("resolved"):
+            unresolved.append({side: {"name": data[side]["provider_name"], "status": data[side]["status"]}
+                               for side in ("home", "away") if data[side]["status"] != "RESOLVED"})
+    return {"observations": dict(statuses), "versions": dict(versions), "unresolved": unresolved}
 
 
 def _bilqe(obs) -> dict:
@@ -175,6 +194,7 @@ def build_report(conn: sqlite3.Connection, max_age_minutes: int = 240) -> dict:
         "versions": [dict(v) for v in versions],
         "data_quality": dict(Counter("<60" if (o["data_quality"] or 0) < 60 else ">=60" for o in obs)),
         "model_sources": dict(Counter(o["model_source"] for o in obs)),
+        "identity": _identity(obs),
         "odds_coverage": _coverage(obs, max_age_minutes),
         "funnels": _funnels(obs),
         "bilqe": _bilqe(obs),
