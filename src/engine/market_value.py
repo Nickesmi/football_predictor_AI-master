@@ -10,6 +10,7 @@ import os
 import sqlite3
 from datetime import datetime, timedelta, timezone
 
+from src.odds.freshness import age_minutes
 from src.odds.store import actionable_quotes, synthetic_odds_allowed
 
 logger = logging.getLogger("football_predictor")
@@ -47,8 +48,9 @@ def find_value(
         bookmaker, odds_provider, odds_type, odds_observed_at
     """
     match_id = match["id"]
+    decided_at = now or datetime.now(timezone.utc)
     quotes = actionable_quotes(
-        conn, match_id, now or datetime.now(timezone.utc), odds_max_age(),
+        conn, match_id, decided_at, odds_max_age(),
         include_synthetic=synthetic_odds_allowed(conn),
     )
 
@@ -95,6 +97,8 @@ def find_value(
                 "odds_provider": quote["provider"],
                 "odds_type": quote["odds_type"],
                 "odds_observed_at": quote["observed_at"],
+                "odds_fetched_at": quote["fetched_at"],
+                "odds_age_minutes": round(age_minutes(decided_at, quote["observed_at"]), 1),
                 "data_quality": float(model_probs.get("data_quality", 50.0)),
                 "model_source": model_probs.get("source", "unknown"),
             })

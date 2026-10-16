@@ -32,6 +32,8 @@ CREATE TABLE IF NOT EXISTS selection_decisions (
     odds_provider   TEXT,
     odds_type       TEXT,
     odds_observed_at TEXT,
+    odds_fetched_at TEXT,
+    odds_age_minutes REAL,
     grade           TEXT,
     stake_units     REAL,
     forecast_json   TEXT,
@@ -49,20 +51,29 @@ ALL_SELECTIONS_REJECTED = {"code": "ALL_SELECTIONS_REJECTED"}
 PROBABILITY_ENGINE_FAILED = "PROBABILITY_ENGINE_FAILED"
 
 
+# Columns added after the table first shipped (M3); added in place, never dropped.
+_ADDED_COLUMNS = (("odds_fetched_at", "TEXT"), ("odds_age_minutes", "REAL"))
+
+
 def ensure_decision_tables(conn: sqlite3.Connection) -> None:
     conn.executescript(SCHEMA)
+    existing = {row[1] for row in conn.execute("PRAGMA table_info(selection_decisions)")}
+    for name, kind in _ADDED_COLUMNS:
+        if name not in existing:
+            conn.execute(f"ALTER TABLE selection_decisions ADD COLUMN {name} {kind}")
 
 
 def candidate_fields(c: dict) -> dict:
     return {key: c.get(key) for key in (
         "model_prob", "implied_prob", "edge", "odds", "bookmaker", "odds_provider", "odds_type", "odds_observed_at",
+        "odds_fetched_at", "odds_age_minutes",
     )}
 
 
 def record(conn: sqlite3.Connection, rows: list[dict]) -> None:
     columns = ("run_id", "decided_at", "match_id", "market", "selection", "decision", "reasons_json",
                "model_prob", "implied_prob", "edge", "odds", "bookmaker", "odds_provider", "odds_type",
-               "odds_observed_at", "grade", "stake_units", "forecast_json", "code_revision", "baseline_version")
+               "odds_observed_at", "odds_fetched_at", "odds_age_minutes", "grade", "stake_units", "forecast_json", "code_revision", "baseline_version")
     with conn:
         conn.executemany(
             f"INSERT INTO selection_decisions ({', '.join(columns)}) VALUES ({', '.join('?' * len(columns))})",

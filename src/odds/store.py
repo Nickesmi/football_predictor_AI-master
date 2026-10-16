@@ -135,6 +135,10 @@ def actionable_quotes(
     A quote is actionable only when the match has not started, the price was
     observed before kickoff and no longer ago than max_age. Older prices of the
     same bookmaker are superseded by its latest one, never maximised over.
+
+    ``now`` is the decision time. Only quotes this system had already collected
+    by then (``fetched_at <= now``) exist for that decision, so replaying an
+    earlier prediction can never use a price that was fetched later.
     """
     now_text = iso_utc(now)
     oldest = iso_utc(now - max_age)
@@ -145,14 +149,16 @@ def actionable_quotes(
                 SELECT provider, bookmaker, market, selection, line, MAX(observed_at) AS latest
                 FROM odds_quotes
                 WHERE fixture_id = ? AND odds_type IN ({','.join('?' * len(types))}) AND observed_at <= ?
+                  AND fetched_at <= ?
                 GROUP BY provider, bookmaker, market, selection, line
             ) last
               ON q.provider = last.provider AND q.bookmaker = last.bookmaker AND q.market = last.market
              AND q.selection = last.selection AND q.line = last.line AND q.observed_at = last.latest
             WHERE q.fixture_id = ? AND q.odds_type IN ({','.join('?' * len(types))})
               AND q.observed_at >= ? AND q.observed_at < q.commence_time AND q.commence_time > ?
+              AND q.fetched_at <= ?
             ORDER BY q.market, q.selection, q.line, q.decimal_odds DESC, q.bookmaker""",
-        (fixture_id, *types, now_text, fixture_id, *types, oldest, now_text),
+        (fixture_id, *types, now_text, now_text, fixture_id, *types, oldest, now_text, now_text),
     ).fetchall()
     return [dict(r) for r in rows]
 

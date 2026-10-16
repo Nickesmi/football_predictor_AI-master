@@ -2,10 +2,13 @@
 
 GET /odds?fixture={id} returns pre-match prices per bookmaker for one
 fixture (one request each; the daily limit is shared with fixture feeds).
-The response carries no team names, so a quote can only be attached to a
-fixture stored with the same API-Football fixture id (matches.provider =
-'api_football'); anything else stays unmapped. Prices are decimal strings.
-Bet names are matched exactly; unknown bets and values are skipped.
+The odds response carries no team names. A quote is attached only through
+a fixture identity: either the fixture is stored with the same API-Football
+id (matches.provider = 'api_football'), or GET /fixtures?date= (one request
+per date, team names and kickoff included) mapped the API-Football id onto a
+stored fixture with the strict rules in src/odds/identity.py. Prices are
+decimal strings. Bet names are matched exactly; unknown bets and values are
+skipped. /odds serves pre-match prices only (in-play is /odds/live, never used).
 """
 from __future__ import annotations
 
@@ -88,6 +91,37 @@ def fetch_fixture(conn: sqlite3.Connection, fixture_id: str, api_key: str, host:
     if not api_key:
         raise quota.ProviderUnavailable("API-Football key is not configured")
     endpoint = f"/odds?fixture={int(fixture_id)}"
+    return quota.fetch_json(
+        conn, PROVIDER, endpoint, f"https://{host}{endpoint}", {"x-apisports-key": api_key},
+        cost=REQUEST_COST, remaining_header="x-ratelimit-requests-remaining",
+        transport=transport, now=now,
+    )
+
+
+def parse_fixture_list(payload: dict) -> tuple[list[ProviderEvent], list[str]]:
+    """Parse GET /fixtures?date= into provider events (id, team names, UTC kickoff)."""
+    errors = payload.get("errors") if isinstance(payload, dict) else None
+    if errors:
+        return [], [f"provider error: {errors}"]
+    events, skipped = [], []
+    for item in (payload or {}).get("response") or []:
+        try:
+            fixture, teams = item["fixture"], item["teams"]
+            home, away = str(teams["home"]["name"]).strip(), str(teams["away"]["name"]).strip()
+            if not home or not away:
+                raise KeyError("team name")
+            events.append(ProviderEvent(PROVIDER, str(int(fixture["id"])), home, away, iso_utc(fixture["date"])))
+        except (KeyError, TypeError, ValueError, InvalidQuote) as exc:
+            skipped.append(f"fixture without identity: {exc}")
+    return events, skipped
+
+
+def fetch_fixtures_by_date(conn: sqlite3.Connection, date: str, api_key: str, host: str,
+                           transport: quota.Transport | None = None, now: datetime | None = None) -> dict:
+    if not api_key:
+        raise quota.ProviderUnavailable("API-Football key is not configured")
+    datetime.strptime(date, "%Y-%m-%d")
+    endpoint = f"/fixtures?date={date}"
     return quota.fetch_json(
         conn, PROVIDER, endpoint, f"https://{host}{endpoint}", {"x-apisports-key": api_key},
         cost=REQUEST_COST, remaining_header="x-ratelimit-requests-remaining",
