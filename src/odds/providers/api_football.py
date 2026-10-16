@@ -127,3 +127,40 @@ def fetch_fixtures_by_date(conn: sqlite3.Connection, date: str, api_key: str, ho
         cost=REQUEST_COST, remaining_header="x-ratelimit-requests-remaining",
         transport=transport, now=now,
     )
+
+
+def parse_league_odds(payload: dict, names_by_event: dict[str, tuple[str, str]]
+                      ) -> tuple[list[tuple[ProviderEvent, list[Quote]]], list[str], list[str]]:
+    """Parse GET /odds?league=&season=&date= (several fixtures per page).
+
+    Only fixtures in names_by_event (event id -> stored home/away names of a
+    mapped fixture) are parsed; the others are returned as untracked ids.
+    """
+    errors = payload.get("errors") if isinstance(payload, dict) else None
+    if errors:
+        return [], [f"provider error: {errors}"], []
+    parsed, skipped, untracked = [], [], []
+    for item in (payload or {}).get("response") or []:
+        event_id = str((item.get("fixture") or {}).get("id", ""))
+        if event_id not in names_by_event:
+            untracked.append(event_id)
+            continue
+        home, away = names_by_event[event_id]
+        p, s = parse_fixture_odds({"errors": [], "response": [item]}, home, away)
+        parsed.extend(p)
+        skipped.extend(s)
+    return parsed, skipped, untracked
+
+
+def fetch_league_odds(conn: sqlite3.Connection, league_id: int, season: int, date: str, page: int,
+                      api_key: str, host: str, transport: quota.Transport | None = None,
+                      now: datetime | None = None) -> dict:
+    if not api_key:
+        raise quota.ProviderUnavailable("API-Football key is not configured")
+    datetime.strptime(date, "%Y-%m-%d")
+    endpoint = f"/odds?league={int(league_id)}&season={int(season)}&date={date}&page={int(page)}"
+    return quota.fetch_json(
+        conn, PROVIDER, endpoint, f"https://{host}{endpoint}", {"x-apisports-key": api_key},
+        cost=REQUEST_COST, remaining_header="x-ratelimit-requests-remaining",
+        transport=transport, now=now,
+    )

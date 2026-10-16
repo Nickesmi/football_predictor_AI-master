@@ -200,3 +200,25 @@ def test_api_football_requests_are_spaced_for_the_rate_limit(engine_db, monkeypa
     collector.collect_api_football(engine_db, _rows(engine_db), "key", HOST,
                                    transport_returning({"errors": [], "response": []}), NOW, sleep=slept.append)
     assert slept == [7.0]
+
+
+def test_league_date_odds_follow_paging_and_ignore_untracked_fixtures(engine_db, monkeypatch):
+    import json as _json
+
+    _fixture(engine_db, "777", provider="api_football", kickoff=KICKOFF)
+    monkeypatch.setenv("ODDS_REQUEST_BUDGET_API_FOOTBALL", "5")
+    pages = {1: [_odds_payload(fixture_id=555)["response"][0]], 2: [_odds_payload()["response"][0]]}
+    calls = []
+
+    def transport(url, headers, timeout):
+        calls.append(url)
+        page = int(url.rsplit("page=", 1)[1])
+        body = {"errors": [], "paging": {"current": page, "total": 2}, "response": pages[page]}
+        return 200, {"x-ratelimit-requests-remaining": "90"}, _json.dumps(body).encode()
+
+    report = collector.collect_api_football_by_league(engine_db, _rows(engine_db), {"777": 2029}, "key", HOST,
+                                                      transport, NOW, sleep=lambda s: None)
+    assert [c.rsplit("?", 1)[1] for c in calls] == ["league=17&season=2029&date=2030-01-01&page=1",
+                                                    "league=17&season=2029&date=2030-01-01&page=2"]
+    assert (report["requests_ok"], report["untracked_events"], report["quotes_new"]) == (2, 1, 3)
+    assert {r[0] for r in engine_db.execute("SELECT fixture_id FROM odds_quotes")} == {"777"}

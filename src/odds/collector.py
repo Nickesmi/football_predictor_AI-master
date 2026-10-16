@@ -172,6 +172,10 @@ def collect_api_football(conn: sqlite3.Connection, fixtures: list[dict], api_key
             report["requests_failed"] += 1
             report["notes"].append(f"{event_id}: {exc}")
             continue
+        if (payload or {}).get("errors"):
+            report["requests_failed"] += 1
+            report["notes"].append(f"{event_id}: provider error {payload['errors']}")
+            continue
         report["requests_ok"] += 1
         parsed, skipped = api_football.parse_fixture_odds(payload, target["home"], target["away"])
         accepted = []
@@ -192,4 +196,78 @@ def collect_api_football(conn: sqlite3.Connection, fixtures: list[dict], api_key
             identity.remember(conn, event, mapping, iso_utc(moment))
             accepted.append((event, quotes))
         store_parsed(conn, accepted, skipped, report, iso_utc(moment))
+    return report
+
+
+def collect_api_football_by_league(conn: sqlite3.Connection, fixtures: list[dict], seasons: dict[str, int],
+                                   api_key: str, host: str, transport: quota.Transport | None = None,
+                                   now: datetime | None = None,
+                                   sleep: Callable[[float], None] = time.sleep) -> dict:
+    """Collect odds with one request per (league, season, UTC date) page instead of one per fixture.
+
+    seasons maps API-Football event id -> season (from GET /fixtures). Same
+    safeguards as collect_api_football: only events with a stored identity are
+    parsed, a moved kickoff is rejected, prices after kickoff are dropped.
+    """
+    report = empty_report(api_football.PROVIDER)
+    report["untracked_events"] = 0
+    targets = api_football_targets(conn, fixtures)
+    league_of = {str(f["id"]): f.get("league_id") for f in fixtures if f.get("provider") == "api_football"}
+    groups: dict[tuple[int, int, str], dict[str, dict]] = defaultdict(dict)
+    for event_id, target in targets.items():
+        league_id, season = league_of.get(event_id), seasons.get(event_id)
+        if not league_id or not season:
+            report["notes"].append(f"{event_id}: league or season unknown; not requested")
+            continue
+        commence = target["commence"] or next(
+            (f.get("kickoff") for f in fixtures if str(f["id"]) == event_id), None)
+        try:
+            day = iso_utc(commence)[:10]
+        except Exception:
+            report["notes"].append(f"{event_id}: kickoff unknown; not requested")
+            continue
+        groups[(int(league_id), int(season), day)][event_id] = target
+
+    index = 0
+    for (league_id, season, day), group in sorted(groups.items()):
+        page, pages = 1, 1
+        names = {eid: (t["home"], t["away"]) for eid, t in group.items()}
+        while page <= pages:
+            _throttle(index, sleep)
+            index += 1
+            moment = now or datetime.now(timezone.utc)
+            try:
+                payload = api_football.fetch_league_odds(conn, league_id, season, day, page, api_key, host,
+                                                         transport, moment)
+            except quota.BudgetExceeded as exc:
+                report["requests_refused"] += 1
+                report["notes"].append(f"league {league_id} {day}: refused, {exc}")
+                return report
+            except quota.ProviderUnavailable as exc:
+                report["requests_failed"] += 1
+                report["notes"].append(f"league {league_id} {day} p{page}: {exc}")
+                break
+            if (payload or {}).get("errors"):
+                report["requests_failed"] += 1
+                report["notes"].append(f"league {league_id} {day} p{page}: provider error {payload['errors']}")
+                break
+            report["requests_ok"] += 1
+            pages = int(((payload or {}).get("paging") or {}).get("total") or 1)
+            parsed, skipped, untracked = api_football.parse_league_odds(payload, names)
+            report["untracked_events"] += len(untracked)
+            accepted = []
+            for event, quotes in parsed:
+                target = group[event.event_id]
+                if target["commence"] and abs(
+                    datetime.fromisoformat(iso_utc(event.commence_time))
+                    - datetime.fromisoformat(iso_utc(target["commence"]))
+                ) > identity.KICKOFF_TOLERANCE:
+                    report["rejected_events"].append(
+                        f"{event.event_id}: kickoff moved {target['commence']} -> {event.commence_time}; remap required")
+                    continue
+                identity.remember(conn, event, identity.Mapping(tuple(sorted(target["fixture_ids"])), "provider_id"),
+                                  iso_utc(moment))
+                accepted.append((event, quotes))
+            store_parsed(conn, accepted, skipped, report, iso_utc(moment))
+            page += 1
     return report

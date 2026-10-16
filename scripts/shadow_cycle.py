@@ -1,0 +1,59 @@
+#!/usr/bin/env python3
+"""
+Shadow validation cycle (M3 Phase F) — observations only, nothing counted.
+
+    python scripts/shadow_cycle.py --db <shadow db> --budget 60
+    python scripts/shadow_cycle.py --db data/engine.db --budget 60 --allow-production   # only after cutover approval
+
+Runs one cycle of src/shadow/cycle.py: fixture discovery (every 6 h),
+league-date odds collection, decision snapshots (legacy, v1, BILQE) and
+settlement. --budget is the approved API-Football daily request budget for
+the whole day (shared with every other caller logged in provider_quota_log);
+with 0 nothing is requested. Schedule every 30 minutes
+(scripts/orchestration/shadow/; not installed by this script).
+"""
+
+import argparse
+import json
+import os
+import sys
+from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+LIVE_DB = (PROJECT_ROOT / "data" / "engine.db").resolve()
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--db", required=True, type=Path)
+    parser.add_argument("--budget", required=True, type=int, help="approved API-Football requests per UTC day")
+    parser.add_argument("--allow-production", action="store_true")
+    parser.add_argument("--force-discovery", action="store_true")
+    parser.add_argument("--max-age", type=int, default=240, help="ODDS_MAX_AGE_MINUTES for the shadow (provisional)")
+    args = parser.parse_args()
+
+    db = args.db.resolve()
+    if db == LIVE_DB and not args.allow_production:
+        print("refusing: data/engine.db needs --allow-production (after the cutover is approved)", file=sys.stderr)
+        return 2
+    if not db.exists():
+        print(f"refusing: {db} does not exist; create the shadow DB from a verified backup first", file=sys.stderr)
+        return 2
+    if os.getenv("BASELINE_FREEZE"):
+        print("note: BASELINE_FREEZE is set; shadow observations are still never counted", file=sys.stderr)
+    os.environ["FOOTBALL_PREDICTOR_DB_PATH"] = str(db)
+    os.environ["ODDS_REQUEST_BUDGET_API_FOOTBALL"] = str(max(0, args.budget))
+    os.environ["ODDS_MAX_AGE_MINUTES"] = str(args.max_age)
+    sys.path.insert(0, str(PROJECT_ROOT))
+    from src import config  # noqa: E402
+    from src.db.database import get_db  # noqa: E402
+    from src.shadow.cycle import run_cycle  # noqa: E402
+
+    report = run_cycle(get_db(), config.APIFOOTBALL_API_KEY, config.APIFOOTBALL_HOST,
+                       force_discovery=args.force_discovery)
+    print(json.dumps(report, indent=1, default=str))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

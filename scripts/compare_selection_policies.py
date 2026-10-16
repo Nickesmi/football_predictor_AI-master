@@ -39,26 +39,9 @@ SEED_LEAGUES = [(17, "Premier League"), (8, "LaLiga"), (23, "Serie A"), (35, "Bu
 
 
 def legacy_select(conn, candidates):
-    from src.engine.risk_control import apply_risk_filter, get_league_profile, score_confidence
-    from src.models.pick import assign_grade
+    from src.shadow.legacy import legacy_select as _legacy
 
-    positive = [dict(c) for c in candidates if c["edge"] > 0.0]
-    for c in positive:
-        score_confidence(c, get_league_profile(conn, c.get("league_id", 0)), c.get("model_source", "fallback"))
-    picks, reasons = [], Counter()
-    if len(positive) < len(candidates):
-        reasons["NO_POSITIVE_EDGE"] += len(candidates) - len(positive)
-    passed = apply_risk_filter(positive)
-    for c in positive:
-        for r in c.get("risk_rejections", []):
-            reasons[r["code"]] += 1
-    for c in passed:
-        grade, stake = assign_grade(c["edge"], c["confidence"], c["league_reliability"], c["model_prob"], c["odds"])
-        if grade == "Pass":
-            reasons["GRADE_PASS"] += 1
-            continue
-        picks.append({**c, "grade": grade, "stake_units": min(stake, c.get("max_stake_units", 2.0))})
-    return picks, reasons
+    return _legacy(conn, candidates)
 
 
 def summarize(picks, total_candidates, matches, true_prob=None):

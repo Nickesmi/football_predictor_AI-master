@@ -1,0 +1,5 @@
+# TEMPLATE (M3 Phase F). Not installed. Install only with owner approval (crontab -e).
+# Shadow cycle every 30 minutes; daily report + staleness check (exit 3 when the last cycle is > 90 min old).
+# REPO=/path/to/football_predictor_ai-master  SHADOW_DB=/path/to/engine_shadow.db  BUDGET=<approved daily requests>
+*/30 * * * * cd $REPO && .venv/bin/python scripts/shadow_cycle.py --db $SHADOW_DB --budget $BUDGET >> logs/shadow_cycle.log 2>&1
+15 6 * * *   cd $REPO && .venv/bin/python scripts/shadow_report.py --db $SHADOW_DB --out logs/shadow_report_$(date +\%F).json --check-stale-minutes 90 >> logs/shadow_report.log 2>&1
