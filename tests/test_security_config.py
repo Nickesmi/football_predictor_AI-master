@@ -76,10 +76,14 @@ def test_production_security_validation(monkeypatch, key, origins, expected):
 
 
 def _import_api_main(extra_env: dict) -> subprocess.CompletedProcess:
-    env = {**os.environ, **extra_env}
+    # Isolated working directory: the test DB is a non-production DB, so api.main refuses the repo cwd.
+    import tempfile
+
+    workdir = tempfile.mkdtemp(prefix="api-main-")
+    env = {**os.environ, "PYTHONPATH": str(PROJECT_ROOT), **extra_env}
     return subprocess.run(
         [sys.executable, "-c", "import api.main"],
-        cwd=str(PROJECT_ROOT), env=env, capture_output=True, text=True, timeout=120,
+        cwd=workdir, env=env, capture_output=True, text=True, timeout=120,
     )
 
 

@@ -29,6 +29,7 @@ for _key in (
 ):
     os.environ[_key] = ""
 os.environ["APP_ENV"] = "test"
+os.environ["FOOTBALL_PREDICTOR_CACHE_DIR"] = str(_TEST_ROOT / ".cache")  # never the repository's shared cache
 for _key in ("CORS_ALLOW_ORIGINS", "WEB_PORT"):
     os.environ.pop(_key, None)
 
@@ -47,6 +48,26 @@ class NetworkBlocked(OSError):
 def _is_local(address) -> bool:
     host = address[0] if isinstance(address, tuple) else address
     return host in ("127.0.0.1", "::1", "localhost") or str(host).startswith("127.")
+
+
+_SHARED_CACHE = Path(__file__).resolve().parent.parent / ".cache"
+
+
+def _cache_snapshot():
+    if not _SHARED_CACHE.exists():
+        return {}
+    return {p.name: (p.stat().st_size, p.stat().st_mtime_ns) for p in _SHARED_CACHE.iterdir() if p.is_file()}
+
+
+_CACHE_AT_START = _cache_snapshot()
+
+
+def pytest_sessionfinish(session, exitstatus):
+    """The test suite must never write into the production repository's shared .cache."""
+    changed = sorted(set(_cache_snapshot().items()) ^ set(_CACHE_AT_START.items()))
+    if changed:
+        session.exitstatus = 1
+        print(f"\nERROR: tests changed the shared repository .cache: {sorted({name for name, _ in changed})}")
 
 
 def pytest_configure(config):

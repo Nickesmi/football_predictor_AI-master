@@ -33,6 +33,12 @@ from src.ops import service_hold as _service_hold  # noqa: E402
 
 _service_hold.check(_DB_PATH)
 
+# Development workflows on a database copy must not write into the shared repository .cache.
+from src.config import CACHE_DIR as _CACHE_DIR  # noqa: E402
+from src.ops import workspace_guard as _workspace_guard  # noqa: E402
+
+_workspace_guard.check(_DB_PATH, _CACHE_DIR)
+
 # ── Instantiate App ──────────────────────────────────────────────────────────
 app = FastAPI(title="Football Predictor AI API", version="5.0", lifespan=lifespan)
 

@@ -35,6 +35,10 @@ def main() -> int:
     os.environ["FOOTBALL_PREDICTOR_DB_PATH"] = str(db)
     os.environ["ODDS_REQUEST_BUDGET_API_FOOTBALL"] = "1"
     sys.path.insert(0, str(PROJECT_ROOT))
+    from src.ops.workspace_guard import isolate  # noqa: E402
+
+    isolate(db.parent / "workspace")   # own working directory and cache next to the isolated DB
+    sys.path.insert(0, str(PROJECT_ROOT))
     import sqlite3
 
     from src import config  # noqa: E402

@@ -49,6 +49,11 @@ def main() -> int:
         print("note: BASELINE_FREEZE is set; shadow observations are still never counted", file=sys.stderr)
     os.environ["FOOTBALL_PREDICTOR_DB_PATH"] = str(db)
     os.environ["ODDS_REQUEST_BUDGET_API_FOOTBALL"] = str(max(0, args.budget))
+    sys.path.insert(0, str(PROJECT_ROOT))
+    from src.ops.workspace_guard import isolate  # noqa: E402
+
+    if db != LIVE_DB:
+        isolate(db.parent / "workspace")   # own working directory and cache next to the isolated DB
     os.environ["ODDS_MAX_AGE_MINUTES"] = str(args.max_age)
     sys.path.insert(0, str(PROJECT_ROOT))
     from src import config  # noqa: E402

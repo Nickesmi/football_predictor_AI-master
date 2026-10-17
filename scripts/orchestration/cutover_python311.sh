@@ -73,8 +73,12 @@ run .venv/bin/python scripts/test_integrity_audit.py
 step "6. Smoke test on port $SMOKE_PORT against a COPY of the backup"
 if [ "$EXECUTE" = 1 ]; then
   cp "$DEST/engine.db" "$DEST/smoke_copy.db"
-  FOOTBALL_PREDICTOR_DB_PATH="$DEST/smoke_copy.db" APP_ENV=development HOME="$(mktemp -d)" \
-    .venv/bin/python -m uvicorn api.main:app --host 127.0.0.1 --port "$SMOKE_PORT" >"$DEST/smoke.log" 2>&1 &
+  # Isolated workspace: own working directory and cache, never the repository's shared .cache.
+  mkdir -p "$DEST/smoke_ws/.cache"
+  (cd "$DEST/smoke_ws" && FOOTBALL_PREDICTOR_DB_PATH="$DEST/smoke_copy.db" APP_ENV=development HOME="$(mktemp -d)" \
+    FOOTBALL_PREDICTOR_CACHE_DIR="$DEST/smoke_ws/.cache" \
+    exec "$ROOT/.venv/bin/python" -m uvicorn --app-dir "$ROOT" api.main:app --host 127.0.0.1 --port "$SMOKE_PORT") \
+    >"$DEST/smoke.log" 2>&1 &
   SMOKE_PID=$!
   trap 'kill $SMOKE_PID 2>/dev/null || true' EXIT
   for _ in $(seq 1 30); do curl -sf "http://127.0.0.1:$SMOKE_PORT/api/health" >/dev/null && break; sleep 1; done

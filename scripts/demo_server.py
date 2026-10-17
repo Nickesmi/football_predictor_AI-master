@@ -43,6 +43,7 @@ def prepare(db: Path, workdir: Path, cap: int) -> Path:
     os.environ.pop("PROBABILITY_INPUTS", None)
     os.environ.pop("BASELINE_FREEZE", None)
     os.environ["RAPIDAPI_KEY"] = ""
+    os.environ["FOOTBALL_PREDICTOR_CACHE_DIR"] = str(cache)
     os.chdir(workdir)
     sys.path.insert(0, str(PROJECT_ROOT))
 

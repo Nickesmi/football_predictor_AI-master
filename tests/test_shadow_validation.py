@@ -413,7 +413,10 @@ def test_cli_applies_the_requested_profile(tmp_path, monkeypatch):
     root = Path(__file__).resolve().parent.parent
     db = tmp_path / "s.db"
     _sq.connect(db).close()
+    from src.ops import workspace_guard
+
     seen = {}
+    monkeypatch.setattr(workspace_guard, "isolate", lambda d: d)   # never chdir / re-point the test process
     monkeypatch.setattr(cycle_mod, "run_cycle", lambda conn, key, host, cfg, **kw: seen.update(cfg=cfg) or {})
     monkeypatch.setattr("src.db.database._connection", _sq.connect(":memory:"))
     spec = importlib.util.spec_from_file_location("shadow_cycle_cli", root / "scripts" / "shadow_cycle.py")

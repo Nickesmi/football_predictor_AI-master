@@ -144,7 +144,10 @@ def parse_utc(value: str) -> datetime:
 # ---------------------------------------------------------------------------
 # Cache
 # ---------------------------------------------------------------------------
-if getattr(sys, 'frozen', False):
+if os.getenv("FOOTBALL_PREDICTOR_CACHE_DIR"):
+    # Isolated workflows (demo, smoke tests, shadow, tests) point this at their own directory.
+    CACHE_DIR = Path(os.environ["FOOTBALL_PREDICTOR_CACHE_DIR"]).expanduser()
+elif getattr(sys, 'frozen', False):
     CACHE_DIR = USER_DATA_DIR / ".cache"
 else:
     CACHE_DIR = _PROJECT_ROOT / ".cache"
