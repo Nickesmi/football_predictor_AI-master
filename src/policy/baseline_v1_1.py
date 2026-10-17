@@ -58,6 +58,8 @@ class PolicyV11Config:
     require_identity: bool = True
     # M3.2: a provisional competition must also be RESEARCH_ELIGIBLE (competition_eligibility.py)
     provisional_requires_eligibility: bool = True
+    # M3.3: a validated selection also needs verified forward calibration evidence
+    require_verified_calibration_for_validated: bool = True
 
     def digest(self) -> str:
         return hashlib.sha256(json.dumps(asdict(self), sort_keys=True).encode()).hexdigest()[:12]
@@ -70,17 +72,37 @@ def version(config: PolicyV11Config = DEFAULT_CONFIG) -> str:
     return f"{POLICY_NAME}.{config.digest()}"
 
 
+@dataclass(frozen=True)
+class CalibrationEvidence:
+    """Verified forward calibration of the model's probabilities (none exists yet)."""
+    verified: bool = False
+    settled_forecasts: int = 0
+    brier: float | None = None
+    source: str = "no verified forward calibration sample"
+
+
+UNVERIFIED_CALIBRATION = CalibrationEvidence()
+
+RESEARCH_DISCLAIMER = ("research-provisional: not a validated selection, not evidence of profitability, "
+                       "paper units only")
+
+
 def evidence_status(competition_key: str | None, evidence: dict[str, LeagueEvidence],
-                    config: PolicyV11Config, eligibility: dict | None = None) -> tuple[str | None, dict | None]:
+                    config: PolicyV11Config, eligibility: dict | None = None,
+                    calibration: CalibrationEvidence = UNVERIFIED_CALIBRATION) -> tuple[str | None, dict | None]:
     """(evidence_status, rejection reason). Exactly one of the two is None."""
     if not competition_key:
         return None, {"code": "LEAGUE_UNKNOWN"}
     ev = evidence.get(competition_key) or LeagueEvidence(competition_key, NO_VERIFIED_EVIDENCE)
     if ev.evidence_class == VERIFIED_SUFFICIENT:
-        if ev.reliability is not None and ev.reliability >= config.min_league_reliability:
+        reliable = ev.reliability is not None and ev.reliability >= config.min_league_reliability
+        if reliable and (calibration.verified or not config.require_verified_calibration_for_validated):
             return DEMONSTRATED, None
-        return None, {"code": "LEAGUE_UNRELIABLE", "reliability": ev.reliability,
-                      "required": config.min_league_reliability, "verified_settled": ev.verified_settled}
+        if competition_key not in config.provisional_competitions:
+            if not reliable:
+                return None, {"code": "LEAGUE_UNRELIABLE", "reliability": ev.reliability,
+                              "required": config.min_league_reliability, "verified_settled": ev.verified_settled}
+            return None, {"code": "CALIBRATION_NOT_VERIFIED", "calibration_source": calibration.source}
     if competition_key in config.provisional_competitions:
         if config.provisional_requires_eligibility:
             from src.policy.competition_eligibility import RESEARCH_ELIGIBLE
@@ -97,13 +119,14 @@ def evidence_status(competition_key: str | None, evidence: dict[str, LeagueEvide
 
 def evaluate(candidates: list[dict], decided_at: datetime, provenance: dict,
              evidence: dict[str, LeagueEvidence], config: PolicyV11Config = DEFAULT_CONFIG,
-             eligibility: dict | None = None) -> list[v1.Decision]:
+             eligibility: dict | None = None,
+             calibration: CalibrationEvidence = UNVERIFIED_CALIBRATION) -> list[v1.Decision]:
     """Provisional decisions are research-only and are labelled; they never count as validated selections."""
     tag = version(config)
     decisions: list[v1.Decision] = []
     statuses: dict[int, str | None] = {}
     for i, c in enumerate(candidates):
-        status, league_reason = evidence_status(c.get("competition_key"), evidence, config, eligibility)
+        status, league_reason = evidence_status(c.get("competition_key"), evidence, config, eligibility, calibration)
         statuses[i] = status
         reasons = v1.candidate_reasons(
             c, decided_at, provenance, {}, config.base,
@@ -117,6 +140,7 @@ def evaluate(candidates: list[dict], decided_at: datetime, provenance: dict,
         d = v1.Decision(str(c["match_id"]), c.get("market", ""), c.get("selection", ""), selected=not reasons,
                         reasons=reasons, risk_adjusted_ev=ev_value, policy_version=tag)
         d.evidence_status = status  # type: ignore[attr-defined]
+        d.layers = _layers(c, reasons, status, evidence, calibration)  # type: ignore[attr-defined]
         decisions.append(d)
 
     by_match: dict[str, list[int]] = {}
@@ -130,12 +154,37 @@ def evaluate(candidates: list[dict], decided_at: datetime, provenance: dict,
                             else config.base.flat_stake_units)
         for i in idx[1:]:
             decisions[i].selected = False
+            decisions[i].layers = {**decisions[i].layers, "selection_status": "REJECTED"}  # type: ignore[attr-defined]
             decisions[i].reasons.append({"code": "CORRELATED_EXPOSURE", "kept_market": keep.market,
                                          "kept_selection": keep.selection})
     return decisions
 
 
+_INPUT_CODES = {"INPUT_QUALITY_LOW", "MODEL_FALLBACK", "TEAM_IDENTITY_UNRESOLVED"}
+_MARKET_CODES = {"ODDS_NOT_BOOKMAKER", "ODDS_STALE", "ODDS_AGE_UNKNOWN", "ODDS_NOT_RECONFIRMED",
+                 "ODDS_FETCH_TIME_UNKNOWN", "ODDS_OUT_OF_RANGE", "EDGE_IMPLAUSIBLE", "RISK_ADJUSTED_EV_TOO_LOW",
+                 "MARKET_NOT_ALLOWED"}
+
+
+def _layers(c: dict, reasons: list[dict], status: str | None, evidence: dict, calibration: CalibrationEvidence) -> dict:
+    """Five separate questions; none of them is inferred from another, missing evidence is never a pass."""
+    codes = {r["code"] for r in reasons}
+    ev = evidence.get(c.get("competition_key") or "")
+    return {
+        "input_quality": "FAIL" if codes & _INPUT_CODES else "PASS",
+        "calibration_evidence": "VERIFIED" if calibration.verified else "UNVERIFIED",
+        "forward_performance": ev.evidence_class if ev else NO_VERIFIED_EVIDENCE,
+        "market_value": "FAIL" if codes & _MARKET_CODES else "POSITIVE_RISK_ADJUSTED_EV",
+        "selection_status": ("VALIDATED" if status == DEMONSTRATED and not reasons
+                             else "RESEARCH_PROVISIONAL" if status == PROVISIONAL and not reasons
+                             else "REJECTED"),
+    }
+
+
 def decision_dict(d: v1.Decision) -> dict:
     out = d.to_dict()
     out["evidence_status"] = getattr(d, "evidence_status", None)
+    out["layers"] = getattr(d, "layers", None)
+    if out["layers"] and out["layers"]["selection_status"] == "RESEARCH_PROVISIONAL":
+        out["disclaimer"] = RESEARCH_DISCLAIMER
     return out

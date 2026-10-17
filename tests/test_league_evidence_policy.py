@@ -56,7 +56,10 @@ def test_without_demonstrated_record_nothing_is_selected_by_default(evidence, co
 
 
 def test_demonstrated_record_selects_with_full_stake():
-    [d] = v11.evaluate([_c()], NOW, FROZEN, {EPL: classify(200, 0, 61.0, EPL)})
+    from src.policy.baseline_v1_1 import CalibrationEvidence
+
+    [d] = v11.evaluate([_c()], NOW, FROZEN, {EPL: classify(200, 0, 61.0, EPL)},
+                       calibration=CalibrationEvidence(True, 500, 0.21, "test"))
     assert d.selected and d.stake_units == 1.0 and d.evidence_status == v11.DEMONSTRATED
 
 
@@ -182,3 +185,41 @@ def test_eligibility_assessment_from_shadow_observations(tmp_path):
     strict_books = assess(conn, EligibilityCriteria(min_observed_fixtures=4, min_bookmakers=4))
     assert strict_books["england-premier-league"].status == NOT_ELIGIBLE
     assert strict_books["england-premier-league"].failed == ["E4_MARKETS"]
+
+
+def test_validated_needs_verified_calibration_as_well_as_performance():
+    from src.policy.baseline_v1_1 import CalibrationEvidence
+
+    ev = {EPL: classify(200, 0, 61.0, EPL)}
+    [d] = v11.evaluate([_c()], NOW, FROZEN, ev)                                  # calibration unverified
+    assert not d.selected and d.layers["selection_status"] == "REJECTED"
+    assert "CALIBRATION_NOT_VERIFIED" in _codes(d)
+    assert d.layers["calibration_evidence"] == "UNVERIFIED" and d.layers["forward_performance"] == VERIFIED_SUFFICIENT
+    [d] = v11.evaluate([_c()], NOW, FROZEN, ev, calibration=CalibrationEvidence(True, 500, 0.21, "test"))
+    assert d.selected and d.layers["selection_status"] == "VALIDATED"
+
+
+def test_layers_keep_the_five_questions_apart():
+    cfg = v11.PolicyV11Config(provisional_competitions=(EPL,))
+    [d] = v11.evaluate([_c()], NOW, FROZEN, {}, cfg, _eligible())
+    assert d.layers == {"input_quality": "PASS", "calibration_evidence": "UNVERIFIED",
+                        "forward_performance": NO_VERIFIED_EVIDENCE, "market_value": "POSITIVE_RISK_ADJUSTED_EV",
+                        "selection_status": "RESEARCH_PROVISIONAL"}
+    out = v11.decision_dict(d)
+    assert "not a validated selection" in out["disclaimer"] and "profitab" in out["disclaimer"]
+    [bad] = v11.evaluate([_c(data_quality=40, prob=0.50, odds=2.06)], NOW, FROZEN, {}, cfg, _eligible())
+    assert (bad.layers["input_quality"], bad.layers["market_value"], bad.layers["selection_status"]) == \
+        ("FAIL", "FAIL", "REJECTED")
+
+
+def test_missing_evidence_never_becomes_a_score():
+    [d] = v11.evaluate([_c()], NOW, FROZEN, {})
+    assert d.layers["forward_performance"] == NO_VERIFIED_EVIDENCE
+    assert all(isinstance(v, str) for v in d.layers.values())                      # statuses, never numbers
+
+
+def test_deselected_correlated_candidate_is_rejected_in_layers():
+    cfg = v11.PolicyV11Config(provisional_competitions=(EPL,))
+    ds = v11.evaluate([_c(), _c(market="BTTS", selection="yes", prob=0.62, odds=1.95)], NOW, FROZEN, {}, cfg,
+                      _eligible())
+    assert sorted(d.layers["selection_status"] for d in ds) == ["REJECTED", "RESEARCH_PROVISIONAL"]
