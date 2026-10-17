@@ -57,6 +57,7 @@ class ShadowConfig:
     pre_decision_margin_minutes: int = 15
     odds_mode: str = "per_fixture"
     max_requests_per_cycle: int = 12
+    max_attempts_per_window: int = 2   # odds attempts per fixture and window (failures are retried at most once)
     history: str = "rh1"   # "rh1": rebuilt point-in-time history each cycle; "team_state": identity-v1 on team_state
     competitions: tuple | None = None   # competition keys to observe; None = all 14 tracked
     closing_capture: bool = True        # extra fetch in the closing window (CLV)
@@ -264,6 +265,13 @@ def _collect_per_fixture(conn, cfg: ShadowConfig, now: datetime, api_key: str, h
     for f in upcoming:
         kickoff = datetime.fromisoformat(iso_utc(f["kickoff_utc"]))
         window_start = kickoff - timedelta(minutes=cfg.decision_lead_minutes + cfg.pre_decision_margin_minutes)
+        attempts = conn.execute(
+            "SELECT COUNT(*) FROM provider_quota_log WHERE provider = 'api_football' AND endpoint = ? "
+            "AND status IN ('ok', 'error') AND at >= ?", (f"/odds?fixture={int(f['id'])}", iso_utc(window_start)),
+        ).fetchone()[0]
+        if attempts >= cfg.max_attempts_per_window and not _fetched_since(f, window_start):
+            report.setdefault("retry_limit_reached", []).append(str(f["id"]))
+            continue
         if not _fetched_since(f, window_start):
             decision.append(f)
         elif cfg.closing_capture and _minutes(now, f["kickoff_utc"]) <= cfg.closing_window_minutes and \

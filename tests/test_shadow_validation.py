@@ -400,3 +400,56 @@ def test_budget_estimates_rank_the_profiles():
     full = estimate(closing_capture=True)
     assert low["requests_14d"] < medium["requests_14d"] < full["requests_14d"]
     assert medium["within_daily_budget_on_peak"] and not full["within_daily_budget_on_peak"]
+
+
+def test_cli_applies_the_requested_profile(tmp_path, monkeypatch):
+    import importlib.util
+    import sqlite3 as _sq
+    import sys as _sys
+    from pathlib import Path
+
+    from src.shadow import cycle as cycle_mod
+
+    root = Path(__file__).resolve().parent.parent
+    db = tmp_path / "s.db"
+    _sq.connect(db).close()
+    seen = {}
+    monkeypatch.setattr(cycle_mod, "run_cycle", lambda conn, key, host, cfg, **kw: seen.update(cfg=cfg) or {})
+    monkeypatch.setattr("src.db.database._connection", _sq.connect(":memory:"))
+    spec = importlib.util.spec_from_file_location("shadow_cycle_cli", root / "scripts" / "shadow_cycle.py")
+    cli = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(cli)
+    for profile, competitions, closing in (("medium", None, False), ("low", cycle_mod.LOW_COST_COMPETITIONS, False),
+                                           ("full", None, True)):
+        monkeypatch.setattr(_sys, "argv", ["shadow_cycle.py", "--db", str(db), "--budget", "0", "--profile", profile])
+        assert cli.main() == 0
+        assert (seen["cfg"].competitions, seen["cfg"].closing_capture, seen["cfg"].max_requests_per_cycle) == \
+            (competitions, closing, 20)
+    monkeypatch.setattr(_sys, "argv", ["shadow_cycle.py", "--db", str(db), "--budget", "0", "--profile", "medium",
+                                       "--max-requests-per-cycle", "5"])
+    cli.main()
+    assert seen["cfg"].max_requests_per_cycle == 5 and seen["cfg"].closing_capture is False
+
+
+class _Failing(FakeProvider):
+    def __call__(self, url, headers, timeout):
+        if "/odds" in url:
+            self.calls.append(url)
+            return 500, {}, b"error"
+        return super().__call__(url, headers, timeout)
+
+
+def test_daily_budget_holds_across_restarts_failures_and_retries(shadow_db, monkeypatch):
+    from src.shadow.cycle import PROFILES
+
+    monkeypatch.setenv("ODDS_REQUEST_BUDGET_API_FOOTBALL", "4")
+    _seed_history(shadow_db)
+    p = _Failing()
+    for i in range(6):   # six cycles, each as if the process had restarted
+        _run(shadow_db, p, T0 + timedelta(minutes=5 * i), cfg=PROFILES["medium"])
+    logged = shadow_db.execute("SELECT status, COUNT(*) FROM provider_quota_log GROUP BY 1").fetchall()
+    by = dict((r[0], r[1]) for r in logged)
+    assert by.get("ok", 0) + by.get("error", 0) <= 4                 # never above the daily budget
+    odds_attempts = shadow_db.execute(
+        "SELECT COUNT(*) FROM provider_quota_log WHERE endpoint LIKE '/odds%' AND status != 'refused'").fetchone()[0]
+    assert odds_attempts == 2                                          # failing fixture retried once, then capped
