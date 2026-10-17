@@ -453,3 +453,47 @@ def test_daily_budget_holds_across_restarts_failures_and_retries(shadow_db, monk
     odds_attempts = shadow_db.execute(
         "SELECT COUNT(*) FROM provider_quota_log WHERE endpoint LIKE '/odds%' AND status != 'refused'").fetchone()[0]
     assert odds_attempts == 2                                          # failing fixture retried once, then capped
+
+
+def _odds_item_price(update, home):
+    item = _odds_item(update)
+    item["bookmakers"][0]["bets"][0]["values"][0]["odd"] = home
+    return item
+
+
+def test_closing_fetch_with_unchanged_stamp_keeps_the_price_revision_and_one_observation(shadow_db):
+    from src.shadow.cycle import PROFILES
+
+    _seed_history(shadow_db)
+    p = FakeProvider()
+    stamp = T0 - timedelta(minutes=30)
+    p.odds = [_odds_item_price(stamp, "1.50")]
+    _run(shadow_db, p, T0, cfg=PROFILES["full"])
+    p.odds = [_odds_item_price(stamp, "1.42")]                    # same provider stamp, new price
+    _run(shadow_db, p, KICKOFF - timedelta(minutes=10), cfg=PROFILES["full"])
+    rows = shadow_db.execute("SELECT decimal_odds, revision FROM odds_quotes WHERE market = '1X2' "
+                             "AND selection = 'home' ORDER BY revision").fetchall()
+    assert [tuple(r) for r in rows] == [(1.5, 0), (1.42, 1)]
+    assert shadow_db.execute("SELECT COUNT(*) FROM shadow_observations").fetchone()[0] == 1
+
+
+def test_medium_retry_after_failure_stores_the_quote_once_and_observes_once(shadow_db):
+    from src.shadow.cycle import PROFILES
+
+    class FailOnce(FakeProvider):
+        def __call__(self, url, headers, timeout):
+            if "/odds" in url and not getattr(self, "failed", False):
+                self.failed = True
+                self.calls.append(url)
+                return 500, {}, b"error"
+            return super().__call__(url, headers, timeout)
+
+    _seed_history(shadow_db)
+    p = FailOnce()
+    p.odds = [_odds_item(T0 - timedelta(minutes=30))]
+    _run(shadow_db, p, T0, cfg=PROFILES["medium"])                          # fetch fails, observation deferred
+    _run(shadow_db, p, T0 + timedelta(minutes=30), cfg=PROFILES["medium"])  # retry succeeds, then observe
+    _run(shadow_db, p, T0 + timedelta(minutes=60), cfg=PROFILES["medium"])
+    assert shadow_db.execute("SELECT COUNT(*) FROM shadow_observations").fetchone()[0] == 1
+    assert shadow_db.execute("SELECT COUNT(*) FROM odds_quotes").fetchone()[0] == 7      # 7 prices, no duplicates
+    assert len([c for c in p.calls if "/odds" in c]) == 2
