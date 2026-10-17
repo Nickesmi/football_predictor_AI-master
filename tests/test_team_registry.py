@@ -149,3 +149,14 @@ class TestFallbackStatisticsRegressions:
         _fixture(engine_db, "en1", "Arsenal", "Premier League", 39)
         r = resolve_team(engine_db, EPL, "Arsenal")
         assert r.status == CONTAMINATED and r.canonical_team_id is None
+
+
+def test_identity_inputs_never_use_the_like_substring_fallback(engine_db):
+    """get_team_state would return 'Internacional' (Brazil) for 'Inter' under the shared 'Serie A' label."""
+    from src.db.team_state import get_team_state
+
+    _state(engine_db, "Internacional", "Serie A", 11)
+    _fixture(engine_db, "br1", "Internacional", "Serie A", 71)
+    assert get_team_state(engine_db, "Inter", "Serie A", "overall").team_name == "Internacional"  # legacy hazard
+    r = resolve_team(engine_db, competition_for_fixture("api_football", 135), "Inter")
+    assert r.status == NO_HISTORY

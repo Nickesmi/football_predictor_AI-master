@@ -34,22 +34,31 @@ class UnresolvedTeamIdentity(RuntimeError):
         super().__init__(f"team identity unresolved: {bad}")
 
 
+def _exact_state(conn, team_name_lower: str, league: str):
+    """The resolved record by exact key. Never src/db/team_state.get_team_state: that function falls
+    back to an unordered SQL LIKE substring match (another team's row) when the exact row is missing."""
+    return conn.execute(
+        """SELECT rolling_scored, rolling_conceded, rolling_corners, rolling_cards, matches_played, form_last5
+           FROM team_state WHERE team_name_lower = ? AND league = ? AND venue = 'overall'""",
+        (team_name_lower, league),
+    ).fetchone()
+
+
 def _venue_stats(conn, res: TeamResolution, venue: str, profile_key: str):
-    from src.db.team_state import get_team_state
     from src.ml.team_stats_db import TeamVenueStats, is_neutral_tournament
 
-    state = get_team_state(conn, res.team_name_lower, res.history_league, "overall")
-    if state is None or state.matches_played != res.matches_played or state.matches_played < 1:
+    state = _exact_state(conn, res.team_name_lower, res.history_league)
+    if state is None or state[4] != res.matches_played or state[4] < 1:
         raise RuntimeError(f"history record changed during resolution: {res.team_name_lower}/{res.history_league}")
+    scored_raw, conceded_raw, corners, cards, played, form = state
     if is_neutral_tournament(profile_key):
-        scored, conceded = round(state.rolling_scored, 2), round(state.rolling_conceded, 2)
+        scored, conceded = round(scored_raw, 2), round(conceded_raw, 2)
     elif venue == "home":
-        scored, conceded = round(state.rolling_scored * 1.12, 2), round(state.rolling_conceded * 0.88, 2)
+        scored, conceded = round(scored_raw * 1.12, 2), round(conceded_raw * 0.88, 2)
     else:
-        scored, conceded = round(state.rolling_scored * 0.88, 2), round(state.rolling_conceded * 1.12, 2)
-    return TeamVenueStats(scored=scored, conceded=conceded, corners=round(state.rolling_corners, 1),
-                          cards=round(state.rolling_cards, 1), matches_played=state.matches_played,
-                          form_last5=state.form_last5)
+        scored, conceded = round(scored_raw * 0.88, 2), round(conceded_raw * 1.12, 2)
+    return TeamVenueStats(scored=scored, conceded=conceded, corners=round(corners, 1),
+                          cards=round(cards, 1), matches_played=played, form_last5=form)
 
 
 def resolve_identity(conn: sqlite3.Connection, match: dict, competition: Competition | None = None,
@@ -82,3 +91,18 @@ def resolve_probability_inputs_v2(conn: sqlite3.Connection, match: dict, competi
         "identity": {"version": TEAM_IDENTITY_VERSION,
                      "home": resolutions["home"].to_dict(), "away": resolutions["away"].to_dict()},
     }
+
+
+LEGACY_INPUTS = "legacy"
+IDENTITY_INPUTS = "identity-v1"
+
+
+def inputs_version() -> str:
+    """PROBABILITY_INPUTS: 'legacy' (default; production today) or 'identity-v1'. Anything else is refused."""
+    import os
+
+    value = (os.getenv("PROBABILITY_INPUTS") or LEGACY_INPUTS).strip().lower()
+    if value not in (LEGACY_INPUTS, IDENTITY_INPUTS):
+        raise ValueError(f"unknown PROBABILITY_INPUTS {value!r}")
+    return value
+

@@ -1,0 +1,1112 @@
+{
+ "Arsenal v Liverpool [Premier League api_football:39]": {
+  "identity": {
+   "probabilities": "NO_FORECAST",
+   "teams": {
+    "away": {
+     "canonical_team_id": "tsr-1b5fb831b7a01322",
+     "competition_ids": {
+      "api_football": 39,
+      "sofascore": 17
+     },
+     "history_league": "Premier League",
+     "matches_played": 8,
+     "source": "normalised_name_in_competition",
+     "status": "RESOLVED",
+     "team_name_lower": "liverpool"
+    },
+    "home": {
+     "canonical_team_id": null,
+     "competition_ids": {
+      "api_football": 39,
+      "sofascore": 17
+     },
+     "history_league": "Premier League",
+     "matches_played": 9,
+     "source": "normalised_name_in_competition",
+     "status": "CONTAMINATED_HISTORY",
+     "team_name_lower": "arsenal"
+    }
+   }
+  },
+  "identity_with_proposed_registry": {
+   "probabilities": "NO_FORECAST",
+   "teams": {
+    "away": {
+     "canonical_team_id": "tsr-1b5fb831b7a01322",
+     "competition_ids": {
+      "api_football": 39,
+      "sofascore": 17
+     },
+     "history_league": "Premier League",
+     "matches_played": 8,
+     "source": "normalised_name_in_competition",
+     "status": "RESOLVED",
+     "team_name_lower": "liverpool"
+    },
+    "home": {
+     "canonical_team_id": null,
+     "competition_ids": {
+      "api_football": 39,
+      "sofascore": 17
+     },
+     "history_league": "Premier League",
+     "matches_played": 9,
+     "source": "normalised_name_in_competition",
+     "status": "CONTAMINATED_HISTORY",
+     "team_name_lower": "arsenal"
+    }
+   }
+  },
+  "legacy": {
+   "1X2": {
+    "away": 0.4663,
+    "draw": 0.2886,
+    "home": 0.2451
+   },
+   "BTTS": {
+    "no": 0.5901,
+    "yes": 0.4099
+   },
+   "O/U 2.5": {
+    "over": 0.355,
+    "under": 0.645
+   },
+   "data_quality": 86.0,
+   "goals": {
+    "exp_away": 1.28,
+    "exp_home": 0.84
+   },
+   "source": "poisson"
+  },
+  "legacy_sources": {
+   "away": "team_state_under_profile_key",
+   "home": "team_state_under_profile_key"
+  }
+ },
+ "Atletico Madrid v Sevilla [La Liga api_football:140]": {
+  "identity": {
+   "probabilities": "NO_FORECAST",
+   "teams": {
+    "away": {
+     "canonical_team_id": "tsr-7fe22ecfeb0b454b",
+     "competition_ids": {
+      "api_football": 140,
+      "sofascore": 8
+     },
+     "history_league": "La Liga",
+     "matches_played": 4,
+     "source": "normalised_name_in_competition",
+     "status": "RESOLVED",
+     "team_name_lower": "sevilla"
+    },
+    "home": {
+     "canonical_team_id": null,
+     "competition_ids": {
+      "api_football": 140,
+      "sofascore": 8
+     },
+     "history_league": null,
+     "matches_played": null,
+     "source": null,
+     "status": "AMBIGUOUS",
+     "team_name_lower": null
+    }
+   }
+  },
+  "identity_with_proposed_registry": {
+   "probabilities": {
+    "1X2": {
+     "away": 0.1381,
+     "draw": 0.2253,
+     "home": 0.6366
+    },
+    "BTTS": {
+     "no": 0.5892,
+     "yes": 0.4108
+    },
+    "O/U 2.5": {
+     "over": 0.4455,
+     "under": 0.5545
+    },
+    "data_quality": 58.0,
+    "goals": {
+     "exp_away": 0.68,
+     "exp_home": 1.78
+    },
+    "source": "poisson"
+   },
+   "teams": {
+    "away": {
+     "canonical_team_id": "tsr-7fe22ecfeb0b454b",
+     "competition_ids": {
+      "api_football": 140,
+      "sofascore": 8
+     },
+     "history_league": "La Liga",
+     "matches_played": 4,
+     "source": "normalised_name_in_competition",
+     "status": "RESOLVED",
+     "team_name_lower": "sevilla"
+    },
+    "home": {
+     "canonical_team_id": "tsr-67971a81acfaea01",
+     "competition_ids": {
+      "api_football": 140,
+      "sofascore": 8
+     },
+     "history_league": "La Liga",
+     "matches_played": 4,
+     "source": "registry:ESP-ATLETICO",
+     "status": "RESOLVED",
+     "team_name_lower": "atletico madrid"
+    }
+   }
+  },
+  "legacy": {
+   "1X2": {
+    "away": 0.1546,
+    "draw": 0.2727,
+    "home": 0.5727
+   },
+   "BTTS": {
+    "no": 0.6627,
+    "yes": 0.3373
+   },
+   "O/U 2.5": {
+    "over": 0.3248,
+    "under": 0.6752
+   },
+   "data_quality": 100.0,
+   "goals": {
+    "exp_away": 0.59,
+    "exp_home": 1.42
+   },
+   "source": "poisson"
+  },
+  "legacy_sources": {
+   "away": "league_table_exact",
+   "home": "league_table_exact"
+  }
+ },
+ "Chelsea U21 v Everton U21 [Premier League api_football:39]": {
+  "identity": {
+   "probabilities": "NO_FORECAST",
+   "teams": {
+    "away": {
+     "canonical_team_id": null,
+     "competition_ids": {
+      "api_football": 39,
+      "sofascore": 17
+     },
+     "history_league": null,
+     "matches_played": null,
+     "source": null,
+     "status": "UNRESOLVED_NO_HISTORY",
+     "team_name_lower": null
+    },
+    "home": {
+     "canonical_team_id": null,
+     "competition_ids": {
+      "api_football": 39,
+      "sofascore": 17
+     },
+     "history_league": null,
+     "matches_played": null,
+     "source": null,
+     "status": "UNRESOLVED_NO_HISTORY",
+     "team_name_lower": null
+    }
+   }
+  },
+  "identity_with_proposed_registry": {
+   "probabilities": "NO_FORECAST",
+   "teams": {
+    "away": {
+     "canonical_team_id": null,
+     "competition_ids": {
+      "api_football": 39,
+      "sofascore": 17
+     },
+     "history_league": null,
+     "matches_played": null,
+     "source": null,
+     "status": "UNRESOLVED_NO_HISTORY",
+     "team_name_lower": null
+    },
+    "home": {
+     "canonical_team_id": null,
+     "competition_ids": {
+      "api_football": 39,
+      "sofascore": 17
+     },
+     "history_league": null,
+     "matches_played": null,
+     "source": null,
+     "status": "UNRESOLVED_NO_HISTORY",
+     "team_name_lower": null
+    }
+   }
+  },
+  "legacy": {
+   "1X2": {
+    "away": 0.1995,
+    "draw": 0.2469,
+    "home": 0.5536
+   },
+   "BTTS": {
+    "no": 0.5335,
+    "yes": 0.4665
+   },
+   "O/U 2.5": {
+    "over": 0.4556,
+    "under": 0.5444
+   },
+   "data_quality": 82.0,
+   "goals": {
+    "exp_away": 0.87,
+    "exp_home": 1.63
+   },
+   "source": "poisson"
+  },
+  "legacy_sources": {
+   "away": "team_state_LIKE_SUBSTRING:Everton",
+   "home": "team_state_LIKE_SUBSTRING:Chelsea"
+  }
+ },
+ "Espanyol v Getafe [La Liga api_football:140]": {
+  "identity": {
+   "probabilities": {
+    "1X2": {
+     "away": 0.3295,
+     "draw": 0.3112,
+     "home": 0.3593
+    },
+    "BTTS": {
+     "no": 0.6077,
+     "yes": 0.3923
+    },
+    "O/U 2.5": {
+     "over": 0.3152,
+     "under": 0.6848
+    },
+    "data_quality": 58.0,
+    "goals": {
+     "exp_away": 0.96,
+     "exp_home": 1.01
+    },
+    "source": "poisson"
+   },
+   "teams": {
+    "away": {
+     "canonical_team_id": "tsr-fb85191507fed9b4",
+     "competition_ids": {
+      "api_football": 140,
+      "sofascore": 8
+     },
+     "history_league": "La Liga",
+     "matches_played": 4,
+     "source": "normalised_name_in_competition",
+     "status": "RESOLVED",
+     "team_name_lower": "getafe"
+    },
+    "home": {
+     "canonical_team_id": "tsr-7a793d9c80720b64",
+     "competition_ids": {
+      "api_football": 140,
+      "sofascore": 8
+     },
+     "history_league": "La Liga",
+     "matches_played": 4,
+     "source": "normalised_name_in_competition",
+     "status": "RESOLVED",
+     "team_name_lower": "espanyol"
+    }
+   }
+  },
+  "identity_with_proposed_registry": {
+   "probabilities": {
+    "1X2": {
+     "away": 0.3295,
+     "draw": 0.3112,
+     "home": 0.3593
+    },
+    "BTTS": {
+     "no": 0.6077,
+     "yes": 0.3923
+    },
+    "O/U 2.5": {
+     "over": 0.3152,
+     "under": 0.6848
+    },
+    "data_quality": 58.0,
+    "goals": {
+     "exp_away": 0.96,
+     "exp_home": 1.01
+    },
+    "source": "poisson"
+   },
+   "teams": {
+    "away": {
+     "canonical_team_id": "tsr-fb85191507fed9b4",
+     "competition_ids": {
+      "api_football": 140,
+      "sofascore": 8
+     },
+     "history_league": "La Liga",
+     "matches_played": 4,
+     "source": "normalised_name_in_competition",
+     "status": "RESOLVED",
+     "team_name_lower": "getafe"
+    },
+    "home": {
+     "canonical_team_id": "tsr-7a793d9c80720b64",
+     "competition_ids": {
+      "api_football": 140,
+      "sofascore": 8
+     },
+     "history_league": "La Liga",
+     "matches_played": 4,
+     "source": "normalised_name_in_competition",
+     "status": "RESOLVED",
+     "team_name_lower": "espanyol"
+    }
+   }
+  },
+  "legacy": {
+   "1X2": {
+    "away": 0.2882,
+    "draw": 0.3541,
+    "home": 0.3577
+   },
+   "BTTS": {
+    "no": 0.7018,
+    "yes": 0.2982
+   },
+   "O/U 2.5": {
+    "over": 0.2131,
+    "under": 0.7869
+   },
+   "data_quality": 100.0,
+   "goals": {
+    "exp_away": 0.73,
+    "exp_home": 0.85
+   },
+   "source": "poisson"
+  },
+  "legacy_sources": {
+   "away": "league_table_exact",
+   "home": "league_table_exact"
+  }
+ },
+ "Everton v Chelsea [Premier League api_football:39]": {
+  "identity": {
+   "probabilities": {
+    "1X2": {
+     "away": 0.4119,
+     "draw": 0.2743,
+     "home": 0.3138
+    },
+    "BTTS": {
+     "no": 0.513,
+     "yes": 0.487
+    },
+    "O/U 2.5": {
+     "over": 0.4325,
+     "under": 0.5675
+    },
+    "data_quality": 82.0,
+    "goals": {
+     "exp_away": 1.31,
+     "exp_home": 1.1
+    },
+    "source": "poisson"
+   },
+   "teams": {
+    "away": {
+     "canonical_team_id": "tsr-d9b277ef76655c59",
+     "competition_ids": {
+      "api_football": 39,
+      "sofascore": 17
+     },
+     "history_league": "Premier League",
+     "matches_played": 6,
+     "source": "normalised_name_in_competition",
+     "status": "RESOLVED",
+     "team_name_lower": "chelsea"
+    },
+    "home": {
+     "canonical_team_id": "tsr-760fd795ef7c940c",
+     "competition_ids": {
+      "api_football": 39,
+      "sofascore": 17
+     },
+     "history_league": "Premier League",
+     "matches_played": 6,
+     "source": "normalised_name_in_competition",
+     "status": "RESOLVED",
+     "team_name_lower": "everton"
+    }
+   }
+  },
+  "identity_with_proposed_registry": {
+   "probabilities": {
+    "1X2": {
+     "away": 0.4119,
+     "draw": 0.2743,
+     "home": 0.3138
+    },
+    "BTTS": {
+     "no": 0.513,
+     "yes": 0.487
+    },
+    "O/U 2.5": {
+     "over": 0.4325,
+     "under": 0.5675
+    },
+    "data_quality": 82.0,
+    "goals": {
+     "exp_away": 1.31,
+     "exp_home": 1.1
+    },
+    "source": "poisson"
+   },
+   "teams": {
+    "away": {
+     "canonical_team_id": "tsr-d9b277ef76655c59",
+     "competition_ids": {
+      "api_football": 39,
+      "sofascore": 17
+     },
+     "history_league": "Premier League",
+     "matches_played": 6,
+     "source": "normalised_name_in_competition",
+     "status": "RESOLVED",
+     "team_name_lower": "chelsea"
+    },
+    "home": {
+     "canonical_team_id": "tsr-760fd795ef7c940c",
+     "competition_ids": {
+      "api_football": 39,
+      "sofascore": 17
+     },
+     "history_league": "Premier League",
+     "matches_played": 6,
+     "source": "normalised_name_in_competition",
+     "status": "RESOLVED",
+     "team_name_lower": "everton"
+    }
+   }
+  },
+  "legacy": {
+   "1X2": {
+    "away": 0.4119,
+    "draw": 0.2743,
+    "home": 0.3138
+   },
+   "BTTS": {
+    "no": 0.513,
+    "yes": 0.487
+   },
+   "O/U 2.5": {
+    "over": 0.4325,
+    "under": 0.5675
+   },
+   "data_quality": 82.0,
+   "goals": {
+    "exp_away": 1.31,
+    "exp_home": 1.1
+   },
+   "source": "poisson"
+  },
+  "legacy_sources": {
+   "away": "team_state_under_profile_key",
+   "home": "team_state_under_profile_key"
+  }
+ },
+ "Everton v Chelsea [Premier League sofascore:17]": {
+  "identity": {
+   "probabilities": {
+    "1X2": {
+     "away": 0.4119,
+     "draw": 0.2743,
+     "home": 0.3138
+    },
+    "BTTS": {
+     "no": 0.513,
+     "yes": 0.487
+    },
+    "O/U 2.5": {
+     "over": 0.4325,
+     "under": 0.5675
+    },
+    "data_quality": 82.0,
+    "goals": {
+     "exp_away": 1.31,
+     "exp_home": 1.1
+    },
+    "source": "poisson"
+   },
+   "teams": {
+    "away": {
+     "canonical_team_id": "tsr-d9b277ef76655c59",
+     "competition_ids": {
+      "api_football": 39,
+      "sofascore": 17
+     },
+     "history_league": "Premier League",
+     "matches_played": 6,
+     "source": "normalised_name_in_competition",
+     "status": "RESOLVED",
+     "team_name_lower": "chelsea"
+    },
+    "home": {
+     "canonical_team_id": "tsr-760fd795ef7c940c",
+     "competition_ids": {
+      "api_football": 39,
+      "sofascore": 17
+     },
+     "history_league": "Premier League",
+     "matches_played": 6,
+     "source": "normalised_name_in_competition",
+     "status": "RESOLVED",
+     "team_name_lower": "everton"
+    }
+   }
+  },
+  "identity_with_proposed_registry": {
+   "probabilities": {
+    "1X2": {
+     "away": 0.4119,
+     "draw": 0.2743,
+     "home": 0.3138
+    },
+    "BTTS": {
+     "no": 0.513,
+     "yes": 0.487
+    },
+    "O/U 2.5": {
+     "over": 0.4325,
+     "under": 0.5675
+    },
+    "data_quality": 82.0,
+    "goals": {
+     "exp_away": 1.31,
+     "exp_home": 1.1
+    },
+    "source": "poisson"
+   },
+   "teams": {
+    "away": {
+     "canonical_team_id": "tsr-d9b277ef76655c59",
+     "competition_ids": {
+      "api_football": 39,
+      "sofascore": 17
+     },
+     "history_league": "Premier League",
+     "matches_played": 6,
+     "source": "normalised_name_in_competition",
+     "status": "RESOLVED",
+     "team_name_lower": "chelsea"
+    },
+    "home": {
+     "canonical_team_id": "tsr-760fd795ef7c940c",
+     "competition_ids": {
+      "api_football": 39,
+      "sofascore": 17
+     },
+     "history_league": "Premier League",
+     "matches_played": 6,
+     "source": "normalised_name_in_competition",
+     "status": "RESOLVED",
+     "team_name_lower": "everton"
+    }
+   }
+  },
+  "legacy": {
+   "1X2": {
+    "away": 0.4119,
+    "draw": 0.2743,
+    "home": 0.3138
+   },
+   "BTTS": {
+    "no": 0.513,
+    "yes": 0.487
+   },
+   "O/U 2.5": {
+    "over": 0.4325,
+    "under": 0.5675
+   },
+   "data_quality": 82.0,
+   "goals": {
+    "exp_away": 1.31,
+    "exp_home": 1.1
+   },
+   "source": "poisson"
+  },
+  "legacy_sources": {
+   "away": "team_state_under_profile_key",
+   "home": "team_state_under_profile_key"
+  }
+ },
+ "Lazio v Porto [UEFA Europa League api_football:3]": {
+  "identity": {
+   "probabilities": {
+    "1X2": {
+     "away": 0.2517,
+     "draw": 0.2801,
+     "home": 0.4682
+    },
+    "BTTS": {
+     "no": 0.5641,
+     "yes": 0.4359
+    },
+    "O/U 2.5": {
+     "over": 0.3851,
+     "under": 0.6149
+    },
+    "data_quality": 41.0,
+    "goals": {
+     "exp_away": 0.9,
+     "exp_home": 1.33
+    },
+    "source": "poisson"
+   },
+   "teams": {
+    "away": {
+     "canonical_team_id": "tsr-f67031bac3d30c05",
+     "competition_ids": {
+      "api_football": 3,
+      "sofascore": 679
+     },
+     "history_league": "UEFA Europa League",
+     "matches_played": 3,
+     "source": "normalised_name_in_competition",
+     "status": "RESOLVED",
+     "team_name_lower": "porto"
+    },
+    "home": {
+     "canonical_team_id": "tsr-64ceb598ab2d73bc",
+     "competition_ids": {
+      "api_football": 3,
+      "sofascore": 679
+     },
+     "history_league": "UEFA Europa League",
+     "matches_played": 3,
+     "source": "normalised_name_in_competition",
+     "status": "RESOLVED",
+     "team_name_lower": "lazio"
+    }
+   }
+  },
+  "identity_with_proposed_registry": {
+   "probabilities": {
+    "1X2": {
+     "away": 0.2517,
+     "draw": 0.2801,
+     "home": 0.4682
+    },
+    "BTTS": {
+     "no": 0.5641,
+     "yes": 0.4359
+    },
+    "O/U 2.5": {
+     "over": 0.3851,
+     "under": 0.6149
+    },
+    "data_quality": 41.0,
+    "goals": {
+     "exp_away": 0.9,
+     "exp_home": 1.33
+    },
+    "source": "poisson"
+   },
+   "teams": {
+    "away": {
+     "canonical_team_id": "tsr-f67031bac3d30c05",
+     "competition_ids": {
+      "api_football": 3,
+      "sofascore": 679
+     },
+     "history_league": "UEFA Europa League",
+     "matches_played": 3,
+     "source": "normalised_name_in_competition",
+     "status": "RESOLVED",
+     "team_name_lower": "porto"
+    },
+    "home": {
+     "canonical_team_id": "tsr-64ceb598ab2d73bc",
+     "competition_ids": {
+      "api_football": 3,
+      "sofascore": 679
+     },
+     "history_league": "UEFA Europa League",
+     "matches_played": 3,
+     "source": "normalised_name_in_competition",
+     "status": "RESOLVED",
+     "team_name_lower": "lazio"
+    }
+   }
+  },
+  "legacy": {
+   "1X2": {
+    "away": 0.1836,
+    "draw": 0.273,
+    "home": 0.5434
+   },
+   "BTTS": {
+    "no": 0.6202,
+    "yes": 0.3798
+   },
+   "O/U 2.5": {
+    "over": 0.3537,
+    "under": 0.6463
+   },
+   "data_quality": 35.0,
+   "goals": {
+    "exp_away": 0.7,
+    "exp_home": 1.42
+   },
+   "source": "poisson"
+  },
+  "legacy_sources": {
+   "away": "HASH_SYNTHETIC",
+   "home": "league_table_exact"
+  }
+ },
+ "Middlesbrough v Cardiff [Championship api_football:40]": {
+  "identity": {
+   "probabilities": {
+    "1X2": {
+     "away": 0.1996,
+     "draw": 0.2526,
+     "home": 0.5478
+    },
+    "BTTS": {
+     "no": 0.549,
+     "yes": 0.451
+    },
+    "O/U 2.5": {
+     "over": 0.435,
+     "under": 0.565
+    },
+    "data_quality": 80.0,
+    "goals": {
+     "exp_away": 0.84,
+     "exp_home": 1.58
+    },
+    "source": "poisson"
+   },
+   "teams": {
+    "away": {
+     "canonical_team_id": "tsr-da1eae22c4a7562c",
+     "competition_ids": {
+      "api_football": 40,
+      "sofascore": 18
+     },
+     "history_league": "Championship",
+     "matches_played": 5,
+     "source": "normalised_name_in_competition",
+     "status": "RESOLVED",
+     "team_name_lower": "cardiff"
+    },
+    "home": {
+     "canonical_team_id": "tsr-7338cb2c7316ed56",
+     "competition_ids": {
+      "api_football": 40,
+      "sofascore": 18
+     },
+     "history_league": "Championship",
+     "matches_played": 6,
+     "source": "normalised_name_in_competition",
+     "status": "RESOLVED",
+     "team_name_lower": "middlesbrough"
+    }
+   }
+  },
+  "identity_with_proposed_registry": {
+   "probabilities": {
+    "1X2": {
+     "away": 0.1996,
+     "draw": 0.2526,
+     "home": 0.5478
+    },
+    "BTTS": {
+     "no": 0.549,
+     "yes": 0.451
+    },
+    "O/U 2.5": {
+     "over": 0.435,
+     "under": 0.565
+    },
+    "data_quality": 80.0,
+    "goals": {
+     "exp_away": 0.84,
+     "exp_home": 1.58
+    },
+    "source": "poisson"
+   },
+   "teams": {
+    "away": {
+     "canonical_team_id": "tsr-da1eae22c4a7562c",
+     "competition_ids": {
+      "api_football": 40,
+      "sofascore": 18
+     },
+     "history_league": "Championship",
+     "matches_played": 5,
+     "source": "normalised_name_in_competition",
+     "status": "RESOLVED",
+     "team_name_lower": "cardiff"
+    },
+    "home": {
+     "canonical_team_id": "tsr-7338cb2c7316ed56",
+     "competition_ids": {
+      "api_football": 40,
+      "sofascore": 18
+     },
+     "history_league": "Championship",
+     "matches_played": 6,
+     "source": "normalised_name_in_competition",
+     "status": "RESOLVED",
+     "team_name_lower": "middlesbrough"
+    }
+   }
+  },
+  "legacy": {
+   "1X2": {
+    "away": 0.261,
+    "draw": 0.3518,
+    "home": 0.3872
+   },
+   "BTTS": {
+    "no": 0.7056,
+    "yes": 0.2944
+   },
+   "O/U 2.5": {
+    "over": 0.2132,
+    "under": 0.7868
+   },
+   "data_quality": 50.0,
+   "goals": {
+    "exp_away": 0.68,
+    "exp_home": 0.9
+   },
+   "source": "poisson"
+  },
+  "legacy_sources": {
+   "away": "HASH_SYNTHETIC",
+   "home": "HASH_SYNTHETIC"
+  }
+ },
+ "Rangers v Hibernian [Premiership api_football:179]": {
+  "identity": {
+   "probabilities": "NO_FORECAST",
+   "teams": {
+    "away": {
+     "canonical_team_id": "tsr-005e5ec2ece1dc63",
+     "competition_ids": {
+      "api_football": 179,
+      "sofascore": 36
+     },
+     "history_league": "Premiership",
+     "matches_played": 6,
+     "source": "normalised_name_in_competition",
+     "status": "RESOLVED",
+     "team_name_lower": "hibernian"
+    },
+    "home": {
+     "canonical_team_id": null,
+     "competition_ids": {
+      "api_football": 179,
+      "sofascore": 36
+     },
+     "history_league": null,
+     "matches_played": null,
+     "source": null,
+     "status": "UNRESOLVED_NO_HISTORY",
+     "team_name_lower": null
+    }
+   }
+  },
+  "identity_with_proposed_registry": {
+   "probabilities": "NO_FORECAST",
+   "teams": {
+    "away": {
+     "canonical_team_id": "tsr-005e5ec2ece1dc63",
+     "competition_ids": {
+      "api_football": 179,
+      "sofascore": 36
+     },
+     "history_league": "Premiership",
+     "matches_played": 6,
+     "source": "normalised_name_in_competition",
+     "status": "RESOLVED",
+     "team_name_lower": "hibernian"
+    },
+    "home": {
+     "canonical_team_id": null,
+     "competition_ids": {
+      "api_football": 179,
+      "sofascore": 36
+     },
+     "history_league": null,
+     "matches_played": null,
+     "source": null,
+     "status": "UNRESOLVED_NO_HISTORY",
+     "team_name_lower": null
+    }
+   }
+  },
+  "legacy": {
+   "1X2": {
+    "away": 0.2535,
+    "draw": 0.3388,
+    "home": 0.4077
+   },
+   "BTTS": {
+    "no": 0.6867,
+    "yes": 0.3133
+   },
+   "O/U 2.5": {
+    "over": 0.236,
+    "under": 0.764
+   },
+   "data_quality": 50.0,
+   "goals": {
+    "exp_away": 0.7,
+    "exp_home": 0.97
+   },
+   "source": "poisson"
+  },
+  "legacy_sources": {
+   "away": "HASH_SYNTHETIC",
+   "home": "all_leagues_table_SUBSTRING:angers"
+  }
+ },
+ "Werder Bremen v Union Berlin [Bundesliga api_football:78]": {
+  "identity": {
+   "probabilities": {
+    "1X2": {
+     "away": 0.3597,
+     "draw": 0.2805,
+     "home": 0.3598
+    },
+    "BTTS": {
+     "no": 0.5235,
+     "yes": 0.4765
+    },
+    "O/U 2.5": {
+     "over": 0.4157,
+     "under": 0.5843
+    },
+    "data_quality": 58.0,
+    "goals": {
+     "exp_away": 1.17,
+     "exp_home": 1.17
+    },
+    "source": "poisson"
+   },
+   "teams": {
+    "away": {
+     "canonical_team_id": "tsr-f4907b95a4cc7bb5",
+     "competition_ids": {
+      "api_football": 78,
+      "sofascore": 35
+     },
+     "history_league": "Bundesliga",
+     "matches_played": 4,
+     "source": "normalised_name_in_competition",
+     "status": "RESOLVED",
+     "team_name_lower": "1. fc union berlin"
+    },
+    "home": {
+     "canonical_team_id": "tsr-a29d63efba0a3887",
+     "competition_ids": {
+      "api_football": 78,
+      "sofascore": 35
+     },
+     "history_league": "Bundesliga",
+     "matches_played": 4,
+     "source": "normalised_name_in_competition",
+     "status": "RESOLVED",
+     "team_name_lower": "sv werder bremen"
+    }
+   }
+  },
+  "identity_with_proposed_registry": {
+   "probabilities": {
+    "1X2": {
+     "away": 0.3597,
+     "draw": 0.2805,
+     "home": 0.3598
+    },
+    "BTTS": {
+     "no": 0.5235,
+     "yes": 0.4765
+    },
+    "O/U 2.5": {
+     "over": 0.4157,
+     "under": 0.5843
+    },
+    "data_quality": 58.0,
+    "goals": {
+     "exp_away": 1.17,
+     "exp_home": 1.17
+    },
+    "source": "poisson"
+   },
+   "teams": {
+    "away": {
+     "canonical_team_id": "tsr-f4907b95a4cc7bb5",
+     "competition_ids": {
+      "api_football": 78,
+      "sofascore": 35
+     },
+     "history_league": "Bundesliga",
+     "matches_played": 4,
+     "source": "normalised_name_in_competition",
+     "status": "RESOLVED",
+     "team_name_lower": "1. fc union berlin"
+    },
+    "home": {
+     "canonical_team_id": "tsr-a29d63efba0a3887",
+     "competition_ids": {
+      "api_football": 78,
+      "sofascore": 35
+     },
+     "history_league": "Bundesliga",
+     "matches_played": 4,
+     "source": "normalised_name_in_competition",
+     "status": "RESOLVED",
+     "team_name_lower": "sv werder bremen"
+    }
+   }
+  },
+  "legacy": {
+   "1X2": {
+    "away": 0.3597,
+    "draw": 0.2805,
+    "home": 0.3598
+   },
+   "BTTS": {
+    "no": 0.5235,
+    "yes": 0.4765
+   },
+   "O/U 2.5": {
+    "over": 0.4157,
+    "under": 0.5843
+   },
+   "data_quality": 58.0,
+   "goals": {
+    "exp_away": 1.17,
+    "exp_home": 1.17
+   },
+   "source": "poisson"
+  },
+  "legacy_sources": {
+   "away": "team_state_LIKE_SUBSTRING:1. FC Union Berlin",
+   "home": "team_state_LIKE_SUBSTRING:SV Werder Bremen"
+  }
+ }
+}

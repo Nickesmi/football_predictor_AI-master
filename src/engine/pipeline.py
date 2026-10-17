@@ -167,9 +167,24 @@ def run_pipeline(
     run_id = uuid.uuid4().hex
     decided_at = datetime.now(timezone.utc).isoformat()
     decision_rows: list[dict] = []
+    from src.identity.inputs import (IDENTITY_INPUTS, UnresolvedTeamIdentity, inputs_version,
+                                     resolve_probability_inputs_v2)
+
+    probability_inputs_version = inputs_version()
     for match in fixtures:
         try:
-            inputs = resolve_probability_inputs(match)
+            try:
+                if probability_inputs_version == IDENTITY_INPUTS:
+                    inputs = resolve_probability_inputs_v2(conn, match, remember=True)
+                else:
+                    inputs = resolve_probability_inputs(match)
+            except UnresolvedTeamIdentity as exc:
+                # identity-v1 only: an unresolved or ambiguous team gets no forecast and no selection.
+                decision_rows.append({"match_id": match["id"], "decision": "NO_FORECAST", "reasons_json": [
+                    {"code": decisions.TEAM_IDENTITY_UNRESOLVED, "inputs_version": probability_inputs_version,
+                     "teams": {side: {"name": r.provider_name, "status": r.status, "reason": r.reason}
+                               for side, r in exc.resolutions.items() if not r.resolved}}]})
+                continue
             input_data_timestamp = datetime.now(timezone.utc).isoformat()
             raw = estimate_probabilities_from_inputs(inputs)
             probs = calibrate_probabilities(raw, calibrator)
@@ -177,6 +192,7 @@ def run_pipeline(
             match_records[match["id"]] = {
                 "input_data_timestamp": input_data_timestamp,
                 "inputs_json": json.dumps({
+                    "probability_inputs_version": probability_inputs_version,
                     "probability_inputs": inputs,
                     "raw_probabilities": raw,
                     "calibrated_probabilities": probs,
