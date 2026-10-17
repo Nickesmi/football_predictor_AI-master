@@ -62,20 +62,22 @@ def _venue_stats(conn, res: TeamResolution, venue: str, profile_key: str):
 
 
 def resolve_identity(conn: sqlite3.Connection, match: dict, competition: Competition | None = None,
-                     remember: bool = False) -> dict[str, TeamResolution]:
+                     remember: bool = False, registry=None) -> dict[str, TeamResolution]:
     competition = competition or competition_for_fixture(match.get("provider"), match.get("league_id"))
     provider = match.get("provider")
     return {
-        "home": resolve_team(conn, competition, match["home_team"], provider, match.get("home_team_id"), remember),
-        "away": resolve_team(conn, competition, match["away_team"], provider, match.get("away_team_id"), remember),
+        "home": resolve_team(conn, competition, match["home_team"], provider, match.get("home_team_id"), remember,
+                             registry),
+        "away": resolve_team(conn, competition, match["away_team"], provider, match.get("away_team_id"), remember,
+                             registry),
     }
 
 
 def resolve_probability_inputs_v2(conn: sqlite3.Connection, match: dict, competition: Competition | None = None,
-                                  remember: bool = False) -> dict:
+                                  remember: bool = False, registry=None) -> dict:
     from src.engine.probability_engine import LEAGUE_KEY_MAP
 
-    resolutions = resolve_identity(conn, match, competition, remember)
+    resolutions = resolve_identity(conn, match, competition, remember, registry)
     if not all(r.resolved for r in resolutions.values()):
         raise UnresolvedTeamIdentity(resolutions)
     league_name = match.get("league_name", "")

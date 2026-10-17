@@ -94,3 +94,16 @@ def apply(conn, reg: Registry, competition, res, remember: bool):
         )
         conn.commit()
     return out
+
+
+def load_as_proposed(path: Path = REGISTRY_FILE) -> Registry:
+    """The registry with every entry treated as unapproved (the M3.2 state); for reproducing old references."""
+    import copy
+
+    reg = load(path)
+    entries = {}
+    for k, e in reg.entries.items():
+        e = copy.deepcopy(e)
+        e["review"] = {**(e.get("review") or {}), "status": "proposed"}
+        entries[k] = e
+    return Registry(reg.version, entries, False)

@@ -46,8 +46,12 @@ class TestShippedRegistry:
         data = json.loads(registry.REGISTRY_FILE.read_text())
         assert data["version"] == "team-registry-v1" and len(data["entries"]) == 31
         for e in data["entries"]:
-            assert e["review"]["status"] == "proposed" and e["review"]["owner_approved"] is False
+            # M3.3: approved under the owner-delegated evidence criteria, owner confirmation pending
+            assert e["review"]["status"] == "approved" and e["review"]["owner_confirmation"] == "pending"
+            assert e["review"]["approval_basis"] and e["audit_m3_3"]["rh1_status"] == "RESOLVED"
             assert e["evidence"] and e["reason"] and e["decision"] in ("map", "exclude")
+            if e["decision"] == "map":
+                assert e["audit_m3_3"]["team_state_v1_with_entry"] == "RESOLVED"
             if e["decision"] == "map":
                 assert set(e["team_state"]) == {"team_name_lower", "history_league"}
         assert sum(e["decision"] == "map" for e in data["entries"]) == 18
@@ -58,9 +62,10 @@ class TestShippedRegistry:
         assert {"Lens", "Monaco", "Strasbourg", "Marseille", "Stade Brestois 29", "Rangers", "Dundee Utd",
                 "Arsenal"} <= excluded
 
-    def test_proposed_entries_are_inactive_by_default(self, engine_db):
+    def test_approved_entries_are_active_by_default(self, engine_db):
         _atletico(engine_db)
-        assert resolve_team(engine_db, LALIGA, "Atletico Madrid").status == AMBIGUOUS
+        r = resolve_team(engine_db, LALIGA, "Atletico Madrid")
+        assert (r.status, r.source) == (RESOLVED, "registry:ESP-ATLETICO")
 
 
 class TestRegistryBehaviour:

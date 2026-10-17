@@ -77,7 +77,9 @@ class TestM3RegressionCases:
         _state(engine_db, "Atletico Madrid", "La Liga", 4)
         _state(engine_db, "Atlético Madrid", "LaLiga", 1)
         _fixture(engine_db, "Atletico Madrid", "Sevilla", "La Liga", 140)
-        r = resolve_team(engine_db, LALIGA, "Atletico Madrid")
+        from src.identity.registry import Registry
+
+        r = resolve_team(engine_db, LALIGA, "Atletico Madrid", registry=Registry("none", {}))  # no reviewed entry
         assert r.status == AMBIGUOUS and r.team_name_lower is None
         assert r.evidence["review"] == "distinct or unverified records"
 

@@ -2,7 +2,7 @@
  "version": "team-registry-v1",
  "identity_version": "team-identity-v1",
  "prepared": "2026-10-17",
- "note": "All entries are proposals. Only review.status == 'approved' entries are used. provider_team_id is bound at the first identity-checked resolution that carries a provider id.",
+ "note": "M3.3: all 31 entries audited. 18 maps approved under the owner-delegated evidence criteria; 13 exclusions confirmed for the team_state path. Owner confirmation pending. provider_team_id is bound at the first identity-checked resolution that carries a provider id.",
  "entries": [
   {
    "id": "SCO-DUNDEE",
@@ -25,9 +25,23 @@
    },
    "reason": "one record verified by competition fixtures; the other record has no source fixtures and is not used",
    "review": {
-    "status": "proposed",
-    "prepared_by": "M3.2 evidence review",
-    "owner_approved": false
+    "status": "approved",
+    "approval_basis": "owner-delegated evidence criteria (M3.3 Package A9): mapped record verified by competition fixtures; rh1 reconstruction resolves the same provider name in the same competition; no collision",
+    "approved_by": "M3.3 evidence audit",
+    "approved_on": "2026-10-17",
+    "owner_confirmation": "pending"
+   },
+   "audit_m3_3": {
+    "team_state_v1_with_entry": "RESOLVED",
+    "rh1_status": "RESOLVED",
+    "rh1_matches": 4,
+    "rh1_raw_names": [
+     "Dundee"
+    ],
+    "team_state_records": [
+     "Dundee @ Premiership",
+     "Dundee FC @ Scottish Premiership"
+    ]
    }
   },
   {
@@ -51,9 +65,23 @@
    },
    "reason": "one record verified by competition fixtures; the other record has no source fixtures and is not used",
    "review": {
-    "status": "proposed",
-    "prepared_by": "M3.2 evidence review",
-    "owner_approved": false
+    "status": "approved",
+    "approval_basis": "owner-delegated evidence criteria (M3.3 Package A9): mapped record verified by competition fixtures; rh1 reconstruction resolves the same provider name in the same competition; no collision",
+    "approved_by": "M3.3 evidence audit",
+    "approved_on": "2026-10-17",
+    "owner_confirmation": "pending"
+   },
+   "audit_m3_3": {
+    "team_state_v1_with_entry": "RESOLVED",
+    "rh1_status": "RESOLVED",
+    "rh1_matches": 3,
+    "rh1_raw_names": [
+     "ST Mirren"
+    ],
+    "team_state_records": [
+     "ST Mirren @ Premiership",
+     "St. Mirren @ Scottish Premiership"
+    ]
    }
   },
   {
@@ -77,9 +105,23 @@
    },
    "reason": "one record verified by competition fixtures; the other record has no source fixtures and is not used",
    "review": {
-    "status": "proposed",
-    "prepared_by": "M3.2 evidence review",
-    "owner_approved": false
+    "status": "approved",
+    "approval_basis": "owner-delegated evidence criteria (M3.3 Package A9): mapped record verified by competition fixtures; rh1 reconstruction resolves the same provider name in the same competition; no collision",
+    "approved_by": "M3.3 evidence audit",
+    "approved_on": "2026-10-17",
+    "owner_confirmation": "pending"
+   },
+   "audit_m3_3": {
+    "team_state_v1_with_entry": "RESOLVED",
+    "rh1_status": "RESOLVED",
+    "rh1_matches": 4,
+    "rh1_raw_names": [
+     "ST Johnstone"
+    ],
+    "team_state_records": [
+     "ST Johnstone @ Premiership",
+     "St. Johnstone @ Scottish Premiership"
+    ]
    }
   },
   {
@@ -103,9 +145,23 @@
    },
    "reason": "one record verified by competition fixtures; the other record has no source fixtures and is not used",
    "review": {
-    "status": "proposed",
-    "prepared_by": "M3.2 evidence review",
-    "owner_approved": false
+    "status": "approved",
+    "approval_basis": "owner-delegated evidence criteria (M3.3 Package A9): mapped record verified by competition fixtures; rh1 reconstruction resolves the same provider name in the same competition; no collision",
+    "approved_by": "M3.3 evidence audit",
+    "approved_on": "2026-10-17",
+    "owner_confirmation": "pending"
+   },
+   "audit_m3_3": {
+    "team_state_v1_with_entry": "RESOLVED",
+    "rh1_status": "RESOLVED",
+    "rh1_matches": 6,
+    "rh1_raw_names": [
+     "Telstar"
+    ],
+    "team_state_records": [
+     "Telstar @ Eredivisie",
+     "SC Telstar @ VriendenLoterij Eredivisie"
+    ]
    }
   },
   {
@@ -129,9 +185,23 @@
    },
    "reason": "one record verified by competition fixtures; the other record has no source fixtures and is not used",
    "review": {
-    "status": "proposed",
-    "prepared_by": "M3.2 evidence review",
-    "owner_approved": false
+    "status": "approved",
+    "approval_basis": "owner-delegated evidence criteria (M3.3 Package A9): mapped record verified by competition fixtures; rh1 reconstruction resolves the same provider name in the same competition; no collision",
+    "approved_by": "M3.3 evidence audit",
+    "approved_on": "2026-10-17",
+    "owner_confirmation": "pending"
+   },
+   "audit_m3_3": {
+    "team_state_v1_with_entry": "RESOLVED",
+    "rh1_status": "RESOLVED",
+    "rh1_matches": 5,
+    "rh1_raw_names": [
+     "Groningen"
+    ],
+    "team_state_records": [
+     "Groningen @ Eredivisie",
+     "FC Groningen @ VriendenLoterij Eredivisie"
+    ]
    }
   },
   {
@@ -155,9 +225,23 @@
    },
    "reason": "one record verified by competition fixtures; the other record has no source fixtures and is not used",
    "review": {
-    "status": "proposed",
-    "prepared_by": "M3.2 evidence review",
-    "owner_approved": false
+    "status": "approved",
+    "approval_basis": "owner-delegated evidence criteria (M3.3 Package A9): mapped record verified by competition fixtures; rh1 reconstruction resolves the same provider name in the same competition; no collision",
+    "approved_by": "M3.3 evidence audit",
+    "approved_on": "2026-10-17",
+    "owner_confirmation": "pending"
+   },
+   "audit_m3_3": {
+    "team_state_v1_with_entry": "RESOLVED",
+    "rh1_status": "RESOLVED",
+    "rh1_matches": 6,
+    "rh1_raw_names": [
+     "Utrecht"
+    ],
+    "team_state_records": [
+     "Utrecht @ Eredivisie",
+     "FC Utrecht @ VriendenLoterij Eredivisie"
+    ]
    }
   },
   {
@@ -181,9 +265,23 @@
    },
    "reason": "one record verified by competition fixtures; the other record has no source fixtures and is not used",
    "review": {
-    "status": "proposed",
-    "prepared_by": "M3.2 evidence review",
-    "owner_approved": false
+    "status": "approved",
+    "approval_basis": "owner-delegated evidence criteria (M3.3 Package A9): mapped record verified by competition fixtures; rh1 reconstruction resolves the same provider name in the same competition; no collision",
+    "approved_by": "M3.3 evidence audit",
+    "approved_on": "2026-10-17",
+    "owner_confirmation": "pending"
+   },
+   "audit_m3_3": {
+    "team_state_v1_with_entry": "RESOLVED",
+    "rh1_status": "RESOLVED",
+    "rh1_matches": 5,
+    "rh1_raw_names": [
+     "Ajax"
+    ],
+    "team_state_records": [
+     "Ajax @ Eredivisie",
+     "AFC Ajax @ VriendenLoterij Eredivisie"
+    ]
    }
   },
   {
@@ -207,9 +305,23 @@
    },
    "reason": "one record verified by competition fixtures; the other record has no source fixtures and is not used",
    "review": {
-    "status": "proposed",
-    "prepared_by": "M3.2 evidence review",
-    "owner_approved": false
+    "status": "approved",
+    "approval_basis": "owner-delegated evidence criteria (M3.3 Package A9): mapped record verified by competition fixtures; rh1 reconstruction resolves the same provider name in the same competition; no collision",
+    "approved_by": "M3.3 evidence audit",
+    "approved_on": "2026-10-17",
+    "owner_confirmation": "pending"
+   },
+   "audit_m3_3": {
+    "team_state_v1_with_entry": "RESOLVED",
+    "rh1_status": "RESOLVED",
+    "rh1_matches": 5,
+    "rh1_raw_names": [
+     "Heerenveen"
+    ],
+    "team_state_records": [
+     "Heerenveen @ Eredivisie",
+     "SC Heerenveen @ VriendenLoterij Eredivisie"
+    ]
    }
   },
   {
@@ -233,9 +345,23 @@
    },
    "reason": "one record verified by competition fixtures; the other record has no source fixtures and is not used",
    "review": {
-    "status": "proposed",
-    "prepared_by": "M3.2 evidence review",
-    "owner_approved": false
+    "status": "approved",
+    "approval_basis": "owner-delegated evidence criteria (M3.3 Package A9): mapped record verified by competition fixtures; rh1 reconstruction resolves the same provider name in the same competition; no collision",
+    "approved_by": "M3.3 evidence audit",
+    "approved_on": "2026-10-17",
+    "owner_confirmation": "pending"
+   },
+   "audit_m3_3": {
+    "team_state_v1_with_entry": "RESOLVED",
+    "rh1_status": "RESOLVED",
+    "rh1_matches": 7,
+    "rh1_raw_names": [
+     "Twente"
+    ],
+    "team_state_records": [
+     "Twente @ Eredivisie",
+     "FC Twente @ VriendenLoterij Eredivisie"
+    ]
    }
   },
   {
@@ -259,9 +385,23 @@
    },
    "reason": "one record verified by competition fixtures; the other record has no source fixtures and is not used",
    "review": {
-    "status": "proposed",
-    "prepared_by": "M3.2 evidence review",
-    "owner_approved": false
+    "status": "approved",
+    "approval_basis": "owner-delegated evidence criteria (M3.3 Package A9): mapped record verified by competition fixtures; rh1 reconstruction resolves the same provider name in the same competition; no collision",
+    "approved_by": "M3.3 evidence audit",
+    "approved_on": "2026-10-17",
+    "owner_confirmation": "pending"
+   },
+   "audit_m3_3": {
+    "team_state_v1_with_entry": "RESOLVED",
+    "rh1_status": "RESOLVED",
+    "rh1_matches": 3,
+    "rh1_raw_names": [
+     "Standard Liege"
+    ],
+    "team_state_records": [
+     "Standard Liege @ Jupiler Pro League",
+     "Standard Liège @ Pro League"
+    ]
    }
   },
   {
@@ -285,9 +425,23 @@
    },
    "reason": "one record verified by competition fixtures; the other record has no source fixtures and is not used",
    "review": {
-    "status": "proposed",
-    "prepared_by": "M3.2 evidence review",
-    "owner_approved": false
+    "status": "approved",
+    "approval_basis": "owner-delegated evidence criteria (M3.3 Package A9): mapped record verified by competition fixtures; rh1 reconstruction resolves the same provider name in the same competition; no collision",
+    "approved_by": "M3.3 evidence audit",
+    "approved_on": "2026-10-17",
+    "owner_confirmation": "pending"
+   },
+   "audit_m3_3": {
+    "team_state_v1_with_entry": "RESOLVED",
+    "rh1_status": "RESOLVED",
+    "rh1_matches": 3,
+    "rh1_raw_names": [
+     "Arouca"
+    ],
+    "team_state_records": [
+     "FC Arouca @ Liga Portugal Betclic",
+     "Arouca @ Primeira Liga"
+    ]
    }
   },
   {
@@ -311,9 +465,23 @@
    },
    "reason": "one record verified by competition fixtures; the other record has no source fixtures and is not used",
    "review": {
-    "status": "proposed",
-    "prepared_by": "M3.2 evidence review",
-    "owner_approved": false
+    "status": "approved",
+    "approval_basis": "owner-delegated evidence criteria (M3.3 Package A9): mapped record verified by competition fixtures; rh1 reconstruction resolves the same provider name in the same competition; no collision",
+    "approved_by": "M3.3 evidence audit",
+    "approved_on": "2026-10-17",
+    "owner_confirmation": "pending"
+   },
+   "audit_m3_3": {
+    "team_state_v1_with_entry": "RESOLVED",
+    "rh1_status": "RESOLVED",
+    "rh1_matches": 7,
+    "rh1_raw_names": [
+     "Alverca"
+    ],
+    "team_state_records": [
+     "FC Alverca @ Liga Portugal Betclic",
+     "Alverca @ Primeira Liga"
+    ]
    }
   },
   {
@@ -337,9 +505,23 @@
    },
    "reason": "one record verified by competition fixtures; the other record has no source fixtures and is not used",
    "review": {
-    "status": "proposed",
-    "prepared_by": "M3.2 evidence review",
-    "owner_approved": false
+    "status": "approved",
+    "approval_basis": "owner-delegated evidence criteria (M3.3 Package A9): mapped record verified by competition fixtures; rh1 reconstruction resolves the same provider name in the same competition; no collision",
+    "approved_by": "M3.3 evidence audit",
+    "approved_on": "2026-10-17",
+    "owner_confirmation": "pending"
+   },
+   "audit_m3_3": {
+    "team_state_v1_with_entry": "RESOLVED",
+    "rh1_status": "RESOLVED",
+    "rh1_matches": 7,
+    "rh1_raw_names": [
+     "Nacional"
+    ],
+    "team_state_records": [
+     "CD Nacional @ Liga Portugal Betclic",
+     "Nacional @ Primeira Liga"
+    ]
    }
   },
   {
@@ -363,9 +545,23 @@
    },
    "reason": "one record verified by competition fixtures; the other record has no source fixtures and is not used",
    "review": {
-    "status": "proposed",
-    "prepared_by": "M3.2 evidence review",
-    "owner_approved": false
+    "status": "approved",
+    "approval_basis": "owner-delegated evidence criteria (M3.3 Package A9): mapped record verified by competition fixtures; rh1 reconstruction resolves the same provider name in the same competition; no collision",
+    "approved_by": "M3.3 evidence audit",
+    "approved_on": "2026-10-17",
+    "owner_confirmation": "pending"
+   },
+   "audit_m3_3": {
+    "team_state_v1_with_entry": "RESOLVED",
+    "rh1_status": "RESOLVED",
+    "rh1_matches": 5,
+    "rh1_raw_names": [
+     "Famalicao"
+    ],
+    "team_state_records": [
+     "Famalicão @ Liga Portugal Betclic",
+     "Famalicao @ Primeira Liga"
+    ]
    }
   },
   {
@@ -389,9 +585,23 @@
    },
    "reason": "one record verified by competition fixtures; the other record has no source fixtures and is not used",
    "review": {
-    "status": "proposed",
-    "prepared_by": "M3.2 evidence review",
-    "owner_approved": false
+    "status": "approved",
+    "approval_basis": "owner-delegated evidence criteria (M3.3 Package A9): mapped record verified by competition fixtures; rh1 reconstruction resolves the same provider name in the same competition; no collision",
+    "approved_by": "M3.3 evidence audit",
+    "approved_on": "2026-10-17",
+    "owner_confirmation": "pending"
+   },
+   "audit_m3_3": {
+    "team_state_v1_with_entry": "RESOLVED",
+    "rh1_status": "RESOLVED",
+    "rh1_matches": 2,
+    "rh1_raw_names": [
+     "Barcelona"
+    ],
+    "team_state_records": [
+     "Barcelona @ La Liga",
+     "FC Barcelona @ LaLiga"
+    ]
    }
   },
   {
@@ -415,9 +625,23 @@
    },
    "reason": "one record verified by competition fixtures; the other record has no source fixtures and is not used",
    "review": {
-    "status": "proposed",
-    "prepared_by": "M3.2 evidence review",
-    "owner_approved": false
+    "status": "approved",
+    "approval_basis": "owner-delegated evidence criteria (M3.3 Package A9): mapped record verified by competition fixtures; rh1 reconstruction resolves the same provider name in the same competition; no collision",
+    "approved_by": "M3.3 evidence audit",
+    "approved_on": "2026-10-17",
+    "owner_confirmation": "pending"
+   },
+   "audit_m3_3": {
+    "team_state_v1_with_entry": "RESOLVED",
+    "rh1_status": "RESOLVED",
+    "rh1_matches": 4,
+    "rh1_raw_names": [
+     "Atletico Madrid"
+    ],
+    "team_state_records": [
+     "Atletico Madrid @ La Liga",
+     "Atlético Madrid @ LaLiga"
+    ]
    }
   },
   {
@@ -439,13 +663,27 @@
    },
    "reason": "both records are the same club in the same competition (two feed spellings); the record with more matches is used, histories are not merged",
    "review": {
-    "status": "proposed",
-    "prepared_by": "M3.2 evidence review",
-    "owner_approved": false
+    "status": "approved",
+    "approval_basis": "owner-delegated evidence criteria (M3.3 Package A9): mapped record verified by competition fixtures; rh1 reconstruction resolves the same provider name in the same competition; no collision",
+    "approved_by": "M3.3 evidence audit",
+    "approved_on": "2026-10-17",
+    "owner_confirmation": "pending"
    },
    "split_history": {
     "Brighton": 4,
     "Brighton & Hove Albion": 2
+   },
+   "audit_m3_3": {
+    "team_state_v1_with_entry": "RESOLVED",
+    "rh1_status": "RESOLVED",
+    "rh1_matches": 4,
+    "rh1_raw_names": [
+     "Brighton"
+    ],
+    "team_state_records": [
+     "Brighton & Hove Albion @ Premier League",
+     "Brighton @ Premier League"
+    ]
    }
   },
   {
@@ -467,13 +705,27 @@
    },
    "reason": "both records are the same club in the same competition (two feed spellings); the record with more matches is used, histories are not merged",
    "review": {
-    "status": "proposed",
-    "prepared_by": "M3.2 evidence review",
-    "owner_approved": false
+    "status": "approved",
+    "approval_basis": "owner-delegated evidence criteria (M3.3 Package A9): mapped record verified by competition fixtures; rh1 reconstruction resolves the same provider name in the same competition; no collision",
+    "approved_by": "M3.3 evidence audit",
+    "approved_on": "2026-10-17",
+    "owner_confirmation": "pending"
    },
    "split_history": {
     "Paris Saint-Germain": 2,
     "Paris Saint Germain": 1
+   },
+   "audit_m3_3": {
+    "team_state_v1_with_entry": "RESOLVED",
+    "rh1_status": "RESOLVED",
+    "rh1_matches": 1,
+    "rh1_raw_names": [
+     "Paris Saint Germain"
+    ],
+    "team_state_records": [
+     "Paris Saint-Germain @ Ligue 1",
+     "Paris Saint Germain @ Ligue 1"
+    ]
    }
   },
   {
@@ -493,9 +745,20 @@
    },
    "reason": "only record 'RC Lens' has no source fixtures: an alias to it would be unverified",
    "review": {
-    "status": "proposed",
-    "prepared_by": "M3.2 evidence review",
-    "owner_approved": false
+    "status": "approved",
+    "approval_basis": "exclusion confirmed (M3.3): the team_state record is unverifiable or absent; the team resolves only through rh1 reconstruction from competition fixtures",
+    "approved_by": "M3.3 evidence audit",
+    "approved_on": "2026-10-17",
+    "owner_confirmation": "pending"
+   },
+   "audit_m3_3": {
+    "team_state_v1_with_entry": "UNRESOLVED_NO_HISTORY",
+    "rh1_status": "RESOLVED",
+    "rh1_matches": 3,
+    "rh1_raw_names": [
+     "Lens"
+    ],
+    "team_state_records": []
    }
   },
   {
@@ -515,9 +778,20 @@
    },
    "reason": "only record 'AS Monaco' has no source fixtures",
    "review": {
-    "status": "proposed",
-    "prepared_by": "M3.2 evidence review",
-    "owner_approved": false
+    "status": "approved",
+    "approval_basis": "exclusion confirmed (M3.3): the team_state record is unverifiable or absent; the team resolves only through rh1 reconstruction from competition fixtures",
+    "approved_by": "M3.3 evidence audit",
+    "approved_on": "2026-10-17",
+    "owner_confirmation": "pending"
+   },
+   "audit_m3_3": {
+    "team_state_v1_with_entry": "UNRESOLVED_NO_HISTORY",
+    "rh1_status": "RESOLVED",
+    "rh1_matches": 3,
+    "rh1_raw_names": [
+     "Monaco"
+    ],
+    "team_state_records": []
    }
   },
   {
@@ -537,9 +811,20 @@
    },
    "reason": "only record 'RC Strasbourg' has no source fixtures",
    "review": {
-    "status": "proposed",
-    "prepared_by": "M3.2 evidence review",
-    "owner_approved": false
+    "status": "approved",
+    "approval_basis": "exclusion confirmed (M3.3): the team_state record is unverifiable or absent; the team resolves only through rh1 reconstruction from competition fixtures",
+    "approved_by": "M3.3 evidence audit",
+    "approved_on": "2026-10-17",
+    "owner_confirmation": "pending"
+   },
+   "audit_m3_3": {
+    "team_state_v1_with_entry": "UNRESOLVED_NO_HISTORY",
+    "rh1_status": "RESOLVED",
+    "rh1_matches": 4,
+    "rh1_raw_names": [
+     "Strasbourg"
+    ],
+    "team_state_records": []
    }
   },
   {
@@ -559,9 +844,20 @@
    },
    "reason": "only record 'Olympique de Marseille' has no source fixtures",
    "review": {
-    "status": "proposed",
-    "prepared_by": "M3.2 evidence review",
-    "owner_approved": false
+    "status": "approved",
+    "approval_basis": "exclusion confirmed (M3.3): the team_state record is unverifiable or absent; the team resolves only through rh1 reconstruction from competition fixtures",
+    "approved_by": "M3.3 evidence audit",
+    "approved_on": "2026-10-17",
+    "owner_confirmation": "pending"
+   },
+   "audit_m3_3": {
+    "team_state_v1_with_entry": "UNRESOLVED_NO_HISTORY",
+    "rh1_status": "RESOLVED",
+    "rh1_matches": 3,
+    "rh1_raw_names": [
+     "Marseille"
+    ],
+    "team_state_records": []
    }
   },
   {
@@ -581,9 +877,20 @@
    },
    "reason": "only record 'Stade Brestois' has no source fixtures",
    "review": {
-    "status": "proposed",
-    "prepared_by": "M3.2 evidence review",
-    "owner_approved": false
+    "status": "approved",
+    "approval_basis": "exclusion confirmed (M3.3): the team_state record is unverifiable or absent; the team resolves only through rh1 reconstruction from competition fixtures",
+    "approved_by": "M3.3 evidence audit",
+    "approved_on": "2026-10-17",
+    "owner_confirmation": "pending"
+   },
+   "audit_m3_3": {
+    "team_state_v1_with_entry": "UNRESOLVED_NO_HISTORY",
+    "rh1_status": "RESOLVED",
+    "rh1_matches": 2,
+    "rh1_raw_names": [
+     "Stade Brestois 29"
+    ],
+    "team_state_records": []
    }
   },
   {
@@ -600,9 +907,20 @@
    },
    "reason": "no history record in the competition labels",
    "review": {
-    "status": "proposed",
-    "prepared_by": "M3.2 evidence review",
-    "owner_approved": false
+    "status": "approved",
+    "approval_basis": "exclusion confirmed (M3.3): the team_state record is unverifiable or absent; the team resolves only through rh1 reconstruction from competition fixtures",
+    "approved_by": "M3.3 evidence audit",
+    "approved_on": "2026-10-17",
+    "owner_confirmation": "pending"
+   },
+   "audit_m3_3": {
+    "team_state_v1_with_entry": "UNRESOLVED_NO_HISTORY",
+    "rh1_status": "RESOLVED",
+    "rh1_matches": 3,
+    "rh1_raw_names": [
+     "Lyon"
+    ],
+    "team_state_records": []
    }
   },
   {
@@ -619,9 +937,20 @@
    },
    "reason": "no history record in the competition labels",
    "review": {
-    "status": "proposed",
-    "prepared_by": "M3.2 evidence review",
-    "owner_approved": false
+    "status": "approved",
+    "approval_basis": "exclusion confirmed (M3.3): the team_state record is unverifiable or absent; the team resolves only through rh1 reconstruction from competition fixtures",
+    "approved_by": "M3.3 evidence audit",
+    "approved_on": "2026-10-17",
+    "owner_confirmation": "pending"
+   },
+   "audit_m3_3": {
+    "team_state_v1_with_entry": "UNRESOLVED_NO_HISTORY",
+    "rh1_status": "RESOLVED",
+    "rh1_matches": 4,
+    "rh1_raw_names": [
+     "Inter"
+    ],
+    "team_state_records": []
    }
   },
   {
@@ -638,9 +967,20 @@
    },
    "reason": "no history record in the competition labels",
    "review": {
-    "status": "proposed",
-    "prepared_by": "M3.2 evidence review",
-    "owner_approved": false
+    "status": "approved",
+    "approval_basis": "exclusion confirmed (M3.3): the team_state record is unverifiable or absent; the team resolves only through rh1 reconstruction from competition fixtures",
+    "approved_by": "M3.3 evidence audit",
+    "approved_on": "2026-10-17",
+    "owner_confirmation": "pending"
+   },
+   "audit_m3_3": {
+    "team_state_v1_with_entry": "UNRESOLVED_NO_HISTORY",
+    "rh1_status": "RESOLVED",
+    "rh1_matches": 2,
+    "rh1_raw_names": [
+     "OFI"
+    ],
+    "team_state_records": []
    }
   },
   {
@@ -657,9 +997,20 @@
    },
    "reason": "no history record in the competition labels",
    "review": {
-    "status": "proposed",
-    "prepared_by": "M3.2 evidence review",
-    "owner_approved": false
+    "status": "approved",
+    "approval_basis": "exclusion confirmed (M3.3): the team_state record is unverifiable or absent; the team resolves only through rh1 reconstruction from competition fixtures",
+    "approved_by": "M3.3 evidence audit",
+    "approved_on": "2026-10-17",
+    "owner_confirmation": "pending"
+   },
+   "audit_m3_3": {
+    "team_state_v1_with_entry": "UNRESOLVED_NO_HISTORY",
+    "rh1_status": "RESOLVED",
+    "rh1_matches": 2,
+    "rh1_raw_names": [
+     "Alanyaspor"
+    ],
+    "team_state_records": []
    }
   },
   {
@@ -676,9 +1027,20 @@
    },
    "reason": "no history record in the competition labels",
    "review": {
-    "status": "proposed",
-    "prepared_by": "M3.2 evidence review",
-    "owner_approved": false
+    "status": "approved",
+    "approval_basis": "exclusion confirmed (M3.3): the team_state record is unverifiable or absent; the team resolves only through rh1 reconstruction from competition fixtures",
+    "approved_by": "M3.3 evidence audit",
+    "approved_on": "2026-10-17",
+    "owner_confirmation": "pending"
+   },
+   "audit_m3_3": {
+    "team_state_v1_with_entry": "UNRESOLVED_NO_HISTORY",
+    "rh1_status": "RESOLVED",
+    "rh1_matches": 1,
+    "rh1_raw_names": [
+     "Viking"
+    ],
+    "team_state_records": []
    }
   },
   {
@@ -698,9 +1060,20 @@
    },
    "reason": "only record 'Dundee United' has no source fixtures",
    "review": {
-    "status": "proposed",
-    "prepared_by": "M3.2 evidence review",
-    "owner_approved": false
+    "status": "approved",
+    "approval_basis": "exclusion confirmed (M3.3): the team_state record is unverifiable or absent; the team resolves only through rh1 reconstruction from competition fixtures",
+    "approved_by": "M3.3 evidence audit",
+    "approved_on": "2026-10-17",
+    "owner_confirmation": "pending"
+   },
+   "audit_m3_3": {
+    "team_state_v1_with_entry": "UNRESOLVED_NO_HISTORY",
+    "rh1_status": "RESOLVED",
+    "rh1_matches": 5,
+    "rh1_raw_names": [
+     "Dundee Utd"
+    ],
+    "team_state_records": []
    }
   },
   {
@@ -720,9 +1093,22 @@
    },
    "reason": "only record 'Rangers' (Scottish Premiership, 1 match) has no source fixtures; 'Carrick Rangers' is another club (Northern Ireland, 408)",
    "review": {
-    "status": "proposed",
-    "prepared_by": "M3.2 evidence review",
-    "owner_approved": false
+    "status": "approved",
+    "approval_basis": "exclusion confirmed (M3.3): the team_state record is unverifiable or absent; the team resolves only through rh1 reconstruction from competition fixtures",
+    "approved_by": "M3.3 evidence audit",
+    "approved_on": "2026-10-17",
+    "owner_confirmation": "pending"
+   },
+   "audit_m3_3": {
+    "team_state_v1_with_entry": "UNVERIFIED_HISTORY",
+    "rh1_status": "RESOLVED",
+    "rh1_matches": 4,
+    "rh1_raw_names": [
+     "Rangers"
+    ],
+    "team_state_records": [
+     "Rangers @ Scottish Premiership"
+    ]
    }
   },
   {
@@ -741,9 +1127,22 @@
    },
    "reason": "the 'Premier League' record is contaminated: 7 of its 8 source fixtures are from competition 116 (another country's Arsenal); the history must be rebuilt per competition before use",
    "review": {
-    "status": "proposed",
-    "prepared_by": "M3.2 evidence review",
-    "owner_approved": false
+    "status": "approved",
+    "approval_basis": "exclusion confirmed (M3.3): the team_state record is contaminated; the team resolves only through rh1 reconstruction from competition fixtures",
+    "approved_by": "M3.3 evidence audit",
+    "approved_on": "2026-10-17",
+    "owner_confirmation": "pending"
+   },
+   "audit_m3_3": {
+    "team_state_v1_with_entry": "CONTAMINATED_HISTORY",
+    "rh1_status": "RESOLVED",
+    "rh1_matches": 1,
+    "rh1_raw_names": [
+     "Arsenal"
+    ],
+    "team_state_records": [
+     "Arsenal @ Premier League"
+    ]
    }
   }
  ]

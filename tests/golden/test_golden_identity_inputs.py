@@ -121,6 +121,8 @@ def _capture(conn) -> dict:
     from src.identity.inputs import resolve_identity, resolve_probability_inputs_v2
     from src.identity.teams import resolve_team
 
+    # This reference was captured in M3.2, when every registry entry was still a proposal.
+    m3_2_registry = registry.load_as_proposed()
     proposed = registry.load(allow_proposed=True)
     out = {}
     for home, away, league, league_id, provider in FIXTURES:
@@ -131,7 +133,7 @@ def _capture(conn) -> dict:
                  "legacy_sources": {v: _legacy_source(conn, match[f"{v}_team"], v, league) for v in ("home", "away")}}
         for label, reg in (("identity", None), ("identity_with_proposed_registry", proposed)):
             if reg is None:
-                res = resolve_identity(conn, match)
+                res = resolve_identity(conn, match, registry=m3_2_registry)
             else:
                 comp = competition_for_fixture(provider, league_id)
                 res = {s: resolve_team(conn, comp, match[f"{s}_team"], provider, registry=reg) for s in ("home", "away")}
@@ -140,7 +142,7 @@ def _capture(conn) -> dict:
                      for s, r in res.items()}
             if all(r.resolved for r in res.values()):
                 if reg is None:
-                    inputs = resolve_probability_inputs_v2(conn, match)
+                    inputs = resolve_probability_inputs_v2(conn, match, registry=m3_2_registry)
                 else:
                     inputs = _inputs_from(conn, match, res)
                 entry[label] = {"teams": sides, "probabilities": estimate_probabilities_from_inputs(inputs)}
