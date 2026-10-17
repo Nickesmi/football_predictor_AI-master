@@ -30,7 +30,9 @@ def main() -> int:
     parser.add_argument("--allow-production", action="store_true")
     parser.add_argument("--force-discovery", action="store_true")
     parser.add_argument("--max-age", type=int, default=240, help="ODDS_MAX_AGE_MINUTES for the shadow (provisional)")
-    parser.add_argument("--max-requests-per-cycle", type=int, default=12)
+    parser.add_argument("--max-requests-per-cycle", type=int, default=None)
+    parser.add_argument("--profile", choices=("low", "medium", "full"), default="medium",
+                        help="competition set and closing capture (src/shadow/cycle.PROFILES)")
     args = parser.parse_args()
 
     db = args.db.resolve()
@@ -53,11 +55,16 @@ def main() -> int:
     from src.db.database import get_db  # noqa: E402
     from src.shadow.cycle import run_cycle  # noqa: E402
 
-    from src.shadow.cycle import ShadowConfig  # noqa: E402
+    from dataclasses import replace  # noqa: E402
 
-    report = run_cycle(get_db(), config.APIFOOTBALL_API_KEY, config.APIFOOTBALL_HOST,
-                       ShadowConfig(max_requests_per_cycle=max(0, args.max_requests_per_cycle)),
+    from src.shadow.cycle import PROFILES  # noqa: E402
+
+    cfg = PROFILES[args.profile]
+    if args.max_requests_per_cycle is not None:
+        cfg = replace(cfg, max_requests_per_cycle=max(0, args.max_requests_per_cycle))
+    report = run_cycle(get_db(), config.APIFOOTBALL_API_KEY, config.APIFOOTBALL_HOST, cfg,
                        force_discovery=args.force_discovery)
+    report["profile"] = args.profile
     print(json.dumps(report, indent=1, default=str))
     return 0
 

@@ -358,3 +358,45 @@ def test_observation_is_not_deferred_past_the_limit(shadow_db):
     r = _run(shadow_db, p, KICKOFF - timedelta(minutes=50), cfg=ShadowConfig(max_requests_per_cycle=2))
     assert r["observations"] == 1                                            # recorded honestly as NO_QUOTES
     assert shadow_db.execute("SELECT quote_status FROM shadow_observations").fetchone()[0] in ("NO_QUOTES", "UNMAPPED")
+
+
+def test_low_profile_observes_only_its_competitions(shadow_db):
+    from src.shadow.cycle import PROFILES
+
+    _seed_history(shadow_db)
+    p = FakeProvider()
+    p.fixtures = [_fixture_item(), _fixture_item(fid=889, league_id=40)]          # EPL and Championship
+    p.odds = [_odds_item(T0 - timedelta(minutes=30))]
+    r = _run(shadow_db, p, T0, cfg=PROFILES["low"])
+    assert r["fixtures_inserted"] == 1                                             # Championship not tracked
+    assert [c for c in p.calls if "/odds" in c] == [f"https://{HOST}/odds?fixture=777"]
+
+
+def test_medium_profile_has_no_closing_capture(shadow_db):
+    from src.shadow.cycle import PROFILES
+
+    _seed_history(shadow_db)
+    p = FakeProvider()
+    p.odds = [_odds_item(T0 - timedelta(minutes=30))]
+    _run(shadow_db, p, T0, cfg=PROFILES["medium"])
+    r = _run(shadow_db, p, KICKOFF - timedelta(minutes=10), cfg=PROFILES["medium"])
+    assert r["odds_due"] == {"decision": 0, "closing": 0}
+
+
+def test_dates_are_not_rediscovered_within_the_window(shadow_db):
+    p = FakeProvider()
+    _run(shadow_db, p, T0, force_discovery=True)
+    _run(shadow_db, p, T0 + timedelta(hours=13), force_discovery=True)            # 12 h interval passed
+    fixture_calls = [c for c in p.calls if "/fixtures" in c]
+    assert len(fixture_calls) == 3                                                 # 2 dates, then only the new date
+
+
+def test_budget_estimates_rank_the_profiles():
+    from src.shadow.budget import estimate
+    from src.shadow.cycle import LOW_COST_COMPETITIONS
+
+    low = estimate(LOW_COST_COMPETITIONS)
+    medium = estimate()
+    full = estimate(closing_capture=True)
+    assert low["requests_14d"] < medium["requests_14d"] < full["requests_14d"]
+    assert medium["within_daily_budget_on_peak"] and not full["within_daily_budget_on_peak"]

@@ -58,6 +58,9 @@ class ShadowConfig:
     odds_mode: str = "per_fixture"
     max_requests_per_cycle: int = 12
     history: str = "rh1"   # "rh1": rebuilt point-in-time history each cycle; "team_state": identity-v1 on team_state
+    competitions: tuple | None = None   # competition keys to observe; None = all 14 tracked
+    closing_capture: bool = True        # extra fetch in the closing window (CLV)
+    rediscover_after_hours: int = 20    # a date already discovered this recently is not fetched again
     cycle_interval_minutes: int = 30
     lease_minutes: int = 10
     # Observation waits for the decision fetch (e.g. request cap reached) until this close to kickoff.
@@ -65,6 +68,14 @@ class ShadowConfig:
 
 
 DEFAULT = ShadowConfig()
+
+LOW_COST_COMPETITIONS = ("england-premier-league", "spain-la-liga", "italy-serie-a", "germany-bundesliga",
+                         "france-ligue-1", "uefa-champions-league")
+PROFILES = {
+    "low": ShadowConfig(competitions=LOW_COST_COMPETITIONS, closing_capture=False, max_requests_per_cycle=20),
+    "medium": ShadowConfig(closing_capture=False, max_requests_per_cycle=20),
+    "full": ShadowConfig(closing_capture=True, max_requests_per_cycle=20),
+}
 
 _ADDED_COLUMNS = {
     "shadow_cycles": (("status", "TEXT"), ("gap_minutes", "REAL"), ("missed_slots", "INTEGER")),
@@ -106,6 +117,13 @@ def _ingest_fixture_list(conn, payload: dict, now: datetime, report: dict) -> No
             fx, league, teams = item["fixture"], item["league"], item["teams"]
             if league.get("id") not in TRACKED_LEAGUE_IDS:
                 continue
+            allowed = report.get("_competitions")
+            if allowed is not None:
+                from src.identity.competitions import competition_for_fixture as _cf
+
+                comp = _cf("api_football", league.get("id"))
+                if comp is None or comp.key not in allowed:
+                    continue
             fid = str(int(fx["id"]))
             kickoff = iso_utc(fx["date"])
             status = (fx.get("status") or {}).get("short") or ""
@@ -177,6 +195,14 @@ def discover(conn, dates: list[str], api_key: str, host: str, transport, now: da
         _ingest_fixture_list(conn, payload, now, report)
 
 
+def _recently_discovered(conn, now: datetime, hours: int) -> set:
+    """Dates fetched by a discovery request within `hours` (results dates are fetched regardless)."""
+    rows = conn.execute(
+        "SELECT endpoint FROM provider_quota_log WHERE provider = 'api_football' AND status = 'ok' "
+        "AND endpoint LIKE '/fixtures?date=%' AND at >= ?", (iso_utc(now - timedelta(hours=hours)),)).fetchall()
+    return {r[0].split("=", 1)[1] for r in rows}
+
+
 def _discovery_due(conn, cfg: ShadowConfig, now: datetime) -> bool:
     row = conn.execute("SELECT MAX(started_at) FROM shadow_cycles WHERE discovery_ran = 1").fetchone()
     return row[0] is None or (now - datetime.fromisoformat(row[0])) >= timedelta(hours=cfg.discovery_interval_hours)
@@ -193,6 +219,15 @@ def _awaiting_result_dates(conn, now: datetime) -> list[str]:
 
 
 # ── Odds collection ───────────────────────────────────────────────────────────
+
+def _allowed(f: dict, cfg: ShadowConfig) -> bool:
+    if not cfg.competitions:
+        return True
+    from src.identity.competitions import competition_for_fixture as _cf
+
+    comp = _cf("api_football", f.get("af_league_id") or f.get("league_id"))
+    return comp is not None and comp.key in cfg.competitions
+
 
 def _upcoming(conn, now: datetime, horizon: timedelta) -> list[dict]:
     rows = conn.execute(
@@ -223,14 +258,15 @@ def _fetched_since(f: dict, moment: datetime) -> bool:
 
 def _collect_per_fixture(conn, cfg: ShadowConfig, now: datetime, api_key: str, host: str, transport,
                          sleep: Callable[[float], None], report: dict) -> None:
-    upcoming = _upcoming(conn, now, timedelta(minutes=cfg.decision_lead_minutes + cfg.pre_decision_margin_minutes))
+    upcoming = [f for f in _upcoming(conn, now, timedelta(minutes=cfg.decision_lead_minutes
+                                                         + cfg.pre_decision_margin_minutes)) if _allowed(f, cfg)]
     decision, closing = [], []
     for f in upcoming:
         kickoff = datetime.fromisoformat(iso_utc(f["kickoff_utc"]))
         window_start = kickoff - timedelta(minutes=cfg.decision_lead_minutes + cfg.pre_decision_margin_minutes)
         if not _fetched_since(f, window_start):
             decision.append(f)
-        elif _minutes(now, f["kickoff_utc"]) <= cfg.closing_window_minutes and \
+        elif cfg.closing_capture and _minutes(now, f["kickoff_utc"]) <= cfg.closing_window_minutes and \
                 not _fetched_since(f, kickoff - timedelta(minutes=cfg.closing_window_minutes)):
             closing.append(f)
     report["odds_due"] = {"decision": len(decision), "closing": len(closing)}
@@ -423,6 +459,7 @@ def decide(conn, cfg: ShadowConfig, now: datetime, cycle_id: str, report: dict) 
         from src.history.reconstruct import reconstruct
 
         report["history"] = reconstruct(conn)   # deterministic rebuild from stored finished fixtures
+    rows = [r for r in rows if _allowed({"league_id": r["league_id"]}, cfg)]
     for r in rows:
         kickoff = datetime.fromisoformat(iso_utc(r["kickoff_utc"]))
         window_start = kickoff - timedelta(minutes=cfg.decision_lead_minutes + cfg.pre_decision_margin_minutes)
@@ -534,15 +571,19 @@ def run_cycle(conn: sqlite3.Connection, api_key: str, host: str, cfg: ShadowConf
     conn.execute("INSERT INTO shadow_cycles (cycle_id, started_at, discovery_ran, status, gap_minutes, missed_slots) "
                  "VALUES (?, ?, ?, 'running', ?, ?)", (cycle_id, iso_utc(now), int(run_discovery), gap, missed))
     conn.commit()
+    report["_competitions"] = set(cfg.competitions) if cfg.competitions else None
     dates = []
     if run_discovery:
-        dates = [now.strftime("%Y-%m-%d"), (now + timedelta(days=1)).strftime("%Y-%m-%d")]
+        recent = _recently_discovered(conn, now, cfg.rediscover_after_hours)
+        dates = [d for d in (now.strftime("%Y-%m-%d"), (now + timedelta(days=1)).strftime("%Y-%m-%d"))
+                 if d not in recent]
     dates += [d for d in _awaiting_result_dates(conn, now) if d not in dates]
     if dates:
         discover(conn, dates, api_key, host, transport, now, sleep, report)
     collect(conn, cfg, now, api_key, host, transport, sleep, report)
     decide(conn, cfg, now, cycle_id, report)
     settle(conn, now, report)
+    report.pop("_competitions", None)
     report["finished_at"] = iso_utc(datetime.now(timezone.utc) if transport is None else now)
     conn.execute("UPDATE shadow_cycles SET finished_at = ?, report_json = ?, status = 'finished' WHERE cycle_id = ?",
                  (report["finished_at"], json.dumps(report, default=str), cycle_id))

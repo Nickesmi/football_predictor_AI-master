@@ -16,6 +16,7 @@
     <string>--db</string><string>__SHADOW_DB__</string>
     <string>--budget</string><string>__BUDGET__</string>
     <string>--max-requests-per-cycle</string><string>20</string>
+    <string>--profile</string><string>medium</string>
   </array>
   <key>StartInterval</key><integer>1800</integer>
   <key>RunAtLoad</key><false/>

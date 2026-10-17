@@ -13,7 +13,7 @@ Type=oneshot
 User=__USER__
 WorkingDirectory=__REPO__
 Environment=APP_ENV=production
-ExecStart=__REPO__/.venv/bin/python scripts/shadow_cycle.py --db __SHADOW_DB__ --budget __BUDGET__ --max-requests-per-cycle 20
+ExecStart=__REPO__/.venv/bin/python scripts/shadow_cycle.py --db __SHADOW_DB__ --budget __BUDGET__ --max-requests-per-cycle 20 --profile medium
 TimeoutStartSec=900
 NoNewPrivileges=true
 ProtectSystem=strict
