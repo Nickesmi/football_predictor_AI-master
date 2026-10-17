@@ -1,0 +1,12 @@
+# TEMPLATE (M3.2). Not installed; see footballpredictor-shadow.service.
+[Unit]
+Description=Run the football predictor shadow cycle every 30 minutes
+
+[Timer]
+OnCalendar=*:00/30
+# Missed runs are not replayed in a burst after downtime; the cycle records the gap as missed slots.
+Persistent=false
+RandomizedDelaySec=60
+
+[Install]
+WantedBy=timers.target

@@ -19,6 +19,46 @@ def _loads(text, default):
         return default
 
 
+def _cycle_health(conn) -> dict:
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(shadow_cycles)")}
+    if "status" not in cols:
+        return {}
+    rows = conn.execute("SELECT status, COUNT(*), COALESCE(SUM(missed_slots), 0) FROM shadow_cycles GROUP BY 1").fetchall()
+    unfinished = conn.execute("SELECT COUNT(*) FROM shadow_cycles WHERE finished_at IS NULL").fetchone()[0]
+    return {"by_status": {str(r[0]): r[1] for r in rows}, "missed_slots": sum(r[2] for r in rows),
+            "unfinished_cycles": unfinished}
+
+
+def _integrity(conn, obs) -> dict:
+    late_prices = 0
+    for o in obs:
+        for c in _loads(o["candidates_json"], []):
+            if (c.get("odds_fetched_at") or "") > o["decided_at"] or (c.get("odds_observed_at") or "") > o["decided_at"]:
+                late_prices += 1
+    after_kickoff = sum(1 for o in obs if o["decided_at"] >= o["kickoff"])
+    dup = conn.execute("SELECT COUNT(*) FROM (SELECT fixture_id FROM shadow_observations GROUP BY 1 HAVING COUNT(*) > 1)"
+                       ).fetchone()[0]
+    counted = conn.execute("SELECT COUNT(*) FROM shadow_observations WHERE counts_toward_baseline != 0").fetchone()[0]
+    picks = conn.execute("SELECT COUNT(*) FROM picks").fetchone()[0]
+    checks = {"prices_used_after_decision": late_prices, "observations_at_or_after_kickoff": after_kickoff,
+              "duplicate_observations": dup, "observations_counted_toward_baseline": counted,
+              "official_picks_in_shadow_db": picks}
+    return {**checks, "ok": all(v == 0 for v in checks.values())}
+
+
+def build_daily(conn: sqlite3.Connection, max_age_minutes: int = 240) -> dict:
+    """Per UTC decision day: integrity, odds coverage, calibration, qualification."""
+    conn.row_factory = sqlite3.Row
+    days = [r[0] for r in conn.execute("SELECT DISTINCT substr(decided_at, 1, 10) FROM shadow_observations ORDER BY 1")]
+    out = {}
+    for day in days:
+        obs = conn.execute("SELECT * FROM shadow_observations WHERE substr(decided_at, 1, 10) = ?", (day,)).fetchall()
+        out[day] = {"observations": len(obs), "integrity": _integrity(conn, obs),
+                    "odds_coverage": _coverage(obs, max_age_minutes), "qualification": _funnels(obs),
+                    "identity": _identity(obs)}
+    return out
+
+
 def _period(conn) -> dict:
     rows = [r[0] for r in conn.execute("SELECT started_at FROM shadow_cycles ORDER BY started_at")]
     if not rows:
@@ -187,6 +227,9 @@ def build_report(conn: sqlite3.Connection, max_age_minutes: int = 240) -> dict:
     ).fetchall()
     return {
         "period": _period(conn),
+        "cycle_health": _cycle_health(conn),
+        "integrity": _integrity(conn, obs),
+        "daily": build_daily(conn, max_age_minutes),
         "fixtures_tracked": conn.execute("SELECT COUNT(*) FROM shadow_fixtures").fetchone()[0],
         "observations": len(obs),
         "observation_errors": sum(1 for o in obs if o["error"]),

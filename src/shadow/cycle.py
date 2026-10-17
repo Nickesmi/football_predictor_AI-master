@@ -57,11 +57,14 @@ class ShadowConfig:
     pre_decision_margin_minutes: int = 15
     odds_mode: str = "per_fixture"
     max_requests_per_cycle: int = 12
+    cycle_interval_minutes: int = 30
+    lease_minutes: int = 10
 
 
 DEFAULT = ShadowConfig()
 
 _ADDED_COLUMNS = {
+    "shadow_cycles": (("status", "TEXT"), ("gap_minutes", "REAL"), ("missed_slots", "INTEGER")),
     "shadow_fixtures": (("home_team_id", "TEXT"), ("away_team_id", "TEXT")),
     "shadow_observations": (("identity_json", "TEXT"), ("v1_1_policy_version", "TEXT"), ("v1_1_json", "TEXT"),
                             ("v1_1_assuming_frozen_json", "TEXT")),
@@ -489,9 +492,28 @@ def run_cycle(conn: sqlite3.Connection, api_key: str, host: str, cfg: ShadowConf
               "fixtures_inserted": 0, "outcomes_recorded": 0, "odds_groups_due": 0, "observations": 0,
               "selections_settled": 0, "errors": [], "requests_sent": 0,
               "request_cap": cfg.max_requests_per_cycle}
+    # One cycle at a time: after sleep/wake or with two schedulers, a second start inside the lease
+    # of an unfinished cycle is recorded as skipped and does nothing else.
+    running = conn.execute(
+        "SELECT cycle_id FROM shadow_cycles WHERE finished_at IS NULL AND started_at > ? "
+        "AND COALESCE(status, 'running') = 'running'",
+        (iso_utc(now - timedelta(minutes=cfg.lease_minutes)),),
+    ).fetchone()
+    last = conn.execute("SELECT MAX(started_at) FROM shadow_cycles WHERE COALESCE(status, 'running') != 'skipped'"
+                        ).fetchone()[0]
+    gap = None if last is None else round((now - datetime.fromisoformat(last)).total_seconds() / 60.0, 1)
+    missed = 0 if gap is None else max(0, int(gap // cfg.cycle_interval_minutes) - 1)
+    report.update({"gap_minutes": gap, "missed_slots": missed})
+    if running:
+        report["skipped"] = f"cycle {running[0]} still running"
+        conn.execute("INSERT INTO shadow_cycles (cycle_id, started_at, finished_at, discovery_ran, status, gap_minutes, "
+                     "missed_slots, report_json) VALUES (?, ?, ?, 0, 'skipped', ?, 0, ?)",
+                     (cycle_id, iso_utc(now), iso_utc(now), gap, json.dumps(report, default=str)))
+        conn.commit()
+        return report
     run_discovery = force_discovery or _discovery_due(conn, cfg, now)
-    conn.execute("INSERT INTO shadow_cycles (cycle_id, started_at, discovery_ran) VALUES (?, ?, ?)",
-                 (cycle_id, iso_utc(now), int(run_discovery)))
+    conn.execute("INSERT INTO shadow_cycles (cycle_id, started_at, discovery_ran, status, gap_minutes, missed_slots) "
+                 "VALUES (?, ?, ?, 'running', ?, ?)", (cycle_id, iso_utc(now), int(run_discovery), gap, missed))
     conn.commit()
     dates = []
     if run_discovery:
@@ -503,7 +525,7 @@ def run_cycle(conn: sqlite3.Connection, api_key: str, host: str, cfg: ShadowConf
     decide(conn, cfg, now, cycle_id, report)
     settle(conn, now, report)
     report["finished_at"] = iso_utc(datetime.now(timezone.utc) if transport is None else now)
-    conn.execute("UPDATE shadow_cycles SET finished_at = ?, report_json = ? WHERE cycle_id = ?",
+    conn.execute("UPDATE shadow_cycles SET finished_at = ?, report_json = ?, status = 'finished' WHERE cycle_id = ?",
                  (report["finished_at"], json.dumps(report, default=str), cycle_id))
     conn.commit()
     return report

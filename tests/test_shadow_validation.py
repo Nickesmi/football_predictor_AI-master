@@ -245,6 +245,9 @@ def test_scheduler_templates_are_disabled():
     assert "__BUDGET__" in plist and "__SHADOW_DB__" in plist           # cannot run without explicit values
     active = [l for l in (d / "crontab.txt").read_text().splitlines() if l.strip() and not l.lstrip().startswith("#")]
     assert active == []
+    service = (d / "footballpredictor-shadow.service").read_text()
+    assert "__BUDGET__" in service and "__SHADOW_DB__" in service and "--max-requests-per-cycle" in service
+    assert "Persistent=false" in (d / "footballpredictor-shadow.timer").read_text()
 
 
 def test_offline_replay_reproduces_and_never_uses_later_prices(shadow_db):
@@ -295,3 +298,37 @@ def test_shadow_settle_script_refuses_live_db():
                         str(root / "data" / "engine.db"), "--date", "2026-10-16", "--out", "/dev/null"],
                        capture_output=True, text=True, cwd=root)
     assert r.returncode == 2 and "isolated" in r.stderr
+
+
+def test_overlapping_cycles_after_wake_are_skipped_not_duplicated(shadow_db):
+    _seed_history(shadow_db)
+    cycle.ensure_shadow_tables(shadow_db)
+    cycle._ensure(shadow_db)
+    shadow_db.execute("INSERT INTO shadow_cycles (cycle_id, started_at, discovery_ran, status) "
+                      "VALUES ('stuck', ?, 0, 'running')", (iso_utc(T0 - timedelta(minutes=2)),))
+    shadow_db.commit()
+    p = FakeProvider()
+    r = _run(shadow_db, p, T0)
+    assert "skipped" in r and p.calls == []
+    assert shadow_db.execute("SELECT status FROM shadow_cycles WHERE cycle_id = ?", (r["cycle_id"],)).fetchone()[0] \
+        == "skipped"
+
+
+def test_missed_slots_are_recorded_after_a_sleep(shadow_db):
+    p = FakeProvider()
+    _run(shadow_db, p, T0)
+    r = _run(shadow_db, p, T0 + timedelta(minutes=161))   # host asleep: 4 half-hour slots missed
+    assert (r["gap_minutes"], r["missed_slots"]) == (161.0, 4)
+    rep = report.build_report(shadow_db)
+    assert rep["cycle_health"]["missed_slots"] == 4 and rep["cycle_health"]["unfinished_cycles"] == 0
+
+
+def test_daily_report_has_integrity_coverage_calibration_and_qualification(shadow_db):
+    _seed_history(shadow_db)
+    p = FakeProvider()
+    p.odds = [_odds_item(T0 - timedelta(minutes=30))]
+    _run(shadow_db, p, T0)
+    rep = report.build_report(shadow_db)
+    day = rep["daily"]["2030-01-05"]
+    assert day["integrity"]["ok"] and day["observations"] == 1
+    assert set(day) >= {"odds_coverage", "qualification", "identity"} and rep["integrity"]["ok"]

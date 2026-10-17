@@ -1,0 +1,20 @@
+# TEMPLATE (M3.2). Not installed. For an always-on Linux host (VM or small cloud instance).
+# Install only with owner approval:
+#   sudo cp footballpredictor-shadow.{service,timer} /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now footballpredictor-shadow.timer
+# Replace __REPO__, __SHADOW_DB__, __BUDGET__ and __USER__ first.
+[Unit]
+Description=Football predictor shadow cycle (observations only; never counted)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=__USER__
+WorkingDirectory=__REPO__
+Environment=APP_ENV=production
+ExecStart=__REPO__/.venv/bin/python scripts/shadow_cycle.py --db __SHADOW_DB__ --budget __BUDGET__ --max-requests-per-cycle 12
+TimeoutStartSec=900
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=__SHADOW_DB_DIR__ __REPO__/logs
