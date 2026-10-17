@@ -13,6 +13,12 @@ FROZEN = {"model_version": "m", "calibration_version": "c", "calibration_frozen"
 EPL = "england-premier-league"
 
 
+def _eligible():
+    from src.policy.competition_eligibility import RESEARCH_ELIGIBLE, CompetitionEligibility
+
+    return {EPL: CompetitionEligibility(EPL, RESEARCH_ELIGIBLE, 30, {}, [])}
+
+
 def _c(match_id="m1", market="1X2", selection="home", prob=0.55, odds=2.10, **kw):
     base = {"match_id": match_id, "market": market, "selection": selection, "model_prob": prob, "odds": odds,
             "edge": round(prob - 1 / odds, 4), "odds_type": "bookmaker",
@@ -56,15 +62,15 @@ def test_demonstrated_record_selects_with_full_stake():
 
 def test_provisional_competition_needs_higher_ev_and_is_labelled():
     cfg = v11.PolicyV11Config(provisional_competitions=(EPL,))
-    [ok] = v11.evaluate([_c(prob=0.55, odds=2.10)], NOW, FROZEN, {}, cfg)       # risk-adj EV 0.092
-    [low] = v11.evaluate([_c(prob=0.52, odds=2.05)], NOW, FROZEN, {}, cfg)      # 0.0045 < 0.04
+    [ok] = v11.evaluate([_c(prob=0.55, odds=2.10)], NOW, FROZEN, {}, cfg, _eligible())  # risk-adj EV 0.092
+    [low] = v11.evaluate([_c(prob=0.52, odds=2.05)], NOW, FROZEN, {}, cfg, _eligible())  # 0.0045 < 0.04
     assert ok.selected and ok.evidence_status == v11.PROVISIONAL and ok.stake_units == 0.5
     assert not low.selected and "RISK_ADJUSTED_EV_TOO_LOW" in _codes(low)
 
 
 def test_provisional_list_does_not_override_contaminated_data_quality_or_identity():
     cfg = v11.PolicyV11Config(provisional_competitions=(EPL,))
-    [d] = v11.evaluate([_c(identity_resolved=False, data_quality=55)], NOW, FROZEN, {}, cfg)
+    [d] = v11.evaluate([_c(identity_resolved=False, data_quality=55)], NOW, FROZEN, {}, cfg, _eligible())
     assert {"TEAM_IDENTITY_UNRESOLVED", "INPUT_QUALITY_LOW"} <= _codes(d)
 
 
@@ -76,7 +82,8 @@ def test_unknown_competition_and_version_tag():
 
 def test_one_selection_per_match():
     cfg = v11.PolicyV11Config(provisional_competitions=(EPL,))
-    ds = v11.evaluate([_c(), _c(market="BTTS", selection="yes", prob=0.62, odds=1.95)], NOW, FROZEN, {}, cfg)
+    ds = v11.evaluate([_c(), _c(market="BTTS", selection="yes", prob=0.62, odds=1.95)], NOW, FROZEN, {}, cfg,
+                      _eligible())
     assert sum(d.selected for d in ds) == 1
 
 
@@ -108,3 +115,70 @@ def test_load_league_evidence_counts_by_competition_id_not_label(tmp_path):
     assert ev[EPL].quarantined == 0                          # the Egyptian placeholder is not England's
     assert all(e.reliability is None for e in ev.values())
     assert len(ev) == 14
+
+
+def test_provisional_requires_research_eligibility():
+    from src.policy.competition_eligibility import NOT_ELIGIBLE, RESEARCH_ELIGIBLE, CompetitionEligibility
+
+    cfg = v11.PolicyV11Config(provisional_competitions=(EPL,))
+    [none] = v11.evaluate([_c()], NOW, FROZEN, {}, cfg)
+    assert "COMPETITION_NOT_RESEARCH_ELIGIBLE" in _codes(none)
+    bad = {EPL: CompetitionEligibility(EPL, NOT_ELIGIBLE, 30, {}, ["E3_ODDS"])}
+    [d] = v11.evaluate([_c()], NOW, FROZEN, {}, cfg, bad)
+    assert not d.selected
+    assert next(r for r in d.reasons if r["code"] == "COMPETITION_NOT_RESEARCH_ELIGIBLE")["failed"] == ["E3_ODDS"]
+    ok = {EPL: CompetitionEligibility(EPL, RESEARCH_ELIGIBLE, 30, {}, [])}
+    [d] = v11.evaluate([_c()], NOW, FROZEN, {}, cfg, ok)
+    assert d.selected and d.evidence_status == v11.PROVISIONAL and d.stake_units == 0.5
+
+
+def test_eligibility_never_outranks_missing_performance_evidence():
+    from src.policy.competition_eligibility import RESEARCH_ELIGIBLE, CompetitionEligibility
+
+    ok = {EPL: CompetitionEligibility(EPL, RESEARCH_ELIGIBLE, 30, {}, [])}
+    [d] = v11.evaluate([_c()], NOW, FROZEN, {}, v11.DEFAULT_CONFIG, ok)   # eligible but not on the owner list
+    assert not d.selected and "LEAGUE_NO_VERIFIED_EVIDENCE" in _codes(d)
+
+
+def test_eligibility_assessment_from_shadow_observations(tmp_path):
+    import json as _json
+
+    from src.db.database import init_db
+    from src.policy.competition_eligibility import (INSUFFICIENT_SAMPLE, NOT_ELIGIBLE, RESEARCH_ELIGIBLE,
+                                                    EligibilityCriteria, assess)
+    from src.shadow.store import ensure_shadow_tables
+    from src.shadow import cycle
+
+    conn = sqlite3.connect(tmp_path / "s.db")
+    conn.row_factory = sqlite3.Row
+    init_db(conn)
+    ensure_shadow_tables(conn)
+    cycle._ensure(conn)
+    for i in range(4):
+        fid = f"f{i}"
+        conn.execute("INSERT INTO matches (id, date, home_team, away_team, league_name, league_id, status, provider) "
+                     "VALUES (?, '2030-01-01', 'A', 'B', 'Premier League', 39, 'NS', 'api_football')", (fid,))
+        conn.execute(
+            """INSERT INTO shadow_observations (cycle_id, fixture_id, decided_at, kickoff, minutes_to_kickoff,
+                   legacy_policy_version, v1_policy_version, candidates_json, legacy_json, v1_json,
+                   v1_assuming_frozen_json, data_quality, quote_age_minutes, model_version, calibration_version,
+                   identity_json)
+               VALUES ('c', ?, '2030-01-01T10:00:00+00:00', '2030-01-01T12:00:00+00:00', 120, 'l', 'v', '[]',
+                       '{}', '{}', '{}', 75, 100, 'm', 'cal', ?)""", (fid, _json.dumps({"resolved": True})))
+        for market, sel, line in (("1X2", "home", ""), ("TOTALS", "over", "2.5"), ("BTTS", "yes", "")):
+            for book in ("a", "b", "c"):
+                conn.execute(
+                    """INSERT INTO odds_quotes (fixture_id, odds_type, provider, provider_event_id, bookmaker,
+                           market, selection, line, decimal_odds, implied_probability, observed_at, commence_time,
+                           fetched_at) VALUES (?, 'bookmaker', 'p', 'e', ?, ?, ?, ?, 2.0, 0.5,
+                           '2030-01-01T08:20:00+00:00', '2030-01-01T12:00:00+00:00', '2030-01-01T09:30:00+00:00')""",
+                    (fid, book, market, sel, line))
+    conn.commit()
+    small = assess(conn)
+    assert small["england-premier-league"].status == INSUFFICIENT_SAMPLE
+    assert small["spain-la-liga"].status == INSUFFICIENT_SAMPLE
+    ok = assess(conn, EligibilityCriteria(min_observed_fixtures=4))
+    assert ok["england-premier-league"].status == RESEARCH_ELIGIBLE
+    strict_books = assess(conn, EligibilityCriteria(min_observed_fixtures=4, min_bookmakers=4))
+    assert strict_books["england-premier-league"].status == NOT_ELIGIBLE
+    assert strict_books["england-premier-league"].failed == ["E4_MARKETS"]

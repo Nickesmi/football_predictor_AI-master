@@ -52,6 +52,7 @@ def main() -> int:
     p.add_argument("--out", required=True, type=Path)
     p.add_argument("--seed", type=int, default=20261016)
     p.add_argument("--matches", type=int, default=2000)
+    p.add_argument("--shadow-db", type=Path, help="isolated shadow DB for competition eligibility")
     a = p.parse_args()
     if LIVE_DB in (a.original.resolve(), a.candidate.resolve()):
         print("refusing: use isolated copies", file=sys.stderr)
@@ -96,6 +97,12 @@ def main() -> int:
     from src.db.database import get_db
 
     sim_conn = get_db()
+    real_eligibility = {}
+    if a.shadow_db:
+        from src.policy.competition_eligibility import assess
+
+        sconn = sqlite3.connect(f"file:{a.shadow_db.resolve()}?immutable=1", uri=True)
+        real_eligibility = assess(sconn)
     now = datetime.now(timezone.utc)
     frozen = csp.ASSUMED_FROZEN
     sim = {}
@@ -108,10 +115,17 @@ def main() -> int:
         v1_picks, _ = csp.run_v1(cands, now, v1.PolicyConfig(approved_leagues=csp.ILLUSTRATIVE_APPROVED))
         out = {"legacy": csp.summarize(legacy, len(cands), a.matches, truth),
                "v1_illustrative_list": csp.summarize(v1_picks, len(cands), a.matches, truth)}
-        for label, cfg in (("v1_1_default", v11.DEFAULT_CONFIG),
-                           ("v1_1_illustrative_provisional",
-                            v11.PolicyV11Config(provisional_competitions=ILLUSTRATIVE_PROVISIONAL))):
-            ds = v11.evaluate(cands, now, frozen, evidence, cfg)
+        from src.policy.competition_eligibility import RESEARCH_ELIGIBLE, CompetitionEligibility
+
+        assumed = {k: CompetitionEligibility(k, RESEARCH_ELIGIBLE, 0, {"assumed_for_simulation": True}, [])
+                   for k in ILLUSTRATIVE_PROVISIONAL}
+        for label, cfg, elig in (
+                ("v1_1_strict_validated_only", v11.DEFAULT_CONFIG, None),
+                ("v1_1_research_provisional_not_eligible",
+                 v11.PolicyV11Config(provisional_competitions=ILLUSTRATIVE_PROVISIONAL), real_eligibility),
+                ("v1_1_research_provisional_assumed_eligible",
+                 v11.PolicyV11Config(provisional_competitions=ILLUSTRATIVE_PROVISIONAL), assumed)):
+            ds = v11.evaluate(cands, now, frozen, evidence, cfg, elig)
             by_key = {(c["match_id"], c["market"], c["selection"]): c for c in cands}
             picks = [{**by_key[(d.match_id, d.market, d.selection)], "stake_units": d.stake_units}
                      for d in ds if d.selected]
@@ -133,6 +147,7 @@ def main() -> int:
             "competitions": len(rows),
         },
         "illustrative_provisional_list": ILLUSTRATIVE_PROVISIONAL,
+        "eligibility_from_shadow": {k: v.to_dict() for k, v in real_eligibility.items()},
         "simulation": sim,
     }
     a.out.write_text(json.dumps(report, indent=1, default=str))

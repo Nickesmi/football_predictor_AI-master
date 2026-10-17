@@ -11,7 +11,7 @@ v1 plus two changes:
      counts as a track record. Nothing else is given a reliability value; in
      particular missing evidence is not 65.
 
-2. A defensible initial forward baseline without an invented track record.
+2. A defensible initial forward experiment without an invented track record.
    A competition without demonstrated performance can be selected only if the
    owner lists it in provisional_competitions. Provisional selections:
      * need a higher risk-adjusted EV (min_ev_provisional);
@@ -38,7 +38,7 @@ from src.policy.league_evidence import (CONTAMINATED_OR_UNVERIFIABLE, NO_VERIFIE
 
 POLICY_NAME = "baseline-policy-v1.1-proposal"
 
-PROVISIONAL = "provisional_no_track_record"
+PROVISIONAL = "provisional_no_track_record"   # research-only; never a validated selection
 DEMONSTRATED = "demonstrated_track_record"
 
 _CLASS_REASON = {
@@ -56,6 +56,8 @@ class PolicyV11Config:
     min_ev_provisional: float = 0.04
     provisional_stake_units: float = 0.5
     require_identity: bool = True
+    # M3.2: a provisional competition must also be RESEARCH_ELIGIBLE (competition_eligibility.py)
+    provisional_requires_eligibility: bool = True
 
     def digest(self) -> str:
         return hashlib.sha256(json.dumps(asdict(self), sort_keys=True).encode()).hexdigest()[:12]
@@ -69,7 +71,7 @@ def version(config: PolicyV11Config = DEFAULT_CONFIG) -> str:
 
 
 def evidence_status(competition_key: str | None, evidence: dict[str, LeagueEvidence],
-                    config: PolicyV11Config) -> tuple[str | None, dict | None]:
+                    config: PolicyV11Config, eligibility: dict | None = None) -> tuple[str | None, dict | None]:
     """(evidence_status, rejection reason). Exactly one of the two is None."""
     if not competition_key:
         return None, {"code": "LEAGUE_UNKNOWN"}
@@ -80,18 +82,28 @@ def evidence_status(competition_key: str | None, evidence: dict[str, LeagueEvide
         return None, {"code": "LEAGUE_UNRELIABLE", "reliability": ev.reliability,
                       "required": config.min_league_reliability, "verified_settled": ev.verified_settled}
     if competition_key in config.provisional_competitions:
+        if config.provisional_requires_eligibility:
+            from src.policy.competition_eligibility import RESEARCH_ELIGIBLE
+
+            elig = (eligibility or {}).get(competition_key)
+            if elig is None or elig.status != RESEARCH_ELIGIBLE:
+                return None, {"code": "COMPETITION_NOT_RESEARCH_ELIGIBLE",
+                              "eligibility": getattr(elig, "status", None),
+                              "failed": getattr(elig, "failed", ["NOT_ASSESSED"])}
         return PROVISIONAL, None
     return None, {"code": _CLASS_REASON[ev.evidence_class], "evidence_class": ev.evidence_class,
                   "verified_settled": ev.verified_settled, "quarantined": ev.quarantined}
 
 
 def evaluate(candidates: list[dict], decided_at: datetime, provenance: dict,
-             evidence: dict[str, LeagueEvidence], config: PolicyV11Config = DEFAULT_CONFIG) -> list[v1.Decision]:
+             evidence: dict[str, LeagueEvidence], config: PolicyV11Config = DEFAULT_CONFIG,
+             eligibility: dict | None = None) -> list[v1.Decision]:
+    """Provisional decisions are research-only and are labelled; they never count as validated selections."""
     tag = version(config)
     decisions: list[v1.Decision] = []
     statuses: dict[int, str | None] = {}
     for i, c in enumerate(candidates):
-        status, league_reason = evidence_status(c.get("competition_key"), evidence, config)
+        status, league_reason = evidence_status(c.get("competition_key"), evidence, config, eligibility)
         statuses[i] = status
         reasons = v1.candidate_reasons(
             c, decided_at, provenance, {}, config.base,
