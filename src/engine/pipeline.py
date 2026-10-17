@@ -174,10 +174,13 @@ def run_pipeline(
     for match in fixtures:
         try:
             try:
+                # collect_fixtures returns SofaScore events without a provider key; the
+                # competition is identified by provider id space, so name it explicitly.
+                identified = {**match, "provider": match.get("provider") or "sofascore"}
                 if probability_inputs_version == IDENTITY_RH1_INPUTS:
-                    inputs = resolve_probability_inputs_rh1(conn, match, datetime.now(timezone.utc))
+                    inputs = resolve_probability_inputs_rh1(conn, identified, datetime.now(timezone.utc))
                 elif probability_inputs_version == IDENTITY_INPUTS:
-                    inputs = resolve_probability_inputs_v2(conn, match, remember=True)
+                    inputs = resolve_probability_inputs_v2(conn, identified, remember=True)
                 else:
                     inputs = resolve_probability_inputs(match)
             except UnresolvedTeamIdentity as exc:
