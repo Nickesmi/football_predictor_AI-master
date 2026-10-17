@@ -59,6 +59,8 @@ class ShadowConfig:
     max_requests_per_cycle: int = 12
     cycle_interval_minutes: int = 30
     lease_minutes: int = 10
+    # Observation waits for the decision fetch (e.g. request cap reached) until this close to kickoff.
+    defer_observation_until_minutes: int = 60
 
 
 DEFAULT = ShadowConfig()
@@ -405,7 +407,7 @@ def observe(conn, match: dict, kickoff_utc: str, now: datetime, cycle_id: str) -
 
 def decide(conn, cfg: ShadowConfig, now: datetime, cycle_id: str, report: dict) -> None:
     rows = conn.execute(
-        """SELECT m.*, s.kickoff_utc, s.home_team_id, s.away_team_id
+        """SELECT m.*, s.kickoff_utc, s.home_team_id, s.away_team_id, s.last_odds_fetch_at
            FROM shadow_fixtures s JOIN matches m ON m.id = s.fixture_id
            LEFT JOIN shadow_observations o ON o.fixture_id = s.fixture_id
            WHERE o.fixture_id IS NULL AND s.kickoff_utc > ? AND s.kickoff_utc <= ?
@@ -413,6 +415,12 @@ def decide(conn, cfg: ShadowConfig, now: datetime, cycle_id: str, report: dict) 
         (iso_utc(now), iso_utc(now + timedelta(minutes=cfg.decision_lead_minutes))),
     ).fetchall()
     for r in rows:
+        kickoff = datetime.fromisoformat(iso_utc(r["kickoff_utc"]))
+        window_start = kickoff - timedelta(minutes=cfg.decision_lead_minutes + cfg.pre_decision_margin_minutes)
+        fetched = r["last_odds_fetch_at"] and datetime.fromisoformat(r["last_odds_fetch_at"]) >= window_start
+        if not fetched and _minutes(now, r["kickoff_utc"]) > cfg.defer_observation_until_minutes:
+            report["observations_deferred"] = report.get("observations_deferred", 0) + 1
+            continue
         row = observe(conn, dict(r), r["kickoff_utc"], now, cycle_id)
         report["observations"] += 1
         if row.get("error", "").startswith("NO_FORECAST"):

@@ -124,6 +124,8 @@ def test_budget_zero_sends_nothing_and_still_observes(shadow_db, monkeypatch):
                       (iso_utc(T0), iso_utc(T0), iso_utc(KICKOFF)))
     p = FakeProvider()
     r = _run(shadow_db, p, T0)
+    assert p.calls == [] and r["observations"] == 0 and r["observations_deferred"] == 1
+    r = _run(shadow_db, p, KICKOFF - timedelta(minutes=50))        # deferral ends 60 min before kickoff
     assert p.calls == [] and r["observations"] == 1
     obs = shadow_db.execute("SELECT quote_status FROM shadow_observations").fetchone()
     assert obs[0] == "NO_QUOTES"
@@ -332,3 +334,23 @@ def test_daily_report_has_integrity_coverage_calibration_and_qualification(shado
     day = rep["daily"]["2030-01-05"]
     assert day["integrity"]["ok"] and day["observations"] == 1
     assert set(day) >= {"odds_coverage", "qualification", "identity"} and rep["integrity"]["ok"]
+
+
+def test_observation_waits_for_the_decision_fetch_when_the_cap_is_hit(shadow_db):
+    _seed_history(shadow_db)
+    p = FakeProvider()
+    p.odds = [_odds_item(T0 - timedelta(minutes=30))]
+    r = _run(shadow_db, p, T0, cfg=ShadowConfig(max_requests_per_cycle=2))   # 2 discovery requests, no odds fetch
+    assert r["observations"] == 0 and r["observations_deferred"] == 1
+    r2 = _run(shadow_db, p, T0 + timedelta(minutes=30))                      # fetch, then observe with a fresh price
+    assert r2["observations"] == 1
+    obs = shadow_db.execute("SELECT quote_status FROM shadow_observations").fetchone()
+    assert obs[0] == "QUOTED"
+
+
+def test_observation_is_not_deferred_past_the_limit(shadow_db):
+    _seed_history(shadow_db)
+    p = FakeProvider()
+    r = _run(shadow_db, p, KICKOFF - timedelta(minutes=50), cfg=ShadowConfig(max_requests_per_cycle=2))
+    assert r["observations"] == 1                                            # recorded honestly as NO_QUOTES
+    assert shadow_db.execute("SELECT quote_status FROM shadow_observations").fetchone()[0] in ("NO_QUOTES", "UNMAPPED")
