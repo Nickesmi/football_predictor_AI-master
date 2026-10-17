@@ -10,7 +10,7 @@ what 1X2, O/U 2.5 and BTTS settle on. Missing data is recorded as missing.
 
 API-Football requests (all through the budget guard, provider_quota_log and
 the per-minute throttle):
-  * GET /fixtures?date=   every discovery_interval_hours for today and tomorrow
+  * GET /fixtures?date=   every discovery_interval_hours (12) for today and tomorrow
                           (UTC), plus the dates of observed fixtures still
                           awaiting a result;
   * odds, odds_mode "per_fixture" (default; the free plan serves current-season
@@ -50,7 +50,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 class ShadowConfig:
     decision_lead_minutes: int = 120
     lookahead_hours: int = 36
-    discovery_interval_hours: int = 6
+    discovery_interval_hours: int = 12
     refresh_minutes: int = 180
     pre_decision_refresh_minutes: int = 30
     closing_window_minutes: int = 45

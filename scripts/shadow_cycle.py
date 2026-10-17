@@ -5,7 +5,7 @@ Shadow validation cycle (M3 Phase F) — observations only, nothing counted.
     python scripts/shadow_cycle.py --db <shadow db> --budget 60
     python scripts/shadow_cycle.py --db data/engine.db --budget 60 --allow-production   # only after cutover approval
 
-Runs one cycle of src/shadow/cycle.py: fixture discovery (every 6 h),
+Runs one cycle of src/shadow/cycle.py: fixture discovery (every 12 h),
 league-date odds collection, decision snapshots (legacy, v1, BILQE) and
 settlement. --budget is the approved API-Football daily request budget for
 the whole day (shared with every other caller logged in provider_quota_log);
