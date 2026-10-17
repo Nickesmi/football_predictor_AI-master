@@ -222,3 +222,13 @@ def test_league_date_odds_follow_paging_and_ignore_untracked_fixtures(engine_db,
                                                     "league=17&season=2029&date=2030-01-01&page=2"]
     assert (report["requests_ok"], report["untracked_events"], report["quotes_new"]) == (2, 1, 3)
     assert {r[0] for r in engine_db.execute("SELECT fixture_id FROM odds_quotes")} == {"777"}
+
+
+def test_k53_same_provider_stamp_with_new_price_is_dropped_by_the_store(engine_db):
+    """Characterises K53 (not a fix): the unique key has no price, so a price change under an
+    unchanged provider stamp is ignored. The timestamp experiment therefore keeps raw responses."""
+    _fixture(engine_db)
+    _store(engine_db, observed=_ago(100), fetched=_ago(90), home="2.00")
+    _store(engine_db, observed=_ago(100), fetched=_ago(10), home="1.80")
+    prices = [r[0] for r in engine_db.execute("SELECT decimal_odds FROM odds_quotes")]
+    assert prices == [2.0]
