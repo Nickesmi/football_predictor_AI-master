@@ -13,7 +13,7 @@ Branch `m3/data-integrity-shadow` (continues M3; head before M3.1 was `b0d4e7a`)
 | `9ce2822` | `src/policy/league_evidence.py`, `src/policy/baseline_v1_1.py` (proposal, inactive), comparison script, 15 tests; v1 league rule pluggable (v1 unchanged) |
 | `d9bebad` | Shadow: identity-checked observations, v1.1 decisions, provider team ids, per-cycle request cap, hold refusal; scheduler templates disabled; 6 new tests |
 | `4657ec4` | Shadow: offline retrospective replay; 1 test |
-| (docs commit) | This report, `TEAM_IDENTITY_REPORT.md`, `LEAGUE_EVIDENCE_POLICY_PROPOSAL.md`, `ODDS_FRESHNESS_AND_QUOTA.md`, updated `SHADOW_VALIDATION_REPORT.md`, `KNOWN_ISSUES.md` |
+| `f098026` | This report, `TEAM_IDENTITY_REPORT.md`, `LEAGUE_EVIDENCE_POLICY_PROPOSAL.md`, `ODDS_FRESHNESS_AND_QUOTA.md`, updated `SHADOW_VALIDATION_REPORT.md`, `KNOWN_ISSUES.md` |
 
 Not changed:
 - probability mathematics and model weights;
