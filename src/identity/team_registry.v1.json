@@ -1,0 +1,750 @@
+{
+ "version": "team-registry-v1",
+ "identity_version": "team-identity-v1",
+ "prepared": "2026-10-17",
+ "note": "All entries are proposals. Only review.status == 'approved' entries are used. provider_team_id is bound at the first identity-checked resolution that carries a provider id.",
+ "entries": [
+  {
+   "id": "SCO-DUNDEE",
+   "competition_key": "scotland-premiership",
+   "provider": "api_football",
+   "provider_team_name": "Dundee",
+   "provider_team_id": null,
+   "decision": "map",
+   "team_state": {
+    "team_name_lower": "dundee",
+    "history_league": "Premiership"
+   },
+   "evidence": {
+    "verified_fixtures": {
+     "179": 4
+    },
+    "unused_records": [
+     "Dundee FC @ Scottish Premiership (1, no fixtures)"
+    ]
+   },
+   "reason": "one record verified by competition fixtures; the other record has no source fixtures and is not used",
+   "review": {
+    "status": "proposed",
+    "prepared_by": "M3.2 evidence review",
+    "owner_approved": false
+   }
+  },
+  {
+   "id": "SCO-STMIRREN",
+   "competition_key": "scotland-premiership",
+   "provider": "api_football",
+   "provider_team_name": "ST Mirren",
+   "provider_team_id": null,
+   "decision": "map",
+   "team_state": {
+    "team_name_lower": "st mirren",
+    "history_league": "Premiership"
+   },
+   "evidence": {
+    "verified_fixtures": {
+     "179": 3
+    },
+    "unused_records": [
+     "St. Mirren @ Scottish Premiership (1)"
+    ]
+   },
+   "reason": "one record verified by competition fixtures; the other record has no source fixtures and is not used",
+   "review": {
+    "status": "proposed",
+    "prepared_by": "M3.2 evidence review",
+    "owner_approved": false
+   }
+  },
+  {
+   "id": "SCO-STJOHNSTONE",
+   "competition_key": "scotland-premiership",
+   "provider": "api_football",
+   "provider_team_name": "ST Johnstone",
+   "provider_team_id": null,
+   "decision": "map",
+   "team_state": {
+    "team_name_lower": "st johnstone",
+    "history_league": "Premiership"
+   },
+   "evidence": {
+    "verified_fixtures": {
+     "179": 4
+    },
+    "unused_records": [
+     "St. Johnstone @ Scottish Premiership (1)"
+    ]
+   },
+   "reason": "one record verified by competition fixtures; the other record has no source fixtures and is not used",
+   "review": {
+    "status": "proposed",
+    "prepared_by": "M3.2 evidence review",
+    "owner_approved": false
+   }
+  },
+  {
+   "id": "NED-TELSTAR",
+   "competition_key": "netherlands-eredivisie",
+   "provider": "api_football",
+   "provider_team_name": "Telstar",
+   "provider_team_id": null,
+   "decision": "map",
+   "team_state": {
+    "team_name_lower": "telstar",
+    "history_league": "Eredivisie"
+   },
+   "evidence": {
+    "verified_fixtures": {
+     "88": 6
+    },
+    "unused_records": [
+     "SC Telstar @ VriendenLoterij Eredivisie (1)"
+    ]
+   },
+   "reason": "one record verified by competition fixtures; the other record has no source fixtures and is not used",
+   "review": {
+    "status": "proposed",
+    "prepared_by": "M3.2 evidence review",
+    "owner_approved": false
+   }
+  },
+  {
+   "id": "NED-GRONINGEN",
+   "competition_key": "netherlands-eredivisie",
+   "provider": "api_football",
+   "provider_team_name": "Groningen",
+   "provider_team_id": null,
+   "decision": "map",
+   "team_state": {
+    "team_name_lower": "groningen",
+    "history_league": "Eredivisie"
+   },
+   "evidence": {
+    "verified_fixtures": {
+     "88": 5
+    },
+    "unused_records": [
+     "FC Groningen @ VriendenLoterij Eredivisie (1)"
+    ]
+   },
+   "reason": "one record verified by competition fixtures; the other record has no source fixtures and is not used",
+   "review": {
+    "status": "proposed",
+    "prepared_by": "M3.2 evidence review",
+    "owner_approved": false
+   }
+  },
+  {
+   "id": "NED-UTRECHT",
+   "competition_key": "netherlands-eredivisie",
+   "provider": "api_football",
+   "provider_team_name": "Utrecht",
+   "provider_team_id": null,
+   "decision": "map",
+   "team_state": {
+    "team_name_lower": "utrecht",
+    "history_league": "Eredivisie"
+   },
+   "evidence": {
+    "verified_fixtures": {
+     "88": 6
+    },
+    "unused_records": [
+     "FC Utrecht @ VriendenLoterij Eredivisie (1)"
+    ]
+   },
+   "reason": "one record verified by competition fixtures; the other record has no source fixtures and is not used",
+   "review": {
+    "status": "proposed",
+    "prepared_by": "M3.2 evidence review",
+    "owner_approved": false
+   }
+  },
+  {
+   "id": "NED-AJAX",
+   "competition_key": "netherlands-eredivisie",
+   "provider": "api_football",
+   "provider_team_name": "Ajax",
+   "provider_team_id": null,
+   "decision": "map",
+   "team_state": {
+    "team_name_lower": "ajax",
+    "history_league": "Eredivisie"
+   },
+   "evidence": {
+    "verified_fixtures": {
+     "88": 5
+    },
+    "unused_records": [
+     "AFC Ajax @ VriendenLoterij Eredivisie (1)"
+    ]
+   },
+   "reason": "one record verified by competition fixtures; the other record has no source fixtures and is not used",
+   "review": {
+    "status": "proposed",
+    "prepared_by": "M3.2 evidence review",
+    "owner_approved": false
+   }
+  },
+  {
+   "id": "NED-HEERENVEEN",
+   "competition_key": "netherlands-eredivisie",
+   "provider": "api_football",
+   "provider_team_name": "Heerenveen",
+   "provider_team_id": null,
+   "decision": "map",
+   "team_state": {
+    "team_name_lower": "heerenveen",
+    "history_league": "Eredivisie"
+   },
+   "evidence": {
+    "verified_fixtures": {
+     "88": 5
+    },
+    "unused_records": [
+     "SC Heerenveen @ VriendenLoterij Eredivisie (1)"
+    ]
+   },
+   "reason": "one record verified by competition fixtures; the other record has no source fixtures and is not used",
+   "review": {
+    "status": "proposed",
+    "prepared_by": "M3.2 evidence review",
+    "owner_approved": false
+   }
+  },
+  {
+   "id": "NED-TWENTE",
+   "competition_key": "netherlands-eredivisie",
+   "provider": "api_football",
+   "provider_team_name": "Twente",
+   "provider_team_id": null,
+   "decision": "map",
+   "team_state": {
+    "team_name_lower": "twente",
+    "history_league": "Eredivisie"
+   },
+   "evidence": {
+    "verified_fixtures": {
+     "88": 7
+    },
+    "unused_records": [
+     "FC Twente @ VriendenLoterij Eredivisie (1)"
+    ]
+   },
+   "reason": "one record verified by competition fixtures; the other record has no source fixtures and is not used",
+   "review": {
+    "status": "proposed",
+    "prepared_by": "M3.2 evidence review",
+    "owner_approved": false
+   }
+  },
+  {
+   "id": "BEL-STANDARD",
+   "competition_key": "belgium-pro-league",
+   "provider": "api_football",
+   "provider_team_name": "Standard Liege",
+   "provider_team_id": null,
+   "decision": "map",
+   "team_state": {
+    "team_name_lower": "standard liege",
+    "history_league": "Jupiler Pro League"
+   },
+   "evidence": {
+    "verified_fixtures": {
+     "144": 3
+    },
+    "unused_records": [
+     "Standard Liège @ Pro League (2)"
+    ]
+   },
+   "reason": "one record verified by competition fixtures; the other record has no source fixtures and is not used",
+   "review": {
+    "status": "proposed",
+    "prepared_by": "M3.2 evidence review",
+    "owner_approved": false
+   }
+  },
+  {
+   "id": "POR-AROUCA",
+   "competition_key": "portugal-primeira-liga",
+   "provider": "api_football",
+   "provider_team_name": "Arouca",
+   "provider_team_id": null,
+   "decision": "map",
+   "team_state": {
+    "team_name_lower": "arouca",
+    "history_league": "Primeira Liga"
+   },
+   "evidence": {
+    "verified_fixtures": {
+     "94": 3
+    },
+    "unused_records": [
+     "FC Arouca @ Liga Portugal Betclic (1)"
+    ]
+   },
+   "reason": "one record verified by competition fixtures; the other record has no source fixtures and is not used",
+   "review": {
+    "status": "proposed",
+    "prepared_by": "M3.2 evidence review",
+    "owner_approved": false
+   }
+  },
+  {
+   "id": "POR-ALVERCA",
+   "competition_key": "portugal-primeira-liga",
+   "provider": "api_football",
+   "provider_team_name": "Alverca",
+   "provider_team_id": null,
+   "decision": "map",
+   "team_state": {
+    "team_name_lower": "alverca",
+    "history_league": "Primeira Liga"
+   },
+   "evidence": {
+    "verified_fixtures": {
+     "94": 7
+    },
+    "unused_records": [
+     "FC Alverca @ Liga Portugal Betclic (1)"
+    ]
+   },
+   "reason": "one record verified by competition fixtures; the other record has no source fixtures and is not used",
+   "review": {
+    "status": "proposed",
+    "prepared_by": "M3.2 evidence review",
+    "owner_approved": false
+   }
+  },
+  {
+   "id": "POR-NACIONAL",
+   "competition_key": "portugal-primeira-liga",
+   "provider": "api_football",
+   "provider_team_name": "Nacional",
+   "provider_team_id": null,
+   "decision": "map",
+   "team_state": {
+    "team_name_lower": "nacional",
+    "history_league": "Primeira Liga"
+   },
+   "evidence": {
+    "verified_fixtures": {
+     "94": 7
+    },
+    "unused_records": [
+     "CD Nacional @ Liga Portugal Betclic (1)"
+    ]
+   },
+   "reason": "one record verified by competition fixtures; the other record has no source fixtures and is not used",
+   "review": {
+    "status": "proposed",
+    "prepared_by": "M3.2 evidence review",
+    "owner_approved": false
+   }
+  },
+  {
+   "id": "POR-FAMALICAO",
+   "competition_key": "portugal-primeira-liga",
+   "provider": "api_football",
+   "provider_team_name": "Famalicao",
+   "provider_team_id": null,
+   "decision": "map",
+   "team_state": {
+    "team_name_lower": "famalicao",
+    "history_league": "Primeira Liga"
+   },
+   "evidence": {
+    "verified_fixtures": {
+     "94": 5
+    },
+    "unused_records": [
+     "Famalicão @ Liga Portugal Betclic (1)"
+    ]
+   },
+   "reason": "one record verified by competition fixtures; the other record has no source fixtures and is not used",
+   "review": {
+    "status": "proposed",
+    "prepared_by": "M3.2 evidence review",
+    "owner_approved": false
+   }
+  },
+  {
+   "id": "ESP-BARCELONA",
+   "competition_key": "spain-la-liga",
+   "provider": "api_football",
+   "provider_team_name": "Barcelona",
+   "provider_team_id": null,
+   "decision": "map",
+   "team_state": {
+    "team_name_lower": "barcelona",
+    "history_league": "La Liga"
+   },
+   "evidence": {
+    "verified_fixtures": {
+     "140": 2
+    },
+    "unused_records": [
+     "FC Barcelona @ LaLiga (1)"
+    ]
+   },
+   "reason": "one record verified by competition fixtures; the other record has no source fixtures and is not used",
+   "review": {
+    "status": "proposed",
+    "prepared_by": "M3.2 evidence review",
+    "owner_approved": false
+   }
+  },
+  {
+   "id": "ESP-ATLETICO",
+   "competition_key": "spain-la-liga",
+   "provider": "api_football",
+   "provider_team_name": "Atletico Madrid",
+   "provider_team_id": null,
+   "decision": "map",
+   "team_state": {
+    "team_name_lower": "atletico madrid",
+    "history_league": "La Liga"
+   },
+   "evidence": {
+    "verified_fixtures": {
+     "140": 5
+    },
+    "unused_records": [
+     "Atlético Madrid @ LaLiga (1)"
+    ]
+   },
+   "reason": "one record verified by competition fixtures; the other record has no source fixtures and is not used",
+   "review": {
+    "status": "proposed",
+    "prepared_by": "M3.2 evidence review",
+    "owner_approved": false
+   }
+  },
+  {
+   "id": "ENG-BRIGHTON",
+   "competition_key": "england-premier-league",
+   "provider": "api_football",
+   "provider_team_name": "Brighton",
+   "provider_team_id": null,
+   "decision": "map",
+   "team_state": {
+    "team_name_lower": "brighton",
+    "history_league": "Premier League"
+   },
+   "evidence": {
+    "verified_fixtures": {
+     "39": 4
+    },
+    "other_verified_record": "Brighton & Hove Albion @ Premier League (2)"
+   },
+   "reason": "both records are the same club in the same competition (two feed spellings); the record with more matches is used, histories are not merged",
+   "review": {
+    "status": "proposed",
+    "prepared_by": "M3.2 evidence review",
+    "owner_approved": false
+   },
+   "split_history": {
+    "Brighton": 4,
+    "Brighton & Hove Albion": 2
+   }
+  },
+  {
+   "id": "FRA-PSG",
+   "competition_key": "france-ligue-1",
+   "provider": "api_football",
+   "provider_team_name": "Paris Saint Germain",
+   "provider_team_id": null,
+   "decision": "map",
+   "team_state": {
+    "team_name_lower": "paris saint-germain",
+    "history_league": "Ligue 1"
+   },
+   "evidence": {
+    "verified_fixtures": {
+     "61": 1
+    },
+    "other_verified_record": "Paris Saint Germain @ Ligue 1 (1)"
+   },
+   "reason": "both records are the same club in the same competition (two feed spellings); the record with more matches is used, histories are not merged",
+   "review": {
+    "status": "proposed",
+    "prepared_by": "M3.2 evidence review",
+    "owner_approved": false
+   },
+   "split_history": {
+    "Paris Saint-Germain": 2,
+    "Paris Saint Germain": 1
+   }
+  },
+  {
+   "id": "FRA-LENS",
+   "competition_key": "france-ligue-1",
+   "provider": "api_football",
+   "provider_team_name": "Lens",
+   "provider_team_id": null,
+   "decision": "exclude",
+   "evidence": {
+    "candidate_records": [
+     "RC Lens @ Ligue 1 (5, no fixtures)"
+    ],
+    "provider_fixtures": {
+     "61": 3
+    }
+   },
+   "reason": "only record 'RC Lens' has no source fixtures: an alias to it would be unverified",
+   "review": {
+    "status": "proposed",
+    "prepared_by": "M3.2 evidence review",
+    "owner_approved": false
+   }
+  },
+  {
+   "id": "FRA-MONACO",
+   "competition_key": "france-ligue-1",
+   "provider": "api_football",
+   "provider_team_name": "Monaco",
+   "provider_team_id": null,
+   "decision": "exclude",
+   "evidence": {
+    "candidate_records": [
+     "AS Monaco @ Ligue 1 (5, no fixtures)"
+    ],
+    "provider_fixtures": {
+     "61": 3
+    }
+   },
+   "reason": "only record 'AS Monaco' has no source fixtures",
+   "review": {
+    "status": "proposed",
+    "prepared_by": "M3.2 evidence review",
+    "owner_approved": false
+   }
+  },
+  {
+   "id": "FRA-STRASBOURG",
+   "competition_key": "france-ligue-1",
+   "provider": "api_football",
+   "provider_team_name": "Strasbourg",
+   "provider_team_id": null,
+   "decision": "exclude",
+   "evidence": {
+    "candidate_records": [
+     "RC Strasbourg @ Ligue 1 (6, no fixtures)"
+    ],
+    "provider_fixtures": {
+     "61": 4
+    }
+   },
+   "reason": "only record 'RC Strasbourg' has no source fixtures",
+   "review": {
+    "status": "proposed",
+    "prepared_by": "M3.2 evidence review",
+    "owner_approved": false
+   }
+  },
+  {
+   "id": "FRA-MARSEILLE",
+   "competition_key": "france-ligue-1",
+   "provider": "api_football",
+   "provider_team_name": "Marseille",
+   "provider_team_id": null,
+   "decision": "exclude",
+   "evidence": {
+    "candidate_records": [
+     "Olympique de Marseille @ Ligue 1 (5, no fixtures)"
+    ],
+    "provider_fixtures": {
+     "61": 3
+    }
+   },
+   "reason": "only record 'Olympique de Marseille' has no source fixtures",
+   "review": {
+    "status": "proposed",
+    "prepared_by": "M3.2 evidence review",
+    "owner_approved": false
+   }
+  },
+  {
+   "id": "FRA-BREST",
+   "competition_key": "france-ligue-1",
+   "provider": "api_football",
+   "provider_team_name": "Stade Brestois 29",
+   "provider_team_id": null,
+   "decision": "exclude",
+   "evidence": {
+    "candidate_records": [
+     "Stade Brestois @ Ligue 1 (4, no fixtures)"
+    ],
+    "provider_fixtures": {
+     "61": 2
+    }
+   },
+   "reason": "only record 'Stade Brestois' has no source fixtures",
+   "review": {
+    "status": "proposed",
+    "prepared_by": "M3.2 evidence review",
+    "owner_approved": false
+   }
+  },
+  {
+   "id": "FRA-LYON",
+   "competition_key": "france-ligue-1",
+   "provider": "api_football",
+   "provider_team_name": "Lyon",
+   "provider_team_id": null,
+   "decision": "exclude",
+   "evidence": {
+    "provider_fixtures": {
+     "61": 3
+    }
+   },
+   "reason": "no history record in the competition labels",
+   "review": {
+    "status": "proposed",
+    "prepared_by": "M3.2 evidence review",
+    "owner_approved": false
+   }
+  },
+  {
+   "id": "ITA-INTER",
+   "competition_key": "italy-serie-a",
+   "provider": "api_football",
+   "provider_team_name": "Inter",
+   "provider_team_id": null,
+   "decision": "exclude",
+   "evidence": {
+    "provider_fixtures": {
+     "135": 4
+    }
+   },
+   "reason": "no history record in the competition labels",
+   "review": {
+    "status": "proposed",
+    "prepared_by": "M3.2 evidence review",
+    "owner_approved": false
+   }
+  },
+  {
+   "id": "UEL-OFI",
+   "competition_key": "uefa-europa-league",
+   "provider": "api_football",
+   "provider_team_name": "OFI",
+   "provider_team_id": null,
+   "decision": "exclude",
+   "evidence": {
+    "provider_fixtures": {
+     "3": 2
+    }
+   },
+   "reason": "no history record in the competition labels",
+   "review": {
+    "status": "proposed",
+    "prepared_by": "M3.2 evidence review",
+    "owner_approved": false
+   }
+  },
+  {
+   "id": "TUR-ALANYASPOR",
+   "competition_key": "turkey-super-lig",
+   "provider": "api_football",
+   "provider_team_name": "Alanyaspor",
+   "provider_team_id": null,
+   "decision": "exclude",
+   "evidence": {
+    "provider_fixtures": {
+     "203": 2
+    }
+   },
+   "reason": "no history record in the competition labels",
+   "review": {
+    "status": "proposed",
+    "prepared_by": "M3.2 evidence review",
+    "owner_approved": false
+   }
+  },
+  {
+   "id": "UCL-VIKING",
+   "competition_key": "uefa-champions-league",
+   "provider": "api_football",
+   "provider_team_name": "Viking",
+   "provider_team_id": null,
+   "decision": "exclude",
+   "evidence": {
+    "provider_fixtures": {
+     "2": 1
+    }
+   },
+   "reason": "no history record in the competition labels",
+   "review": {
+    "status": "proposed",
+    "prepared_by": "M3.2 evidence review",
+    "owner_approved": false
+   }
+  },
+  {
+   "id": "SCO-DUNDEEUTD",
+   "competition_key": "scotland-premiership",
+   "provider": "api_football",
+   "provider_team_name": "Dundee Utd",
+   "provider_team_id": null,
+   "decision": "exclude",
+   "evidence": {
+    "candidate_records": [
+     "Dundee United @ Scottish Premiership (1, no fixtures)"
+    ],
+    "provider_fixtures": {
+     "179": 5
+    }
+   },
+   "reason": "only record 'Dundee United' has no source fixtures",
+   "review": {
+    "status": "proposed",
+    "prepared_by": "M3.2 evidence review",
+    "owner_approved": false
+   }
+  },
+  {
+   "id": "SCO-RANGERS",
+   "competition_key": "scotland-premiership",
+   "provider": "api_football",
+   "provider_team_name": "Rangers",
+   "provider_team_id": null,
+   "decision": "exclude",
+   "evidence": {
+    "candidate_records": [
+     "Rangers @ Scottish Premiership (1, no fixtures)"
+    ],
+    "provider_fixtures": {
+     "179": 4
+    }
+   },
+   "reason": "only record 'Rangers' (Scottish Premiership, 1 match) has no source fixtures; 'Carrick Rangers' is another club (Northern Ireland, 408)",
+   "review": {
+    "status": "proposed",
+    "prepared_by": "M3.2 evidence review",
+    "owner_approved": false
+   }
+  },
+  {
+   "id": "ENG-ARSENAL",
+   "competition_key": "england-premier-league",
+   "provider": "api_football",
+   "provider_team_name": "Arsenal",
+   "provider_team_id": null,
+   "decision": "exclude",
+   "evidence": {
+    "record": "Arsenal @ Premier League (9)",
+    "fixture_league_ids": {
+     "116": 7,
+     "39": 1
+    }
+   },
+   "reason": "the 'Premier League' record is contaminated: 7 of its 8 source fixtures are from competition 116 (another country's Arsenal); the history must be rebuilt per competition before use",
+   "review": {
+    "status": "proposed",
+    "prepared_by": "M3.2 evidence review",
+    "owner_approved": false
+   }
+  }
+ ]
+}

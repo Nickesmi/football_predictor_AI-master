@@ -55,6 +55,7 @@ Dist/
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
+!src/identity/team_registry.v1.json
 .idea
 .DS_Store
 *.suo

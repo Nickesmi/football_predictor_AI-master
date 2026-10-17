@@ -27,6 +27,7 @@ hash-generated statistics. Unresolved teams get no forecast.
 """
 from __future__ import annotations
 
+import hashlib
 import sqlite3
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
@@ -84,6 +85,8 @@ class TeamResolution:
     reason: str = ""
     evidence: dict = field(default_factory=dict)
     version: str = TEAM_IDENTITY_VERSION
+    competition_ids: dict = field(default_factory=dict)
+    canonical_team_id: str | None = None
 
     @property
     def resolved(self) -> bool:
@@ -91,6 +94,20 @@ class TeamResolution:
 
     def to_dict(self) -> dict:
         return asdict(self)
+
+
+def canonical_team_id(team_name_lower: str, history_league: str) -> str:
+    """Stable id of one historical record (team_state name + label)."""
+    digest = hashlib.sha256(f"{history_league}\x1f{team_name_lower}".encode()).hexdigest()[:16]
+    return f"tsr-{digest}"
+
+
+def _finish(res: TeamResolution, competition: Competition | None) -> TeamResolution:
+    if competition is not None:
+        res.competition_ids = {"api_football": competition.api_football_id, "sofascore": competition.sofascore_id}
+    if res.resolved and res.team_name_lower and res.history_league:
+        res.canonical_team_id = canonical_team_id(res.team_name_lower, res.history_league)
+    return res
 
 
 def ensure_tables(conn: sqlite3.Connection) -> None:
@@ -164,7 +181,21 @@ def _from_explicit(conn, competition, provider, provider_team_id, name) -> TeamR
 
 
 def resolve_team(conn: sqlite3.Connection, competition: Competition | None, name: str,
-                 provider: str | None = None, provider_team_id=None, remember: bool = False) -> TeamResolution:
+                 provider: str | None = None, provider_team_id=None, remember: bool = False,
+                 registry=None) -> TeamResolution:
+    """Resolve one team. `registry` (src/identity/registry.py) settles reviewed ambiguous cases;
+    only entries the owner approved are used unless the registry was loaded with allow_proposed."""
+    from src.identity import registry as registry_mod
+
+    reg = registry if registry is not None else registry_mod.load()
+    res = _resolve(conn, competition, name, provider, provider_team_id, remember)
+    if competition is not None and not res.resolved and res.status != STALE_MAPPING:
+        res = registry_mod.apply(conn, reg, competition, res, remember) or res
+    return _finish(res, competition)
+
+
+def _resolve(conn: sqlite3.Connection, competition: Competition | None, name: str,
+             provider: str | None, provider_team_id, remember: bool) -> TeamResolution:
     conn.row_factory = sqlite3.Row
     base = dict(provider=provider, provider_team_id=None if provider_team_id is None else str(provider_team_id),
                 provider_name=name, competition_key=competition.key if competition else None)
