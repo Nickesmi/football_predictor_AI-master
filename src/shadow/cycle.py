@@ -453,13 +453,15 @@ def _won(market: str, selection: str, home: int, away: int) -> bool:
 def _closing(conn, fixture_id: str, pick: dict) -> tuple[float | None, str | None]:
     market, line = MODEL_TO_CANONICAL[pick["market"]]
     row = conn.execute(
-        """SELECT decimal_odds, observed_at FROM odds_quotes
+        """SELECT decimal_odds, observed_at, fetched_at FROM odds_quotes
            WHERE fixture_id = ? AND odds_type = 'bookmaker' AND bookmaker = ? AND market = ? AND selection = ?
              AND line = ? AND observed_at < commence_time AND fetched_at <= commence_time
-           ORDER BY observed_at DESC LIMIT 1""",
+           ORDER BY observed_at DESC, fetched_at DESC, revision DESC LIMIT 1""",
         (fixture_id, pick.get("bookmaker"), market, pick["selection"], line),
     ).fetchone()
-    if row is None or not pick.get("odds_observed_at") or row[1] <= iso_utc(pick["odds_observed_at"]):
+    taken = (iso_utc(pick["odds_observed_at"]), iso_utc(pick.get("odds_fetched_at") or pick["odds_observed_at"])) \
+        if pick.get("odds_observed_at") else None
+    if row is None or taken is None or (row[1], row[2]) <= taken:
         return None, None  # no later pre-kickoff price from the same bookmaker: CLV undefined
     return float(row[0]), row[1]
 

@@ -44,7 +44,8 @@ CREATE TABLE IF NOT EXISTS odds_quotes (
     observed_at         TEXT NOT NULL,
     commence_time       TEXT NOT NULL,
     fetched_at          TEXT NOT NULL,
-    UNIQUE (fixture_id, provider, bookmaker, market, selection, line, observed_at)
+    revision            INTEGER NOT NULL DEFAULT 0,
+    UNIQUE (fixture_id, provider, bookmaker, market, selection, line, observed_at, revision)
 );
 CREATE INDEX IF NOT EXISTS idx_odds_quotes_fixture ON odds_quotes(fixture_id, market, selection);
 
@@ -82,8 +83,90 @@ class SyntheticOddsRefused(RuntimeError):
     """Synthetic test prices may only exist in an isolated test database."""
 
 
+QUOTE_KEY = ("fixture_id", "provider", "bookmaker", "market", "selection", "line")
+
+
 def ensure_odds_tables(conn: sqlite3.Connection) -> None:
     conn.executescript(SCHEMA)
+    migrate_quote_revisions(conn)
+
+
+def _has_revision(conn: sqlite3.Connection) -> bool:
+    return "revision" in {r[1] for r in conn.execute("PRAGMA table_info(odds_quotes)")}
+
+
+def _quote_checksum(conn: sqlite3.Connection, table: str = "odds_quotes") -> str:
+    import hashlib
+
+    cols = ("id", "fixture_id", "odds_type", "provider", "provider_event_id", "bookmaker", "market", "selection",
+            "line", "decimal_odds", "implied_probability", "raw_market", "raw_selection", "observed_at",
+            "commence_time", "fetched_at")
+    h = hashlib.sha256()
+    for row in conn.execute(f"SELECT {', '.join(cols)} FROM {table} ORDER BY id"):
+        h.update(repr(tuple(row)).encode())
+    return h.hexdigest()
+
+
+def migrate_quote_revisions(conn: sqlite3.Connection) -> dict:
+    """K53: rebuild a pre-M3.3 odds_quotes (unique key without price) with the revision column.
+
+    Every existing row is copied unchanged with revision 0 (the old key allowed exactly one
+    row per provider stamp, so no conflict is possible). The copy is verified by checksum
+    before the old table is dropped. Idempotent; a no-op on new tables.
+    """
+    if _has_revision(conn):
+        return {"migrated": False}
+    before = _quote_checksum(conn)
+    count = conn.execute("SELECT COUNT(*) FROM odds_quotes").fetchone()[0]
+    new_ddl = SCHEMA[SCHEMA.index("CREATE TABLE IF NOT EXISTS odds_quotes"):SCHEMA.index(");", SCHEMA.index(
+        "CREATE TABLE IF NOT EXISTS odds_quotes")) + 2].replace("IF NOT EXISTS odds_quotes", "odds_quotes_m33")
+    cols = ("id, fixture_id, odds_type, provider, provider_event_id, bookmaker, market, selection, line, "
+            "decimal_odds, implied_probability, raw_market, raw_selection, observed_at, commence_time, fetched_at")
+    conn.commit()  # no half-finished caller transaction inside the rebuild
+    conn.execute("BEGIN")
+    try:
+        conn.execute(new_ddl)
+        conn.execute(f"INSERT INTO odds_quotes_m33 ({cols}, revision) SELECT {cols}, 0 FROM odds_quotes")
+        if _quote_checksum(conn, "odds_quotes_m33") != before:
+            raise RuntimeError("odds_quotes migration checksum mismatch; nothing changed")
+        conn.execute("DROP TABLE odds_quotes")
+        conn.execute("ALTER TABLE odds_quotes_m33 RENAME TO odds_quotes")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_odds_quotes_fixture ON odds_quotes(fixture_id, market, selection)")
+        conn.execute("COMMIT")
+    except Exception:
+        conn.execute("ROLLBACK")
+        raise
+    return {"migrated": True, "rows": count, "checksum": before}
+
+
+def rollback_quote_revisions(conn: sqlite3.Connection) -> dict:
+    """Return odds_quotes to the pre-M3.3 key. Rows with revision > 0 cannot fit that key: they are moved,
+    unchanged, to odds_quotes_revisions_archive (never deleted)."""
+    if not _has_revision(conn):
+        return {"rolled_back": False}
+    cols = ("id, fixture_id, odds_type, provider, provider_event_id, bookmaker, market, selection, line, "
+            "decimal_odds, implied_probability, raw_market, raw_selection, observed_at, commence_time, fetched_at")
+    conn.commit()
+    conn.execute("BEGIN")
+    try:
+        conn.execute("CREATE TABLE IF NOT EXISTS odds_quotes_revisions_archive AS SELECT * FROM odds_quotes WHERE 0")
+        conn.execute("INSERT INTO odds_quotes_revisions_archive SELECT * FROM odds_quotes WHERE revision > 0")
+        archived = conn.execute("SELECT changes()").fetchone()[0]
+        old_ddl = SCHEMA[SCHEMA.index("CREATE TABLE IF NOT EXISTS odds_quotes"):SCHEMA.index(");", SCHEMA.index(
+            "CREATE TABLE IF NOT EXISTS odds_quotes")) + 2]
+        old_ddl = (old_ddl.replace("IF NOT EXISTS odds_quotes", "odds_quotes_pre_m33")
+                   .replace("    revision            INTEGER NOT NULL DEFAULT 0,\n", "")
+                   .replace("observed_at, revision)", "observed_at)"))
+        conn.execute(old_ddl)
+        conn.execute(f"INSERT INTO odds_quotes_pre_m33 ({cols}) SELECT {cols} FROM odds_quotes WHERE revision = 0")
+        conn.execute("DROP TABLE odds_quotes")
+        conn.execute("ALTER TABLE odds_quotes_pre_m33 RENAME TO odds_quotes")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_odds_quotes_fixture ON odds_quotes(fixture_id, market, selection)")
+        conn.execute("COMMIT")
+    except Exception:
+        conn.execute("ROLLBACK")
+        raise
+    return {"rolled_back": True, "archived_revisions": archived}
 
 
 def _database_path(conn: sqlite3.Connection) -> Path | None:
@@ -106,21 +189,31 @@ def store_quotes(conn: sqlite3.Connection, fixture_id: str, quotes: list[Quote],
     """Insert quotes for one fixture; returns how many were new (duplicates are ignored)."""
     if any(q.odds_type is OddsType.SYNTHETIC_TEST for q in quotes) and not synthetic_odds_allowed(conn):
         raise SyntheticOddsRefused("synthetic test odds can only be stored in an isolated test database")
-    before = conn.total_changes
-    conn.executemany(
-        """INSERT OR IGNORE INTO odds_quotes
-               (fixture_id, odds_type, provider, provider_event_id, bookmaker, market, selection, line,
-                decimal_odds, implied_probability, raw_market, raw_selection, observed_at,
-                commence_time, fetched_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-        [
+    new = 0
+    for q in quotes:
+        observed = iso_utc(q.observed_at)
+        key = (fixture_id, q.provider, q.bookmaker, q.market, q.selection, q.line)
+        same_stamp = conn.execute(
+            """SELECT decimal_odds, revision FROM odds_quotes
+               WHERE fixture_id = ? AND provider = ? AND bookmaker = ? AND market = ? AND selection = ? AND line = ?
+                 AND observed_at = ? ORDER BY revision DESC LIMIT 1""",
+            (*key, observed),
+        ).fetchone()
+        if same_stamp is not None and abs(same_stamp[0] - q.decimal_odds) < 1e-9:
+            continue  # identical delivery of the latest price under this stamp
+        revision = 0 if same_stamp is None else same_stamp[1] + 1  # price changed under an unchanged stamp (K53)
+        conn.execute(
+            """INSERT INTO odds_quotes
+                   (fixture_id, odds_type, provider, provider_event_id, bookmaker, market, selection, line,
+                    decimal_odds, implied_probability, raw_market, raw_selection, observed_at,
+                    commence_time, fetched_at, revision)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (fixture_id, q.odds_type.value, q.provider, q.provider_event_id, q.bookmaker, q.market,
              q.selection, q.line, q.decimal_odds, q.implied_probability, q.raw_market, q.raw_selection,
-             iso_utc(q.observed_at), iso_utc(q.commence_time), iso_utc(fetched_at))
-            for q in quotes
-        ],
-    )
-    return conn.total_changes - before
+             observed, iso_utc(q.commence_time), iso_utc(fetched_at), revision),
+        )
+        new += 1
+    return new
 
 
 def actionable_quotes(
@@ -143,24 +236,21 @@ def actionable_quotes(
     now_text = iso_utc(now)
     oldest = iso_utc(now - max_age)
     types = ("bookmaker", "synthetic_test") if include_synthetic else ("bookmaker",)
+    # Latest row per bookmaker selection among the rows we had fetched by `now`: newest provider stamp,
+    # then the latest collected revision under that stamp (K53). Older rows are superseded.
     rows = conn.execute(
-        f"""SELECT q.* FROM odds_quotes q
-            JOIN (
-                SELECT provider, bookmaker, market, selection, line, MAX(observed_at) AS latest
-                FROM odds_quotes
-                WHERE fixture_id = ? AND odds_type IN ({','.join('?' * len(types))}) AND observed_at <= ?
-                  AND fetched_at <= ?
-                GROUP BY provider, bookmaker, market, selection, line
-            ) last
-              ON q.provider = last.provider AND q.bookmaker = last.bookmaker AND q.market = last.market
-             AND q.selection = last.selection AND q.line = last.line AND q.observed_at = last.latest
-            WHERE q.fixture_id = ? AND q.odds_type IN ({','.join('?' * len(types))})
-              AND q.observed_at >= ? AND q.observed_at < q.commence_time AND q.commence_time > ?
-              AND q.fetched_at <= ?
-            ORDER BY q.market, q.selection, q.line, q.decimal_odds DESC, q.bookmaker""",
-        (fixture_id, *types, now_text, now_text, fixture_id, *types, oldest, now_text, now_text),
+        f"""SELECT * FROM (
+                SELECT q.*, ROW_NUMBER() OVER (
+                    PARTITION BY provider, bookmaker, market, selection, line
+                    ORDER BY observed_at DESC, fetched_at DESC, revision DESC) AS rn
+                FROM odds_quotes q
+                WHERE fixture_id = ? AND odds_type IN ({','.join('?' * len(types))})
+                  AND observed_at <= ? AND fetched_at <= ?
+            ) WHERE rn = 1 AND observed_at >= ? AND observed_at < commence_time AND commence_time > ?
+            ORDER BY market, selection, line, decimal_odds DESC, bookmaker""",
+        (fixture_id, *types, now_text, now_text, oldest, now_text),
     ).fetchall()
-    return [dict(r) for r in rows]
+    return [{k: r[k] for k in r.keys() if k != "rn"} for r in rows]
 
 
 def store_crowd_votes(conn: sqlite3.Connection, fixture_id: str, source: str, votes: dict, observed_at: str) -> int:
