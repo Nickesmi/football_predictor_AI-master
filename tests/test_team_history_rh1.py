@@ -116,3 +116,43 @@ def test_rebuild_is_deterministic(engine_db):
     rh.reconstruct(engine_db)
     second = engine_db.execute("SELECT * FROM team_history_rh1 ORDER BY competition_key, team_key, sequence").fetchall()
     assert [tuple(r)[1:] for r in first] == [tuple(r)[1:] for r in second]
+
+
+def test_rh1_inputs_fail_closed_when_history_was_never_built(engine_db):
+    from src.identity.inputs import UnresolvedTeamIdentity, resolve_probability_inputs_rh1
+
+    m = {"home_team": "Alpha", "away_team": "Beta", "league_name": "Premier League", "league_id": 39,
+         "provider": "api_football"}
+    with pytest.raises(UnresolvedTeamIdentity) as exc:
+        resolve_probability_inputs_rh1(engine_db, m, _at("2026-10-01T00:00:00"))
+    assert exc.value.resolutions["home"].status == "HISTORY_NOT_BUILT"
+
+
+def test_switch_is_disabled_by_default_and_rejects_unknown_values(monkeypatch):
+    from src.identity.inputs import inputs_version
+
+    monkeypatch.delenv("PROBABILITY_INPUTS", raising=False)
+    assert inputs_version() == "legacy"
+    monkeypatch.setenv("PROBABILITY_INPUTS", "identity-v1-rh1")
+    assert inputs_version() == "identity-v1-rh1"
+    monkeypatch.setenv("PROBABILITY_INPUTS", "something-else")
+    with pytest.raises(ValueError):
+        inputs_version()
+
+
+def test_pipeline_rh1_mode_gives_unresolved_teams_no_forecast(engine_db, monkeypatch):
+    """With the switch on, an unknown team is a NO_FORECAST decision, never a pick."""
+    from src.engine.pipeline import run_pipeline
+
+    monkeypatch.setenv("PROBABILITY_INPUTS", "identity-v1-rh1")
+    _fx(engine_db, "Liverpool", "Everton", 2, 0, "2026-09-01")   # before "now" (the decision time)
+    rh.reconstruct(engine_db)
+    events = [{"id": 991, "tournament": {"name": "Premier League", "uniqueTournament": {"id": 17}},
+               "homeTeam": {"name": "Liverpool"}, "awayTeam": {"name": "Nowhere FC"},
+               "startTimestamp": 1893456000, "status": {"type": "notstarted"}}]
+    result = run_pipeline("2030-01-01", events, engine_db)
+    rows = engine_db.execute("SELECT decision, reasons_json FROM selection_decisions").fetchall()
+    assert result["final_picks"] == 0
+    assert [(r[0], json.loads(r[1])[0]["code"]) for r in rows] == [("NO_FORECAST", "TEAM_IDENTITY_UNRESOLVED")]
+    reason = json.loads(rows[0][1])[0]
+    assert reason["inputs_version"] == "identity-v1-rh1" and list(reason["teams"]) == ["away"]

@@ -1,0 +1,482 @@
+{
+ "Arsenal v Liverpool [Premier League:39]": {
+  "legacy": {
+   "1X2": {
+    "away": 0.623,
+    "draw": 0.2274,
+    "home": 0.1496
+   },
+   "BTTS": {
+    "no": 0.5692,
+    "yes": 0.4308
+   },
+   "O/U 2.5": {
+    "over": 0.4576,
+    "under": 0.5424
+   },
+   "data_quality": 58.0,
+   "goals": {
+    "exp_away": 1.77,
+    "exp_home": 0.73
+   },
+   "source": "poisson"
+  },
+  "rh1": {
+   "probabilities": {
+    "1X2": {
+     "away": 0.3114,
+     "draw": 0.2809,
+     "home": 0.4077
+    },
+    "BTTS": {
+     "no": 0.5327,
+     "yes": 0.4673
+    },
+    "O/U 2.5": {
+     "over": 0.408,
+     "under": 0.592
+    },
+    "data_quality": 52.0,
+    "goals": {
+     "exp_away": 1.06,
+     "exp_home": 1.26
+    },
+    "source": "poisson"
+   },
+   "teams": {
+    "away": {
+     "as_of_fixture_id": "matches_db:g2",
+     "canonical_team_id": "cth-1d088732a20e0724",
+     "competition_ids": {
+      "api_football": 39,
+      "sofascore": 17
+     },
+     "matches_played": 2,
+     "status": "RESOLVED"
+    },
+    "home": {
+     "as_of_fixture_id": "matches_db:g3",
+     "canonical_team_id": "cth-1faec7435e1699ca",
+     "competition_ids": {
+      "api_football": 39,
+      "sofascore": 17
+     },
+     "matches_played": 1,
+     "status": "RESOLVED"
+    }
+   }
+  }
+ },
+ "Chelsea U21 v Everton U21 [Premier League:39]": {
+  "legacy": {
+   "1X2": {
+    "away": 0.2136,
+    "draw": 0.2537,
+    "home": 0.5327
+   },
+   "BTTS": {
+    "no": 0.5334,
+    "yes": 0.4666
+   },
+   "O/U 2.5": {
+    "over": 0.4456,
+    "under": 0.5544
+   },
+   "data_quality": 58.0,
+   "goals": {
+    "exp_away": 0.89,
+    "exp_home": 1.57
+   },
+   "source": "poisson"
+  },
+  "rh1": {
+   "probabilities": "NO_FORECAST",
+   "teams": {
+    "away": {
+     "matches_played": 0,
+     "status": "UNRESOLVED_NO_HISTORY"
+    },
+    "home": {
+     "matches_played": 0,
+     "status": "UNRESOLVED_NO_HISTORY"
+    }
+   }
+  }
+ },
+ "Everton v Chelsea [Premier League:39]": {
+  "legacy": {
+   "1X2": {
+    "away": 0.3877,
+    "draw": 0.2782,
+    "home": 0.3341
+   },
+   "BTTS": {
+    "no": 0.519,
+    "yes": 0.481
+   },
+   "O/U 2.5": {
+    "over": 0.4223,
+    "under": 0.5777
+   },
+   "data_quality": 58.0,
+   "goals": {
+    "exp_away": 1.24,
+    "exp_home": 1.13
+   },
+   "source": "poisson"
+  },
+  "rh1": {
+   "probabilities": {
+    "1X2": {
+     "away": 0.4793,
+     "draw": 0.2645,
+     "home": 0.2562
+    },
+    "BTTS": {
+     "no": 0.5189,
+     "yes": 0.4811
+    },
+    "O/U 2.5": {
+     "over": 0.4415,
+     "under": 0.5585
+    },
+    "data_quality": 54.0,
+    "goals": {
+     "exp_away": 1.46,
+     "exp_home": 0.99
+    },
+    "source": "poisson"
+   },
+   "teams": {
+    "away": {
+     "as_of_fixture_id": "matches_db:g1",
+     "canonical_team_id": "cth-7b12c55a42a09f36",
+     "competition_ids": {
+      "api_football": 39,
+      "sofascore": 17
+     },
+     "matches_played": 2,
+     "status": "RESOLVED"
+    },
+    "home": {
+     "as_of_fixture_id": "matches_db:g3",
+     "canonical_team_id": "cth-afcf8d043fe82397",
+     "competition_ids": {
+      "api_football": 39,
+      "sofascore": 17
+     },
+     "matches_played": 3,
+     "status": "RESOLVED"
+    }
+   }
+  }
+ },
+ "Gent v Club Brugge [Jupiler Pro League:144]": {
+  "legacy": {
+   "1X2": {
+    "away": 0.0808,
+    "draw": 0.2081,
+    "home": 0.7111
+   },
+   "BTTS": {
+    "no": 0.7094,
+    "yes": 0.2906
+   },
+   "O/U 2.5": {
+    "over": 0.3849,
+    "under": 0.6151
+   },
+   "data_quality": 50.0,
+   "goals": {
+    "exp_away": 0.43,
+    "exp_home": 1.8
+   },
+   "source": "poisson"
+  },
+  "rh1": {
+   "probabilities": {
+    "1X2": {
+     "away": 0.3639,
+     "draw": 0.2765,
+     "home": 0.3596
+    },
+    "BTTS": {
+     "no": 0.5112,
+     "yes": 0.4888
+    },
+    "O/U 2.5": {
+     "over": 0.4309,
+     "under": 0.5691
+    },
+    "data_quality": 52.0,
+    "goals": {
+     "exp_away": 1.21,
+     "exp_home": 1.2
+    },
+    "source": "poisson"
+   },
+   "teams": {
+    "away": {
+     "as_of_fixture_id": "matches_db:g11",
+     "canonical_team_id": "cth-6a7e5c1cb2fcc7b6",
+     "competition_ids": {
+      "api_football": 144,
+      "sofascore": 38
+     },
+     "matches_played": 1,
+     "status": "RESOLVED"
+    },
+    "home": {
+     "as_of_fixture_id": "matches_db:g11",
+     "canonical_team_id": "cth-3a6bf5438e1c3ca4",
+     "competition_ids": {
+      "api_football": 144,
+      "sofascore": 38
+     },
+     "matches_played": 1,
+     "status": "RESOLVED"
+    }
+   }
+  }
+ },
+ "Inter v Bologna [Serie A:135]": {
+  "legacy": {
+   "1X2": {
+    "away": 0.2418,
+    "draw": 0.2605,
+    "home": 0.4977
+   },
+   "BTTS": {
+    "no": 0.5206,
+    "yes": 0.4794
+   },
+   "O/U 2.5": {
+    "over": 0.4459,
+    "under": 0.5541
+   },
+   "data_quality": 58.0,
+   "goals": {
+    "exp_away": 0.96,
+    "exp_home": 1.5
+   },
+   "source": "poisson"
+  },
+  "rh1": {
+   "probabilities": {
+    "1X2": {
+     "away": 0.2127,
+     "draw": 0.2787,
+     "home": 0.5086
+    },
+    "BTTS": {
+     "no": 0.5973,
+     "yes": 0.4027
+    },
+    "O/U 2.5": {
+     "over": 0.3626,
+     "under": 0.6374
+    },
+    "data_quality": 54.0,
+    "goals": {
+     "exp_away": 0.78,
+     "exp_home": 1.37
+    },
+    "source": "poisson"
+   },
+   "teams": {
+    "away": {
+     "as_of_fixture_id": "matches_db:g7",
+     "canonical_team_id": "cth-8a2129e339bc4975",
+     "competition_ids": {
+      "api_football": 135,
+      "sofascore": 23
+     },
+     "matches_played": 2,
+     "status": "RESOLVED"
+    },
+    "home": {
+     "as_of_fixture_id": "matches_db:g7",
+     "canonical_team_id": "cth-e3c50b9f3bef5dca",
+     "competition_ids": {
+      "api_football": 135,
+      "sofascore": 23
+     },
+     "matches_played": 2,
+     "status": "RESOLVED"
+    }
+   }
+  }
+ },
+ "Middlesbrough v Cardiff [Championship:40]": {
+  "legacy": {
+   "1X2": {
+    "away": 0.261,
+    "draw": 0.3518,
+    "home": 0.3872
+   },
+   "BTTS": {
+    "no": 0.7056,
+    "yes": 0.2944
+   },
+   "O/U 2.5": {
+    "over": 0.2132,
+    "under": 0.7868
+   },
+   "data_quality": 50.0,
+   "goals": {
+    "exp_away": 0.68,
+    "exp_home": 0.9
+   },
+   "source": "poisson"
+  },
+  "rh1": {
+   "probabilities": {
+    "1X2": {
+     "away": 0.2072,
+     "draw": 0.2834,
+     "home": 0.5094
+    },
+    "BTTS": {
+     "no": 0.6138,
+     "yes": 0.3862
+    },
+    "O/U 2.5": {
+     "over": 0.3448,
+     "under": 0.6552
+    },
+    "data_quality": 54.0,
+    "goals": {
+     "exp_away": 0.74,
+     "exp_home": 1.34
+    },
+    "source": "poisson"
+   },
+   "teams": {
+    "away": {
+     "as_of_fixture_id": "matches_db:g10",
+     "canonical_team_id": "cth-7117c304931b8041",
+     "competition_ids": {
+      "api_football": 40,
+      "sofascore": 18
+     },
+     "matches_played": 2,
+     "status": "RESOLVED"
+    },
+    "home": {
+     "as_of_fixture_id": "matches_db:g10",
+     "canonical_team_id": "cth-5c1414586100a9db",
+     "competition_ids": {
+      "api_football": 40,
+      "sofascore": 18
+     },
+     "matches_played": 2,
+     "status": "RESOLVED"
+    }
+   }
+  }
+ },
+ "Newcomer FC v Chelsea [Premier League:39]": {
+  "legacy": {
+   "1X2": {
+    "away": 0.5661,
+    "draw": 0.233,
+    "home": 0.2009
+   },
+   "BTTS": {
+    "no": 0.4908,
+    "yes": 0.5092
+   },
+   "O/U 2.5": {
+    "over": 0.5114,
+    "under": 0.4886
+   },
+   "data_quality": 50.0,
+   "goals": {
+    "exp_away": 1.77,
+    "exp_home": 0.95
+   },
+   "source": "poisson"
+  },
+  "rh1": {
+   "probabilities": "NO_FORECAST",
+   "teams": {
+    "away": {
+     "matches_played": 2,
+     "status": "RESOLVED"
+    },
+    "home": {
+     "matches_played": 0,
+     "status": "UNRESOLVED_NO_HISTORY"
+    }
+   }
+  }
+ },
+ "Rangers v Hibernian [Premiership:179]": {
+  "legacy": {
+   "1X2": {
+    "away": 0.2535,
+    "draw": 0.3388,
+    "home": 0.4077
+   },
+   "BTTS": {
+    "no": 0.6867,
+    "yes": 0.3133
+   },
+   "O/U 2.5": {
+    "over": 0.236,
+    "under": 0.764
+   },
+   "data_quality": 50.0,
+   "goals": {
+    "exp_away": 0.7,
+    "exp_home": 0.97
+   },
+   "source": "poisson"
+  },
+  "rh1": {
+   "probabilities": {
+    "1X2": {
+     "away": 0.2024,
+     "draw": 0.2332,
+     "home": 0.5644
+    },
+    "BTTS": {
+     "no": 0.4891,
+     "yes": 0.5109
+    },
+    "O/U 2.5": {
+     "over": 0.5125,
+     "under": 0.4875
+    },
+    "data_quality": 52.0,
+    "goals": {
+     "exp_away": 0.96,
+     "exp_home": 1.77
+    },
+    "source": "poisson"
+   },
+   "teams": {
+    "away": {
+     "as_of_fixture_id": "matches_db:g12",
+     "canonical_team_id": "cth-a1d1fe49659de661",
+     "competition_ids": {
+      "api_football": 179,
+      "sofascore": 36
+     },
+     "matches_played": 1,
+     "status": "RESOLVED"
+    },
+    "home": {
+     "as_of_fixture_id": "matches_db:g12",
+     "canonical_team_id": "cth-eaf76f2b03b24722",
+     "competition_ids": {
+      "api_football": 179,
+      "sofascore": 36
+     },
+     "matches_played": 1,
+     "status": "RESOLVED"
+    }
+   }
+  }
+ }
+}

@@ -217,8 +217,12 @@ class HistoryState:
 def state_at(conn: sqlite3.Connection, competition: Competition, provider_name: str, at: datetime) -> HistoryState:
     """Point-in-time state of a team: only fixtures available at `at` (UTC). Never another team's row."""
     key = normalise_team(provider_name)
-    meta = conn.execute("SELECT status, raw_names FROM team_history_rh1_keys WHERE competition_key = ? AND team_key = ?",
-                        (competition.key, key)).fetchone()
+    try:
+        meta = conn.execute("SELECT status, raw_names FROM team_history_rh1_keys WHERE competition_key = ? "
+                            "AND team_key = ?", (competition.key, key)).fetchone()
+    except sqlite3.OperationalError:  # history never rebuilt in this DB: fail closed
+        return HistoryState(competition.key, key, canonical_id(competition.key, key), "HISTORY_NOT_BUILT",
+                            None, None, 0, None, None, None, ())
     status = meta[0] if meta else "UNRESOLVED_NO_HISTORY"
     names = tuple(json.loads(meta[1])) if meta else ()
     row = None

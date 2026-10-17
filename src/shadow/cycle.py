@@ -57,6 +57,7 @@ class ShadowConfig:
     pre_decision_margin_minutes: int = 15
     odds_mode: str = "per_fixture"
     max_requests_per_cycle: int = 12
+    history: str = "rh1"   # "rh1": rebuilt point-in-time history each cycle; "team_state": identity-v1 on team_state
     cycle_interval_minutes: int = 30
     lease_minutes: int = 10
     # Observation waits for the decision fetch (e.g. request cap reached) until this close to kickoff.
@@ -313,13 +314,14 @@ class _Recorded(Exception):
     """The observation row already describes why there is no forecast."""
 
 
-def observe(conn, match: dict, kickoff_utc: str, now: datetime, cycle_id: str) -> dict:
+def observe(conn, match: dict, kickoff_utc: str, now: datetime, cycle_id: str, history: str = "rh1") -> dict:
     from src.baseline import state as baseline
     from src.engine.market_value import find_value
     from src.engine.pipeline import _pick_calibrator, calibrate_probabilities
     from src.engine.probability_engine import estimate_probabilities_from_inputs
     from src.identity.competitions import competition_for_fixture
-    from src.identity.inputs import UnresolvedTeamIdentity, resolve_probability_inputs_v2
+    from src.identity.inputs import (UnresolvedTeamIdentity, resolve_probability_inputs_rh1,
+                                     resolve_probability_inputs_v2)
     from src.identity.teams import TEAM_IDENTITY_VERSION
     from src.policy import baseline_v1 as v1
     from src.policy import baseline_v1_1 as v11
@@ -342,7 +344,10 @@ def observe(conn, match: dict, kickoff_utc: str, now: datetime, cycle_id: str) -
                 "quote_bucket": status["bucket"]})
     try:
         try:
-            inputs = resolve_probability_inputs_v2(conn, match, competition, remember=True)
+            if history == "rh1":
+                inputs = resolve_probability_inputs_rh1(conn, match, now, competition)
+            else:
+                inputs = resolve_probability_inputs_v2(conn, match, competition, remember=True)
         except UnresolvedTeamIdentity as exc:
             # Fail closed: no forecast, no candidates, the identity failure is the record.
             row["identity_json"] = json.dumps({"version": TEAM_IDENTITY_VERSION, "resolved": False,
@@ -414,6 +419,10 @@ def decide(conn, cfg: ShadowConfig, now: datetime, cycle_id: str, report: dict) 
              AND m.status IN ('NS', 'TBD')""",
         (iso_utc(now), iso_utc(now + timedelta(minutes=cfg.decision_lead_minutes))),
     ).fetchall()
+    if rows and cfg.history == "rh1":
+        from src.history.reconstruct import reconstruct
+
+        report["history"] = reconstruct(conn)   # deterministic rebuild from stored finished fixtures
     for r in rows:
         kickoff = datetime.fromisoformat(iso_utc(r["kickoff_utc"]))
         window_start = kickoff - timedelta(minutes=cfg.decision_lead_minutes + cfg.pre_decision_margin_minutes)
@@ -421,7 +430,7 @@ def decide(conn, cfg: ShadowConfig, now: datetime, cycle_id: str, report: dict) 
         if not fetched and _minutes(now, r["kickoff_utc"]) > cfg.defer_observation_until_minutes:
             report["observations_deferred"] = report.get("observations_deferred", 0) + 1
             continue
-        row = observe(conn, dict(r), r["kickoff_utc"], now, cycle_id)
+        row = observe(conn, dict(r), r["kickoff_utc"], now, cycle_id, cfg.history)
         report["observations"] += 1
         if row.get("error", "").startswith("NO_FORECAST"):
             report["identity_unresolved"] = report.get("identity_unresolved", 0) + 1

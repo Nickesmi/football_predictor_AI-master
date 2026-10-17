@@ -104,7 +104,75 @@ def inputs_version() -> str:
     import os
 
     value = (os.getenv("PROBABILITY_INPUTS") or LEGACY_INPUTS).strip().lower()
-    if value not in (LEGACY_INPUTS, IDENTITY_INPUTS):
+    if value not in (LEGACY_INPUTS, IDENTITY_INPUTS, "identity-v1-rh1"):
         raise ValueError(f"unknown PROBABILITY_INPUTS {value!r}")
     return value
 
+
+
+IDENTITY_RH1_INPUTS = "identity-v1-rh1"
+
+
+def _rh1_resolution(match: dict, side: str, competition: Competition | None, state) -> TeamResolution:
+    from src.identity.teams import NO_HISTORY, RESOLVED, UNKNOWN_COMPETITION
+
+    name = match[f"{side}_team"]
+    base = dict(provider=match.get("provider"),
+                provider_team_id=None if match.get(f"{side}_team_id") is None else str(match.get(f"{side}_team_id")),
+                provider_name=name, competition_key=competition.key if competition else None)
+    if competition is None:
+        return TeamResolution(UNKNOWN_COMPETITION, **base, reason="fixture is not in a tracked competition")
+    ok = state.status == "RESOLVED" and state.matches_played >= 1
+    res = TeamResolution(RESOLVED if ok else (state.status if state.status != "RESOLVED" else NO_HISTORY), **base,
+                         team_name_lower=state.team_key if ok else None,
+                         history_league=f"rh1:{competition.key}" if ok else None,
+                         matches_played=state.matches_played, source="rh1_competition_fixtures",
+                         reason="" if ok else f"{state.status}: no observed fixture in {competition.key} before the decision",
+                         evidence={"as_of_fixture_id": state.as_of_fixture_id, "available_from": state.available_from,
+                                   "raw_names": list(state.raw_names)})
+    res.competition_ids = {"api_football": competition.api_football_id, "sofascore": competition.sofascore_id}
+    res.canonical_team_id = state.canonical_team_id if ok else None
+    return res
+
+
+def resolve_probability_inputs_rh1(conn: sqlite3.Connection, match: dict, decided_at,
+                                   competition: Competition | None = None) -> dict:
+    """identity-v1 rules on the reconstructed point-in-time history (src/history/reconstruct.py).
+
+    Same mathematics as the legacy priority-1 path (overall rolling averages x1.12/0.88, neutral venue from
+    the profile key); history only from the competition's own fixtures available at `decided_at`."""
+    from src.engine.probability_engine import LEAGUE_KEY_MAP
+    from src.history.reconstruct import HISTORY_VERSION, state_at
+    from src.ml.team_stats_db import TeamVenueStats, is_neutral_tournament
+
+    competition = competition or competition_for_fixture(match.get("provider"), match.get("league_id"))
+    states = {s: (state_at(conn, competition, match[f"{s}_team"], decided_at) if competition else None)
+              for s in ("home", "away")}
+    resolutions = {s: _rh1_resolution(match, s, competition, states[s]) for s in ("home", "away")}
+    if not all(r.resolved for r in resolutions.values()):
+        raise UnresolvedTeamIdentity(resolutions)
+    profile_key = LEAGUE_KEY_MAP.get(match.get("league_name", ""), "default")
+    neutral = is_neutral_tournament(profile_key)
+
+    def venue_stats(state, venue):
+        if neutral:
+            sc, co = round(state.rolling_scored, 2), round(state.rolling_conceded, 2)
+        elif venue == "home":
+            sc, co = round(state.rolling_scored * 1.12, 2), round(state.rolling_conceded * 0.88, 2)
+        else:
+            sc, co = round(state.rolling_scored * 0.88, 2), round(state.rolling_conceded * 1.12, 2)
+        return TeamVenueStats(scored=sc, conceded=co, corners=5.0, cards=2.1, matches_played=state.matches_played,
+                              form_last5=state.form_last5 if state.form_last5 is not None else 0.5)
+
+    from datetime import datetime as _dt
+    from src.odds.model import iso_utc
+
+    return {
+        "home_team": match["home_team"], "away_team": match["away_team"],
+        "league_name": match.get("league_name", ""), "country": match.get("country", ""), "league_key": profile_key,
+        "home_stats": asdict(venue_stats(states["home"], "home")),
+        "away_stats": asdict(venue_stats(states["away"], "away")),
+        "identity": {"version": TEAM_IDENTITY_VERSION, "history_version": HISTORY_VERSION,
+                     "decided_at": iso_utc(decided_at if isinstance(decided_at, _dt) else decided_at),
+                     "home": resolutions["home"].to_dict(), "away": resolutions["away"].to_dict()},
+    }

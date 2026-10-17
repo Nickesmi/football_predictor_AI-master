@@ -167,14 +167,16 @@ def run_pipeline(
     run_id = uuid.uuid4().hex
     decided_at = datetime.now(timezone.utc).isoformat()
     decision_rows: list[dict] = []
-    from src.identity.inputs import (IDENTITY_INPUTS, UnresolvedTeamIdentity, inputs_version,
-                                     resolve_probability_inputs_v2)
+    from src.identity.inputs import (IDENTITY_INPUTS, IDENTITY_RH1_INPUTS, UnresolvedTeamIdentity, inputs_version,
+                                     resolve_probability_inputs_rh1, resolve_probability_inputs_v2)
 
     probability_inputs_version = inputs_version()
     for match in fixtures:
         try:
             try:
-                if probability_inputs_version == IDENTITY_INPUTS:
+                if probability_inputs_version == IDENTITY_RH1_INPUTS:
+                    inputs = resolve_probability_inputs_rh1(conn, match, datetime.now(timezone.utc))
+                elif probability_inputs_version == IDENTITY_INPUTS:
                     inputs = resolve_probability_inputs_v2(conn, match, remember=True)
                 else:
                     inputs = resolve_probability_inputs(match)

@@ -67,8 +67,9 @@ def _seed_history(conn, teams=("Liverpool", "Ipswich Town"), label="Premier Leag
         conn.execute("INSERT INTO team_state (team_name, team_name_lower, league, venue, rolling_scored, "
                      "rolling_conceded, matches_played, form_last5) VALUES (?, ?, ?, 'overall', 1.6, 1.1, 8, 0.6)",
                      (name, name.lower(), label))
-        conn.execute("INSERT INTO matches (id, date, home_team, away_team, league_name, league_id, status, provider) "
-                     "VALUES (?, '2029-12-01', ?, 'Somebody', ?, ?, 'FT', 'api_football')",
+        conn.execute("INSERT INTO matches (id, date, kickoff, home_team, away_team, league_name, league_id, status, "
+                     "provider, home_goals, away_goals) "
+                     "VALUES (?, '2029-12-01', '15:00', ?, 'Somebody', ?, ?, 'FT', 'api_football', 2, 1)",
                      (f"hist-{name}", name, label, league_id))
     conn.commit()
 
@@ -90,7 +91,10 @@ def test_full_cycle_discovers_collects_observes_and_settles(shadow_db):
     assert obs["is_shadow"] == 1 and obs["counts_toward_baseline"] == 0
     assert json.loads(obs["candidates_json"]) and json.loads(obs["bilqe_json"])["tier_counts"]
     identity = json.loads(obs["identity_json"])
-    assert identity["resolved"] and identity["home"]["history_league"] == "Premier League"
+    assert identity["resolved"] and identity["history_version"] == "rh1"
+    assert identity["home"]["history_league"] == "rh1:england-premier-league"
+    assert identity["home"]["canonical_team_id"].startswith("cth-")
+    assert identity["home"]["evidence"]["as_of_fixture_id"] == "api_football:hist-Liverpool"
     assert json.loads(obs["v1_1_json"])["funnel"]["selected"] == 0          # no evidence, no provisional list
     assert all(c["competition_key"] == "england-premier-league" for c in json.loads(obs["candidates_json"]))
     assert shadow_db.execute("SELECT COUNT(*) FROM picks").fetchone()[0] == 0
