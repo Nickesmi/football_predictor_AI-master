@@ -33,6 +33,12 @@ def legacy_source(conn, team_stats_db, name, venue, league_key):
                        "AND venue = 'overall'", (nl, league_key)).fetchone()
     if row and row[0] >= 1:
         return "team_state_under_profile_key"
+    # src/db/team_state.get_team_state falls back to an unordered LIKE substring match
+    fuzzy = conn.execute(
+        "SELECT team_name, matches_played FROM team_state WHERE (team_name_lower LIKE ? OR ? LIKE '%' || "
+        "team_name_lower || '%') AND league = ? AND venue = 'overall' LIMIT 1", (f"%{nl}%", nl, league_key)).fetchone()
+    if fuzzy and fuzzy[1] >= 1:
+        return f"team_state_LIKE_SUBSTRING:{fuzzy[0]}"
     for scope, db in (("league_table", None), ("all_leagues_table", None)):
         if scope == "league_table":
             if league_key not in team_stats_db.LEAGUE_STATS:
@@ -67,7 +73,10 @@ def main() -> int:
                                                resolve_probability_inputs)
     from src.identity.competitions import COMPETITIONS, competition_for_fixture
     from src.identity.inputs import UnresolvedTeamIdentity, resolve_identity, resolve_probability_inputs_v2
+    from src.identity import registry as registry_mod
     from src.identity.teams import TEAM_IDENTITY_VERSION, resolve_team
+
+    proposed = registry_mod.load(allow_proposed=True)
     from src.ml import team_stats_db
 
     conn = sqlite3.connect(a.db)
@@ -120,19 +129,53 @@ def main() -> int:
                                     for v in ("home", "away")},
                  "dq_before": old.get("data_quality"),
                  "before": {k: old.get(k) for k in ("1X2", "O/U 2.5", "BTTS")}}
-        try:
-            new = estimate_probabilities_from_inputs(resolve_probability_inputs_v2(conn, m))
-            entry.update({"identity": "RESOLVED", "dq_after": new.get("data_quality"),
-                          "after": {k: new.get(k) for k in ("1X2", "O/U 2.5", "BTTS")},
-                          "max_abs_change_pp": round(100 * max(
-                              abs(new[k][s] - old[k][s]) for k in ("1X2", "O/U 2.5", "BTTS") for s in new[k]), 1)})
-        except UnresolvedTeamIdentity as exc:
-            entry.update({"identity": "UNRESOLVED", "dq_after": None, "after": None,
-                          "unresolved": {s: {"name": r.provider_name, "status": r.status, "reason": r.reason}
-                                         for s, r in exc.resolutions.items() if not r.resolved}})
+        for suffix, reg in (("", None), ("_with_proposed_registry", proposed)):
+            res = {s: resolve_team(conn, competition_for_fixture(m["provider"], m["league_id"]), m[f"{s}_team"],
+                                   m["provider"], registry=reg) for s in ("home", "away")} if reg else None
+            try:
+                if reg is None:
+                    inputs = resolve_probability_inputs_v2(conn, m)
+                else:
+                    if not all(r.resolved for r in res.values()):
+                        raise UnresolvedTeamIdentity(res)
+                    from dataclasses import asdict as _asdict
+                    from src.identity.inputs import _venue_stats
+                    key = LEAGUE_KEY_MAP.get(m["league_name"], "default")
+                    inputs = {"home_team": m["home_team"], "away_team": m["away_team"],
+                              "league_name": m["league_name"], "country": "", "league_key": key,
+                              "home_stats": _asdict(_venue_stats(conn, res["home"], "home", key)),
+                              "away_stats": _asdict(_venue_stats(conn, res["away"], "away", key))}
+                new = estimate_probabilities_from_inputs(inputs)
+                entry.update({f"identity{suffix}": "RESOLVED", f"dq_after{suffix}": new.get("data_quality"),
+                              f"after{suffix}": {k: new.get(k) for k in ("1X2", "O/U 2.5", "BTTS")},
+                              f"max_abs_change_pp{suffix}": round(100 * max(
+                                  abs(new[k][s] - old[k][s]) for k in ("1X2", "O/U 2.5", "BTTS") for s in new[k]), 1)})
+            except UnresolvedTeamIdentity as exc:
+                entry.update({f"identity{suffix}": "UNRESOLVED", f"dq_after{suffix}": None, f"after{suffix}": None,
+                              f"unresolved{suffix}": {s: {"name": r.provider_name, "status": r.status,
+                                                          "reason": r.reason}
+                                                      for s, r in exc.resolutions.items() if not r.resolved}})
         comparisons.append(entry)
 
     resolved_cmp = [c for c in comparisons if c["identity"] == "RESOLVED"]
+
+    def market_summary(suffix):
+        rows = [c for c in comparisons if c.get(f"identity{suffix}") == "RESOLVED"]
+        out = {}
+        for market, sels in (("1X2", ("home", "draw", "away")), ("O/U 2.5", ("over", "under")),
+                             ("BTTS", ("yes", "no"))):
+            diffs = [abs(c[f"after{suffix}"][market][s] - c["before"][market][s]) * 100 for c in rows for s in sels]
+            changed = [c for c in rows if any(abs(c[f"after{suffix}"][market][s] - c["before"][market][s]) > 1e-9
+                                              for s in sels)]
+            out[market] = {"fixtures": len(rows), "fixtures_changed": len(changed),
+                           "mean_abs_change_pp": round(sum(diffs) / len(diffs), 2) if diffs else None,
+                           "max_abs_change_pp": round(max(diffs), 1) if diffs else None}
+        dq_b = [c["dq_before"] for c in rows]
+        dq_a = [c[f"dq_after{suffix}"] for c in rows]
+        out["data_quality"] = {"mean_before": round(sum(dq_b) / len(dq_b), 1) if rows else None,
+                               "mean_after": round(sum(dq_a) / len(dq_a), 1) if rows else None,
+                               ">=60_before": sum(x >= 60 for x in dq_b), ">=60_after": sum(x >= 60 for x in dq_a)}
+        return out
     report = {
         "identity_version": TEAM_IDENTITY_VERSION,
         "since": a.since,
@@ -150,12 +193,21 @@ def main() -> int:
         "dq_before_mean_resolved": (round(sum(c["dq_before"] for c in resolved_cmp) / len(resolved_cmp), 1)
                                     if resolved_cmp else None),
         "fixtures_unchanged": sum(1 for c in resolved_cmp if c["max_abs_change_pp"] == 0.0),
+        "by_market": market_summary(""),
+        "by_market_with_proposed_registry": market_summary("_with_proposed_registry"),
+        "fixtures_resolved_with_proposed_registry": sum(
+            1 for c in comparisons if c.get("identity_with_proposed_registry") == "RESOLVED"),
+        "dq_before_mean_all": round(sum(c["dq_before"] for c in comparisons) / len(comparisons), 1)
+        if comparisons else None,
+        "dq_before_all_ge60": sum(c["dq_before"] >= 60 for c in comparisons),
         "comparisons": comparisons,
     }
     a.out.write_text(json.dumps(report, indent=1, default=str, ensure_ascii=False))
     print(json.dumps({k: report[k] for k in ("coverage_totals", "legacy_source_totals", "fixtures_compared",
                                              "fixtures_resolved", "fixtures_unchanged", "dq_before_mean",
-                                             "dq_before_mean_resolved", "dq_after_mean_resolved")}, indent=1))
+                                             "dq_before_mean_resolved", "dq_after_mean_resolved", "by_market",
+                                             "fixtures_resolved_with_proposed_registry",
+                                             "by_market_with_proposed_registry")}, indent=1))
     return 0
 
 

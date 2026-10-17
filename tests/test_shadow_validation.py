@@ -264,3 +264,34 @@ def test_offline_replay_reproduces_and_never_uses_later_prices(shadow_db):
     recorded = json.loads(shadow_db.execute("SELECT candidates_json FROM shadow_observations").fetchone()[0])
     assert entry["candidates"] == len(recorded)
     assert shadow_db.execute("SELECT COUNT(*) FROM shadow_observations").fetchone()[0] == 1
+
+
+@pytest.mark.parametrize("status, ft, settled", [
+    ("FT", (2, 1), True), ("AET", (1, 1), True), ("PEN", (0, 0), True),
+    ("PST", (None, None), False), ("ABD", (1, 0), False), ("CANC", (None, None), False), ("2H", (1, 0), False),
+    ("FT", (None, None), False),
+])
+def test_only_verified_final_results_are_settled(shadow_db, status, ft, settled):
+    _seed_history(shadow_db)
+    p = FakeProvider()
+    p.odds = [_odds_item(T0 - timedelta(minutes=30))]
+    _run(shadow_db, p, T0)
+    p.fixtures = [_fixture_item(status, ft)]
+    _run(shadow_db, p, KICKOFF + timedelta(hours=3))
+    n = shadow_db.execute("SELECT COUNT(*) FROM shadow_outcomes").fetchone()[0]
+    assert n == (1 if settled else 0)
+    if settled:  # regulation-time score, never extra time or penalties
+        row = shadow_db.execute("SELECT home_goals_ft, away_goals_ft FROM shadow_outcomes").fetchone()
+        assert tuple(row) == ft
+
+
+def test_shadow_settle_script_refuses_live_db():
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parent.parent
+    r = subprocess.run([sys.executable, str(root / "scripts" / "shadow_settle.py"), "--db",
+                        str(root / "data" / "engine.db"), "--date", "2026-10-16", "--out", "/dev/null"],
+                       capture_output=True, text=True, cwd=root)
+    assert r.returncode == 2 and "isolated" in r.stderr
