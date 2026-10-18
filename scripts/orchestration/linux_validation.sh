@@ -27,7 +27,7 @@ docker run --rm --platform linux/amd64 \
     python -m pytest tests/test_shadow_validation.py tests/test_shadow_operations.py tests/test_shadow_candidate_pathway.py \
         tests/test_team_history_rh1.py tests/test_team_identity.py tests/test_team_registry.py \
         tests/test_odds_history_k53.py tests/test_odds_m3.py tests/test_odds_layer.py tests/test_demo_quota.py \
-        tests/test_workspace_isolation.py -q -p no:cacheprovider > /out/shadow_identity_odds.log 2>&1
+        tests/test_workspace_isolation.py tests/test_api_guard.py tests/test_prepare_shadow_db.py -q -p no:cacheprovider > /out/shadow_identity_odds.log 2>&1
     echo "shadow_identity_odds exit $?" >> /out/summary.txt
     if [ -f /work/migration_copy.db ]; then
       M0_EXISTING_DB_COPY=/work/migration_copy.db python -m pytest tests/test_schema_migrations.py -q -p no:cacheprovider \
