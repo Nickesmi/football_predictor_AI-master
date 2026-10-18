@@ -21,6 +21,7 @@ docker run --rm --platform linux/amd64 \
     cp -r /src /work/repo 2>/dev/null || { mkdir -p /work && cp -r /src /work/repo; }
     cd /work/repo && rm -rf .venv venv .venv311 data/*.db .cache
     pip install -q -r requirements-lock.txt > /out/pip.log 2>&1
+    set +e                                  # every stage runs and records its own exit code
     python --version | tee /out/python_version.txt
     python -m pytest tests -q -p no:cacheprovider > /out/full_suite.log 2>&1; echo "full_suite exit $?" >> /out/summary.txt
     python -m pytest tests/golden -q -p no:cacheprovider > /out/golden.log 2>&1; echo "golden exit $?" >> /out/summary.txt
@@ -39,3 +40,8 @@ docker run --rm --platform linux/amd64 \
   '
 cat "$OUT/summary.txt"
 echo "results: $OUT"
+# fail unless every stage ran (6 with a DB copy, 5 without) and each one exited 0
+EXPECTED=5; [ -n "$COPY" ] && EXPECTED=6
+[ "$(grep -c ' exit 0$' "$OUT/summary.txt")" -eq "$EXPECTED" ] && ! grep -qv ' exit 0$' "$OUT/summary.txt" \
+  || { echo "LINUX VALIDATION FAILED"; exit 1; }
+echo "LINUX VALIDATION PASSED"

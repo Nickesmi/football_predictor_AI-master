@@ -36,6 +36,15 @@ def test_shadow_deployment_without_ledger_fails_closed(tmp_path):
     assert r.returncode == 2 and "fail closed" in r.stderr and "API_FOOTBALL_LEDGER is not set" in r.stderr
 
 
+def test_shadow_deployment_with_unusable_ledger_path_fails_closed(tmp_path):
+    """A ledger whose parent is not a directory is unusable for every user, root included."""
+    bad = tmp_path / "not_a_dir"
+    bad.write_text("x")
+    r = _shadow(tmp_path, "--budget", "70", "--ledger", str(bad / "ledger.db"))
+    assert r.returncode == 2 and "fail closed" in r.stderr
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root ignores directory permissions (the shadow host runs as a non-root user)")
 def test_shadow_deployment_with_unwritable_ledger_fails_closed(tmp_path):
     ro = tmp_path / "ro"
     ro.mkdir()
