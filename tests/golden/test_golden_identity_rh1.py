@@ -64,8 +64,8 @@ PREDICT = [
 ]
 
 
-@pytest.fixture
-def seeded(monkeypatch):
+def build_seed() -> sqlite3.Connection:
+    """The seeded in-memory DB of this reference (also used by the shadow-pathway check)."""
     from src.db.team_state import TeamState, upsert_team_state
     from src.history.reconstruct import reconstruct
 
@@ -82,6 +82,12 @@ def seeded(monkeypatch):
                      (f"g{i}", d, k, h, a, label, lid, hg, ag))
     conn.commit()
     reconstruct(conn)
+    return conn
+
+
+@pytest.fixture
+def seeded(monkeypatch):
+    conn = build_seed()
     monkeypatch.setattr(database, "_connection", conn)
     monkeypatch.setattr(isotonic_calibrator, "_calibrator_instance", None)
     yield conn
