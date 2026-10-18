@@ -51,7 +51,16 @@ def used() -> int:
 
 
 def _reserve(host: str, path: str) -> bool:
-    """Atomically record one attempt; True if within the cap."""
+    """Atomically record one attempt; True if within the cap (and within the shared ledger, if configured)."""
+    from src.odds import ledger
+
+    if ledger.path() is not None:
+        import os
+
+        ok, _ = ledger.reserve("api_football", path.split("?")[0], 1,
+                               int(os.getenv("ODDS_REQUEST_BUDGET_API_FOOTBALL", "0") or 0), "demo")
+        if not ok:
+            return False
     with _lock:
         conn = _db()
         try:

@@ -301,6 +301,9 @@ def _collect_per_fixture(conn, cfg: ShadowConfig, now: datetime, api_key: str, h
             report["errors"].extend(result["notes"])
         if result["requests_refused"]:
             break
+        if any("HTTP 429" in n for n in result["notes"]):
+            report["throttled"] = True   # provider rate limit: stop this cycle, retry next cycle (attempt cap applies)
+            break
     report["odds"] = totals
 
 

@@ -413,8 +413,11 @@ def test_cli_applies_the_requested_profile(tmp_path, monkeypatch):
     root = Path(__file__).resolve().parent.parent
     db = tmp_path / "s.db"
     _sq.connect(db).close()
+    import os as _os
+
     from src.ops import workspace_guard
 
+    saved_env = dict(_os.environ)                                  # the script sets os.environ directly
     seen = {}
     monkeypatch.setattr(workspace_guard, "isolate", lambda d: d)   # never chdir / re-point the test process
     monkeypatch.setattr(cycle_mod, "run_cycle", lambda conn, key, host, cfg, **kw: seen.update(cfg=cfg) or {})
@@ -430,8 +433,12 @@ def test_cli_applies_the_requested_profile(tmp_path, monkeypatch):
             (competitions, closing, 20)
     monkeypatch.setattr(_sys, "argv", ["shadow_cycle.py", "--db", str(db), "--budget", "0", "--profile", "medium",
                                        "--max-requests-per-cycle", "5"])
-    cli.main()
-    assert seen["cfg"].max_requests_per_cycle == 5 and seen["cfg"].closing_capture is False
+    try:
+        cli.main()
+        assert seen["cfg"].max_requests_per_cycle == 5 and seen["cfg"].closing_capture is False
+    finally:
+        _os.environ.clear()
+        _os.environ.update(saved_env)
 
 
 class _Failing(FakeProvider):

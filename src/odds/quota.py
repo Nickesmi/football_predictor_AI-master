@@ -89,8 +89,13 @@ def fetch_json(
     now: datetime | None = None,
 ):
     """Send one budgeted GET. `endpoint` is the credential-free label that gets logged."""
+    from src.odds import ledger
+
     moment = now or datetime.now(timezone.utc)
     used = store.requests_used_today(conn, provider, moment)
+    shared = ledger.used_today(provider, moment)
+    if shared is not None:
+        used = max(used, shared)   # the shared ledger counts every consumer of the key
     budget = daily_budget(provider)
     remaining = _last_reported_remaining(conn, provider)
     refusal = None
@@ -98,6 +103,11 @@ def fetch_json(
         refusal = f"budget: {used} used + {cost} requested > {budget} approved today"
     elif remaining is not None and remaining - cost < min_remaining():
         refusal = f"provider reports {remaining} remaining; keeping at least {min_remaining()}"
+    if refusal is None:
+        allowed, shared_used = ledger.reserve(provider, endpoint, cost, budget,
+                                              os.getenv("API_FOOTBALL_CONSUMER", "unnamed"), moment)
+        if not allowed:
+            refusal = f"shared ledger: {shared_used} used by all consumers + {cost} requested > {budget} approved today"
     if refusal:
         store.log_request(conn, provider, endpoint, cost, "refused", moment, detail=refusal)
         conn.commit()

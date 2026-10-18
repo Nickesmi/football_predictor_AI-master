@@ -26,6 +26,7 @@ def main() -> int:
     p.add_argument("--db", required=True, type=Path)
     p.add_argument("--date", required=True)
     p.add_argument("--out", required=True, type=Path)
+    p.add_argument("--ledger", type=Path, help="shared API-Football ledger (API_FOOTBALL_LEDGER)")
     a = p.parse_args()
     db = a.db.resolve()
     if db == LIVE_DB or not db.exists():
@@ -34,6 +35,9 @@ def main() -> int:
     datetime.strptime(a.date, "%Y-%m-%d")
     os.environ["FOOTBALL_PREDICTOR_DB_PATH"] = str(db)
     os.environ["ODDS_REQUEST_BUDGET_API_FOOTBALL"] = "1"
+    os.environ["API_FOOTBALL_CONSUMER"] = "shadow_settle"
+    if a.ledger:
+        os.environ["API_FOOTBALL_LEDGER"] = str(a.ledger.resolve())
     sys.path.insert(0, str(PROJECT_ROOT))
     from src.ops.workspace_guard import isolate  # noqa: E402
 

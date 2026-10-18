@@ -29,6 +29,7 @@ def main() -> int:
     parser.add_argument("--budget", required=True, type=int, help="approved API-Football requests per UTC day")
     parser.add_argument("--allow-production", action="store_true")
     parser.add_argument("--force-discovery", action="store_true")
+    parser.add_argument("--ledger", type=Path, help="shared API-Football ledger for all consumers (API_FOOTBALL_LEDGER)")
     parser.add_argument("--max-age", type=int, default=240, help="ODDS_MAX_AGE_MINUTES for the shadow (provisional)")
     parser.add_argument("--max-requests-per-cycle", type=int, default=None)
     parser.add_argument("--profile", choices=("low", "medium", "full"), default="medium",
@@ -54,6 +55,19 @@ def main() -> int:
 
     if db != LIVE_DB:
         isolate(db.parent / "workspace")   # own working directory and cache next to the isolated DB
+    if args.ledger:
+        os.environ["API_FOOTBALL_LEDGER"] = str(args.ledger.resolve())
+    os.environ.setdefault("API_FOOTBALL_CONSUMER", "shadow_cycle")
+
+    # One cycle process at a time per shadow DB (two schedulers, a manual run, a wake-up burst).
+    import fcntl
+
+    lock_file = open(db.parent / "shadow_cycle.lock", "w")
+    try:
+        fcntl.flock(lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        print(json.dumps({"skipped": "another shadow cycle process holds the lock"}))
+        return 0
     os.environ["ODDS_MAX_AGE_MINUTES"] = str(args.max_age)
     sys.path.insert(0, str(PROJECT_ROOT))
     from src import config  # noqa: E402

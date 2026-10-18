@@ -37,6 +37,8 @@ def main() -> int:
     p.add_argument("--sleep-from", default="15:00")
     p.add_argument("--sleep-to", default="17:00")
     p.add_argument("--out", type=Path)
+    p.add_argument("--other-consumers", type=int, default=0,
+                   help="requests already used today by other consumers of the key (shared ledger)")
     a = p.parse_args()
 
     tmp = Path(tempfile.mkdtemp(prefix="shadow-dry-run-"))
@@ -44,6 +46,7 @@ def main() -> int:
     os.environ["HOME"] = str(tmp)
     os.environ["ODDS_REQUEST_BUDGET_API_FOOTBALL"] = str(a.budget)
     os.environ["ODDS_MAX_AGE_MINUTES"] = "240"
+    os.environ["API_FOOTBALL_LEDGER"] = str(tmp / "shared_ledger.db")
     for k in ("API_FOOTBALL_KEY", "APIFOOTBALL_API_KEY", "RAPIDAPI_KEY"):
         os.environ[k] = ""
     sys.path.insert(0, str(PROJECT_ROOT))
@@ -54,6 +57,10 @@ def main() -> int:
 
     conn = get_db()
     day = datetime(2030, 1, 5, tzinfo=timezone.utc)   # a Saturday, far from any real data
+    from src.odds import ledger
+
+    for i in range(a.other_consumers):   # e.g. the settlement tool or the demo earlier that day
+        ledger.reserve("api_football", f"/other/{i}", 1, a.budget, "other", day.replace(hour=5))
     fixtures = []
     for i in range(a.fixtures):
         hh, mm = KICKOFF_SLOTS[i % len(KICKOFF_SLOTS)].split(":")
@@ -138,6 +145,7 @@ def main() -> int:
         "not_observed": [str(f["id"]) + " " + iso_utc(f["kickoff"])[11:16] for f in fixtures
                          if conn.execute("SELECT 1 FROM shadow_observations WHERE fixture_id = ?",
                                          (str(f["id"]),)).fetchone() is None],
+        "shared_ledger_used_on_the_day": ledger.used_today("api_football", day.replace(hour=12)),
         "integrity": rep["integrity"], "picks": conn.execute("SELECT COUNT(*) FROM picks").fetchone()[0],
     }
     print(json.dumps(summary, indent=1))
