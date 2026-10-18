@@ -1,0 +1,10 @@
+# copy to ./.dockerignore before building: never ship data, caches, keys or virtualenvs
+.env
+data/
+.cache/
+venv/
+.venv/
+.venv311/
+frontend/node_modules/
+logs/
+*.db
