@@ -38,6 +38,14 @@ def main() -> int:
     os.environ["API_FOOTBALL_CONSUMER"] = "shadow_settle"
     if a.ledger:
         os.environ["API_FOOTBALL_LEDGER"] = str(a.ledger.resolve())
+    from src.ops import api_guard  # noqa: E402
+
+    if api_guard.required() or a.ledger:
+        try:
+            api_guard.install("shadow_settle")
+        except api_guard.LedgerUnavailable as exc:
+            print(f"refusing (fail closed): {exc}", file=sys.stderr)
+            return 2
     sys.path.insert(0, str(PROJECT_ROOT))
     from src.ops.workspace_guard import isolate  # noqa: E402
 

@@ -58,6 +58,15 @@ def main() -> int:
     if args.ledger:
         os.environ["API_FOOTBALL_LEDGER"] = str(args.ledger.resolve())
     os.environ.setdefault("API_FOOTBALL_CONSUMER", "shadow_cycle")
+    from src.ops import api_guard  # noqa: E402
+
+    if args.budget > 0 or api_guard.required():
+        # Deployment mode: every API-Football request of this process goes through the shared ledger.
+        try:
+            api_guard.install("shadow_cycle")
+        except api_guard.LedgerUnavailable as exc:
+            print(f"refusing (fail closed): {exc}", file=sys.stderr)
+            return 2
 
     # One cycle process at a time per shadow DB (two schedulers, a manual run, a wake-up burst).
     import fcntl

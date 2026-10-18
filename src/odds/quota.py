@@ -103,11 +103,21 @@ def fetch_json(
         refusal = f"budget: {used} used + {cost} requested > {budget} approved today"
     elif remaining is not None and remaining - cost < min_remaining():
         refusal = f"provider reports {remaining} remaining; keeping at least {min_remaining()}"
+    from src.ops import api_guard
+
+    if refusal is None and api_guard.required() and ledger.path() is None:
+        refusal = "API_FOOTBALL_REQUIRE_LEDGER=1 but no shared ledger is configured (fail closed)"
     if refusal is None:
-        allowed, shared_used = ledger.reserve(provider, endpoint, cost, budget,
-                                              os.getenv("API_FOOTBALL_CONSUMER", "unnamed"), moment)
-        if not allowed:
+        try:
+            allowed, shared_used = ledger.reserve(provider, endpoint, cost, budget,
+                                                  os.getenv("API_FOOTBALL_CONSUMER", "unnamed"), moment)
+        except Exception as exc:  # unwritable or corrupt ledger: never bypass the global budget
+            allowed, shared_used = False, None
+            refusal = f"shared ledger unavailable ({type(exc).__name__}); request refused (fail closed)"
+        if refusal is None and not allowed:
             refusal = f"shared ledger: {shared_used} used by all consumers + {cost} requested > {budget} approved today"
+        if refusal is None and ledger.path() is not None:
+            api_guard.preapprove()   # counted once: the process guard must not count it again
     if refusal:
         store.log_request(conn, provider, endpoint, cost, "refused", moment, detail=refusal)
         conn.commit()

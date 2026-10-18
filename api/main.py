@@ -39,6 +39,13 @@ from src.ops import workspace_guard as _workspace_guard  # noqa: E402
 
 _workspace_guard.check(_DB_PATH, _CACHE_DIR)
 
+# On the shadow host every API-Football request of the app (fixture endpoint, refresh loop,
+# statistics, status) goes through the shared ledger; without a writable ledger it refuses to start.
+from src.ops import api_guard as _api_guard  # noqa: E402
+
+if _api_guard.required():
+    _api_guard.install("api_app")
+
 # ── Instantiate App ──────────────────────────────────────────────────────────
 app = FastAPI(title="Football Predictor AI API", version="5.0", lifespan=lifespan)
 

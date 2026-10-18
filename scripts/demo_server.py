@@ -82,7 +82,13 @@ def main() -> int:
     p.add_argument("--workdir", required=True, type=Path)
     p.add_argument("--port", type=int, default=8001)
     p.add_argument("--cap", type=int, default=5)
+    p.add_argument("--ledger", type=Path, help="shared API-Football ledger; the demo then also counts against it")
+    p.add_argument("--daily-budget", type=int, default=70, help="shared daily budget when --ledger is used")
     a = p.parse_args()
+    if a.ledger:
+        os.environ["API_FOOTBALL_LEDGER"] = str(a.ledger.resolve())
+        os.environ["ODDS_REQUEST_BUDGET_API_FOOTBALL"] = str(a.daily_budget)
+    os.environ["API_FOOTBALL_REQUIRE_LEDGER"] = "0"   # the demo has its own hard cap guard (src/ops/demo_quota)
     prepare(a.db, a.workdir, a.cap)
     import uvicorn
 
