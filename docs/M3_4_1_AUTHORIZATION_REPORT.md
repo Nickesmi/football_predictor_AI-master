@@ -172,7 +172,7 @@ Nothing was purchased, installed, scheduled or collected.
 
 ## 7. Production state at report time
 
-- `data/engine.db`: mtime 2026-10-16 15:35, WAL 15:43. The `.dump` read through `?mode=ro` hashes to `c530e65b4dc213fa` (sqlite3 CLI), which **equals the verified backup by the same method**. Python `iterdump` gives `46d2aeda97e7da31` for both. Unchanged.
+- `data/engine.db`: mtime 2026-10-16 15:35, WAL 15:43. The `.dump` read through `?mode=ro` hashes to `c530e65b4dc213fa` (sqlite3 CLI), which **equals the verified backup by the same method**. Python `iterdump` gives `46d2aeda97e7da31` for both. Unchanged. The `engine.db-shm` mtime is 2026-10-18. That file is SQLite's shared-memory WAL index, which read-only readers rewrite (these verification dumps and the Docker read-only mount). `engine.db` and `engine.db-wal` were not modified.
 
   > Note: the `4fc62ae03b391eab` in the M3.4 report came from a different dump method. Prod and backup still match by every method used today.
 
