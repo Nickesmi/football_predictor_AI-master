@@ -128,6 +128,22 @@ def _identity(obs) -> dict:
     return {"observations": dict(statuses), "versions": dict(versions), "unresolved": unresolved}
 
 
+def _history_completeness(obs) -> dict:
+    """Observed fixtures behind each resolved side (rh1/identity provenance)."""
+    played = []
+    for o in obs:
+        data = _loads(o["identity_json"] if "identity_json" in o.keys() else None, None)
+        if not data or not data.get("resolved"):
+            continue
+        played += [int(data[s].get("matches_played") or 0) for s in ("home", "away")]
+    played.sort()
+    n = len(played)
+    return {"sides": n, "median_matches": played[n // 2] if n else None,
+            "share_ge_5": round(sum(p >= 5 for p in played) / n, 3) if n else None,
+            "share_ge_10": round(sum(p >= 10 for p in played) / n, 3) if n else None,
+            "share_ge_15": round(sum(p >= 15 for p in played) / n, 3) if n else None}
+
+
 def _bilqe(obs) -> dict:
     layers_failed, tiers, errors = Counter(), Counter(), 0
     gate_fail = Counter()
@@ -225,10 +241,29 @@ def build_report(conn: sqlite3.Connection, max_age_minutes: int = 240) -> dict:
         """SELECT code_revision, model_version, calibration_version, legacy_policy_version, v1_policy_version,
                   COUNT(*) AS n FROM shadow_observations GROUP BY 1, 2, 3, 4, 5"""
     ).fetchall()
+    forward = sum(1 for o in obs if o["decided_at"] < o["kickoff"])
+    integrity = _integrity(conn, obs)
+    coverage = _coverage(obs, max_age_minutes)
+    identity = _identity(obs)
+    quota = _quota(conn)
+    operational = {
+        "genuine_forward_observations": forward,
+        "observation_errors": sum(1 for o in obs if o["error"] and not o["error"].startswith("NO_FORECAST")),
+        "identity_resolved_share": (round(identity["observations"].get("RESOLVED", 0) / len(obs), 3) if obs else None),
+        "odds_within_window_share": coverage["coverage_pct"] / 100 if obs else None,
+        "provider_errors": sum(quota["errors_by_http_status"].values()),
+        "integrity_ok": integrity["ok"],
+        "note": "operational success (did the experiment observe honestly and completely?) is not evidence "
+                "that the model is calibrated or profitable",
+    }
     return {
+        "operational_summary": operational,
+        "model_evidence_note": "calibration and results below are research measurements on a small forward sample; "
+                               "they are not proof of profitability and never validate a selection",
+        "history_completeness": _history_completeness(obs),
         "period": _period(conn),
         "cycle_health": _cycle_health(conn),
-        "integrity": _integrity(conn, obs),
+        "integrity": integrity,
         "daily": build_daily(conn, max_age_minutes),
         "fixtures_tracked": conn.execute("SELECT COUNT(*) FROM shadow_fixtures").fetchone()[0],
         "observations": len(obs),
@@ -237,8 +272,8 @@ def build_report(conn: sqlite3.Connection, max_age_minutes: int = 240) -> dict:
         "versions": [dict(v) for v in versions],
         "data_quality": dict(Counter("<60" if (o["data_quality"] or 0) < 60 else ">=60" for o in obs)),
         "model_sources": dict(Counter(o["model_source"] for o in obs)),
-        "identity": _identity(obs),
-        "odds_coverage": _coverage(obs, max_age_minutes),
+        "identity": identity,
+        "odds_coverage": coverage,
         "funnels": _funnels(obs),
         "bilqe": _bilqe(obs),
         "settlement": {"outcomes_recorded": outcomes, "observed_and_settled": settled_obs,
@@ -246,7 +281,7 @@ def build_report(conn: sqlite3.Connection, max_age_minutes: int = 240) -> dict:
         "results": _results(conn),
         "calibration": _calibration(conn),
         "reproducibility": _reproducibility(obs),
-        "provider_quota": _quota(conn),
+        "provider_quota": quota,
         "counts_toward_baseline": conn.execute(
             "SELECT COUNT(*) FROM shadow_observations WHERE counts_toward_baseline != 0").fetchone()[0],
     }

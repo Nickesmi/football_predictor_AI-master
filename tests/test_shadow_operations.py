@@ -109,3 +109,17 @@ def test_a_second_cycle_process_is_refused_while_one_runs(tmp_path):
         fcntl.flock(held, fcntl.LOCK_UN)
         held.close()
     assert r.returncode == 0 and json.loads(r.stdout)["skipped"].startswith("another shadow cycle")
+
+
+def test_report_separates_operational_success_from_model_evidence(shadow_db):
+    from src.shadow import report
+
+    _seed_history(shadow_db)
+    p = FakeProvider()
+    p.odds = [_odds_item(T0 - timedelta(minutes=30))]
+    _run(shadow_db, p, T0, cfg=PROFILES["medium"])
+    rep = report.build_report(shadow_db)
+    op = rep["operational_summary"]
+    assert op["genuine_forward_observations"] == 1 and op["integrity_ok"] and op["identity_resolved_share"] == 1.0
+    assert "not evidence" in op["note"] and "not proof of profitability" in rep["model_evidence_note"]
+    assert rep["history_completeness"]["sides"] == 2 and rep["history_completeness"]["median_matches"] == 1
