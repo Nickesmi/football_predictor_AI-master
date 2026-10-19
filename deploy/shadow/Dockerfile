@@ -11,5 +11,5 @@ COPY --chown=shadow:shadow . .
 USER shadow
 # /shadow holds the isolated shadow DB, its workspace/cache, the shared ledger and logs (a mounted volume)
 VOLUME ["/shadow"]
-ENTRYPOINT ["python", "scripts/shadow_cycle.py", "--db", "/shadow/engine_shadow.db", "--ledger", "/shadow/api_football_ledger.db", "--manifest", "/shadow/shadow_manifest.v2.json", "--profile", "medium", "--max-requests-per-cycle", "20"]
+ENTRYPOINT ["python", "scripts/shadow_cycle.py", "--db", "/shadow/engine_shadow.db", "--ledger", "/shadow/api_football_ledger.db", "--manifest", "/shadow/shadow_manifest.v3.json", "--profile", "medium", "--max-requests-per-cycle", "20"]
 CMD ["--budget", "0"]

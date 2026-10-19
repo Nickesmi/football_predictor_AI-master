@@ -15,7 +15,7 @@ EnvironmentFile=/etc/football-shadow/api_key.env
 Environment=API_FOOTBALL_CONSUMER=shadow_cycle
 ExecStart=/opt/football-shadow/.venv/bin/python /opt/football-shadow/scripts/shadow_cycle.py \
   --db /srv/shadow/engine_shadow.db --ledger /srv/shadow/api_football_ledger.db \
-  --manifest /srv/shadow/shadow_manifest.v2.json \
+  --manifest /srv/shadow/shadow_manifest.v3.json \
   --profile medium --max-requests-per-cycle 20 --budget 70
 StandardOutput=append:/srv/shadow/logs/cycles.jsonl
 StandardError=append:/srv/shadow/logs/cycles.err
