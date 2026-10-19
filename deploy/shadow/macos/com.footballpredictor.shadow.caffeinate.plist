@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- M3.5 TEMPLATE. NOT installed, NOT loaded. Disabled. Experiment-specific sleep prevention for 15 days at most
+     (caffeinate -i -s -t 1296000). No pmset change. Stopping it (launchctl bootout of THIS label, or
+     mac_caffeinate.sh stop) ends only this process. Lid-close sleep is NOT prevented: keep the lid open, on AC. -->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.footballpredictor.shadow.caffeinate</string>
+  <key>Disabled</key><true/>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>__ROOT__/code/scripts/orchestration/shadow/mac_caffeinate.sh</string>
+    <string>run</string>
+    <string>__ROOT__/run/caffeinate.pid</string>
+    <string>1296000</string>
+  </array>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><false/>
+  <key>StandardErrorPath</key><string>__ROOT__/run/logs/caffeinate.err</string>
+</dict>
+</plist>

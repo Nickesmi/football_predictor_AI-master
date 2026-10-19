@@ -207,7 +207,7 @@ def test_manifest_script_never_rewrites_and_refuses_production(tmp_path):
     assert r.returncode == 2 and "production database" in r.stderr
 
 
-def test_preflight_passes_offline_checks_and_never_counts_not_run_as_pass(tmp_path, built):
+def test_preflight_passes_offline_checks_and_never_counts_not_run_as_pass(tmp_path, built, monkeypatch):
     db, m, _ = built
     (tmp_path / "m.json").write_text(json.dumps(m))
     env_file = tmp_path / "shadow.env"
@@ -222,6 +222,10 @@ def test_preflight_passes_offline_checks_and_never_counts_not_run_as_pass(tmp_pa
     status = {c["check"]: c["status"] for c in doc["checks"]}
     assert r.returncode == 1 and not doc["all_passed"], r.stderr[-2000:]
     assert status.pop("1_linux_tests_on_host") == "not_run" and status.pop("3_provider_quota") == "not_run"
+    # the test ledger lives under the temp directory, which the preflight must reject as volatile storage
+    ledger_check = next(c for c in doc["checks"] if c["check"] == "4_shared_ledger_all_consumers")
+    assert status.pop("4_shared_ledger_all_consumers") == "FAIL"
+    assert len(ledger_check["problems"]) == 1 and "volatile storage" in ledger_check["problems"][0]
     assert set(status.values()) == {"pass"}, doc
     assert sm.sha256_file(db) == m["database"]["sha256"]                 # the shadow DB was not written
     os.chmod(env_file, 0o644)                                          # world-readable key file: refused
@@ -230,3 +234,37 @@ def test_preflight_passes_offline_checks_and_never_counts_not_run_as_pass(tmp_pa
                        capture_output=True, text=True, cwd=tmp_path, env=env, timeout=300)
     doc = json.loads(r.stdout[r.stdout.index("{"):])
     assert {c["check"]: c["status"] for c in doc["checks"]}["2_credentials"] == "FAIL"
+
+
+def test_preflight_env_file_fills_an_empty_variable(tmp_path, built):
+    """A container or shell exporting API_FOOTBALL_KEY= (empty) must not hide the key in the env file."""
+    db, m, _ = built
+    (tmp_path / "m.json").write_text(json.dumps(m))
+    env_file = tmp_path / "k.env"
+    env_file.write_text("API_FOOTBALL_KEY=from-env-file-0001\n")
+    os.chmod(env_file, 0o600)
+    env = {"PATH": "/usr/bin:/bin", "HOME": str(tmp_path), "PYTHONPATH": str(ROOT), "API_FOOTBALL_KEY": ""}
+    r = subprocess.run([sys.executable, str(ROOT / "scripts" / "shadow_preflight.py"), "--manifest",
+                        str(tmp_path / "m.json"), "--db", str(db), "--env-file", str(env_file)],
+                       capture_output=True, text=True, cwd=tmp_path, env=env, timeout=300)
+    doc = json.loads(r.stdout[r.stdout.index("{"):])
+    cred = next(c for c in doc["checks"] if c["check"] == "2_credentials")
+    assert cred["key_present"] and cred["key_length"] == len("from-env-file-0001")
+
+
+def test_provider_remaining_from_an_earlier_utc_day_does_not_block_today(engine_db, monkeypatch):
+    from src.odds import quota, store
+
+    monkeypatch.setenv("ODDS_REQUEST_BUDGET_API_FOOTBALL", "70")
+    monkeypatch.delenv("API_FOOTBALL_LEDGER", raising=False)
+    monkeypatch.delenv("API_FOOTBALL_REQUIRE_LEDGER", raising=False)
+    yesterday = datetime(2030, 1, 4, 23, 50, tzinfo=timezone.utc)
+    store.log_request(engine_db, "api_football", "/x", 1, "ok", yesterday, 200, "15", None)
+    today = datetime(2030, 1, 5, 0, 10, tzinfo=timezone.utc)
+    ok = lambda u, h, t: (200, {"x-ratelimit-requests-remaining": "99"}, b"{}")  # noqa: E731
+    quota.fetch_json(engine_db, "api_football", "/y", "https://h/y", {}, cost=1,
+                     remaining_header="x-ratelimit-requests-remaining", transport=ok, now=today)
+    store.log_request(engine_db, "api_football", "/z", 1, "ok", today, 200, "15", None)
+    with pytest.raises(quota.BudgetExceeded):          # the same low value reported TODAY still stops
+        quota.fetch_json(engine_db, "api_football", "/w", "https://h/w", {}, cost=1,
+                         remaining_header="x-ratelimit-requests-remaining", transport=ok, now=today)

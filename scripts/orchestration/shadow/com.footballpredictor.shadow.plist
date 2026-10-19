@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- TEMPLATE (M3 Phase F). Not installed. Owner approval needed before:
+<!-- SUPERSEDED (M3.5): do NOT use. It has no ledger, manifest or caffeinate. Use deploy/shadow/macos/com.footballpredictor.shadow.plist.
+     TEMPLATE (M3 Phase F). Not installed. Owner approval needed before:
        cp scripts/orchestration/shadow/com.footballpredictor.shadow.plist ~/Library/LaunchAgents/
        launchctl load ~/Library/LaunchAgents/com.footballpredictor.shadow.plist
      Replace __REPO__, __SHADOW_DB__ and __BUDGET__ first and remove the Disabled key. Unload with launchctl unload <same path>. -->

@@ -50,12 +50,16 @@ def min_remaining() -> int:
         return 20
 
 
-def _last_reported_remaining(conn: sqlite3.Connection, provider: str) -> int | None:
+def _last_reported_remaining(conn: sqlite3.Connection, provider: str, now: datetime | None = None) -> int | None:
+    """The provider's own remaining count, reported today (UTC). The daily allowance resets at 00:00 UTC, so a
+    low value from an earlier day must not block today (it would never be refreshed: a refused request
+    receives no new header)."""
+    day = (now or datetime.now(timezone.utc)).astimezone(timezone.utc).strftime("%Y-%m-%d")
     row = conn.execute(
         """SELECT requests_remaining FROM provider_quota_log
-           WHERE provider = ? AND status = 'ok' AND requests_remaining IS NOT NULL
+           WHERE provider = ? AND status = 'ok' AND requests_remaining IS NOT NULL AND substr(at, 1, 10) = ?
            ORDER BY at DESC, id DESC LIMIT 1""",
-        (provider,),
+        (provider, day),
     ).fetchone()
     try:
         return int(float(row[0])) if row else None
@@ -97,7 +101,7 @@ def fetch_json(
     if shared is not None:
         used = max(used, shared)   # the shared ledger counts every consumer of the key
     budget = daily_budget(provider)
-    remaining = _last_reported_remaining(conn, provider)
+    remaining = _last_reported_remaining(conn, provider, moment)
     refusal = None
     if used + cost > budget:
         refusal = f"budget: {used} used + {cost} requested > {budget} approved today"

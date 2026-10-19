@@ -28,7 +28,8 @@ MANIFEST_VERSION = "shadow-manifest-v2"
 RUNTIME_DIRS = ("src", "api", "models")
 RUNTIME_FILES = ("requirements-lock.txt", "scripts/shadow_cycle.py", "scripts/shadow_settle.py",
                  "scripts/shadow_report.py", "scripts/shadow_preflight.py", "scripts/shadow_manifest.py",
-                 "scripts/prepare_shadow_db.py")
+                 "scripts/prepare_shadow_db.py", "scripts/shadow_monitor.py",
+                 "scripts/orchestration/shadow/mac_cycle.sh", "scripts/orchestration/shadow/mac_caffeinate.sh")
 SKIP_PARTS = {"__pycache__", ".DS_Store"}
 DAILY_BUDGET_MAX = 70
 CYCLE_CAP_MAX = 20

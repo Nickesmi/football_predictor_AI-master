@@ -27,12 +27,14 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 LIVE_DB = (PROJECT_ROOT / "data" / "engine.db").resolve()
 ALLOWED_CONSUMERS = {"shadow_cycle", "shadow_settle", "shadow_preflight"}
-VOLATILE = ("/tmp", "/var/tmp", "/dev/shm", "/run")
+# cleared on reboot or periodically (macOS purges /private/var/folders): never a ledger location
+VOLATILE = ("/tmp", "/var/tmp", "/dev/shm", "/run", "/private/tmp", "/private/var/tmp", "/private/var/folders",
+            "/var/folders")
 TESTS = ["tests/test_shadow_validation.py", "tests/test_shadow_operations.py", "tests/test_shadow_candidate_pathway.py",
          "tests/test_shadow_manifest.py", "tests/test_team_history_rh1.py", "tests/test_team_identity.py",
          "tests/test_team_registry.py", "tests/test_odds_history_k53.py", "tests/test_odds_m3.py",
          "tests/test_odds_layer.py", "tests/test_workspace_isolation.py", "tests/test_api_guard.py",
-         "tests/test_prepare_shadow_db.py", "tests/golden"]
+         "tests/test_prepare_shadow_db.py", "tests/test_shadow_mac_recovery.py", "tests/golden"]
 
 
 def _check(results, _name, _passed, **detail):
@@ -74,7 +76,8 @@ def main() -> int:
     for f in a.env_file:
         files_env.update(_env_file(f))
     for k, v in files_env.items():
-        os.environ.setdefault(k, v)
+        if not os.environ.get(k):          # an unset OR empty variable takes the env-file value
+            os.environ[k] = v
     sys.path.insert(0, str(PROJECT_ROOT))
     os.environ["FOOTBALL_PREDICTOR_DB_PATH"] = str(db)
     from src.ops.workspace_guard import isolate

@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- M3.5 TEMPLATE. NOT installed, NOT loaded. Disabled. Render __ROOT__ (absolute, e.g. /Users/<you>/FootballShadow)
+     and install only after owner authorization: docs/M3_5_MAC_RUNBOOK.md §6.
+     Slots: :00 and :30 local clock. A slot missed while asleep runs ONCE on wake (launchd coalesces);
+     the cycle never observes a fixture whose decision time has passed. -->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.footballpredictor.shadow</string>
+  <key>Disabled</key><true/>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>__ROOT__/code/scripts/orchestration/shadow/mac_cycle.sh</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>FOOTBALL_SHADOW_ROOT</key><string>__ROOT__</string>
+    <key>PATH</key><string>/usr/bin:/bin:/usr/sbin:/sbin</string>
+  </dict>
+  <key>WorkingDirectory</key><string>__ROOT__/run</string>
+  <key>StartCalendarInterval</key>
+  <array>
+    <dict><key>Minute</key><integer>0</integer></dict>
+    <dict><key>Minute</key><integer>30</integer></dict>
+  </array>
+  <key>RunAtLoad</key><false/>
+  <key>KeepAlive</key><false/>
+  <key>ProcessType</key><string>Background</string>
+  <key>ExitTimeOut</key><integer>60</integer>
+  <key>Umask</key><integer>63</integer>
+  <key>StandardOutPath</key><string>__ROOT__/run/logs/cycles.jsonl</string>
+  <key>StandardErrorPath</key><string>__ROOT__/run/logs/cycles.err</string>
+</dict>
+</plist>
