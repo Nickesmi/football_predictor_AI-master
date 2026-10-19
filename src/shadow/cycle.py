@@ -23,6 +23,7 @@ the per-minute throttle):
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 import subprocess
 import time
@@ -82,7 +83,12 @@ _ADDED_COLUMNS = {
     "shadow_cycles": (("status", "TEXT"), ("gap_minutes", "REAL"), ("missed_slots", "INTEGER")),
     "shadow_fixtures": (("home_team_id", "TEXT"), ("away_team_id", "TEXT")),
     "shadow_observations": (("identity_json", "TEXT"), ("v1_1_policy_version", "TEXT"), ("v1_1_json", "TEXT"),
-                            ("v1_1_assuming_frozen_json", "TEXT")),
+                            ("v1_1_assuming_frozen_json", "TEXT"),
+                            # M3.5 forward protocol: explicit ids and input availability per observation
+                            ("manifest_id", "TEXT"), ("code_fingerprint", "TEXT"), ("competition_key", "TEXT"),
+                            ("provider_league_id", "INTEGER"), ("provider_home_team_id", "TEXT"),
+                            ("provider_away_team_id", "TEXT"), ("home_canonical_team_id", "TEXT"),
+                            ("away_canonical_team_id", "TEXT"), ("inputs_available_json", "TEXT")),
 }
 
 
@@ -357,6 +363,18 @@ def _bilqe(match: dict) -> dict:
     }
 
 
+def _availability(sides) -> str:
+    """Exactly which history each side's inputs could use: the last fixture and when it became available."""
+    out = {}
+    for side in ("home", "away"):
+        r = sides.get(side) if isinstance(sides, dict) else None
+        r = r.to_dict() if hasattr(r, "to_dict") else (r or {})
+        ev = r.get("evidence") or {}
+        out[side] = {"status": r.get("status"), "matches_played": r.get("matches_played"),
+                     "as_of_fixture_id": ev.get("as_of_fixture_id"), "available_from": ev.get("available_from")}
+    return json.dumps(out, sort_keys=True, default=str)
+
+
 class _Recorded(Exception):
     """The observation row already describes why there is no forecast."""
 
@@ -384,8 +402,13 @@ def observe(conn, match: dict, kickoff_utc: str, now: datetime, cycle_id: str, h
            "calibration_version": provenance["calibration_version"],
            "legacy_policy_version": LEGACY_POLICY_VERSION, "v1_policy_version": v1.version(),
            "candidates_json": "[]", "legacy_json": "{}", "v1_json": "{}", "v1_assuming_frozen_json": "{}",
-           "v1_1_policy_version": v11.version()}
+           "v1_1_policy_version": v11.version(), "manifest_id": os.getenv("SHADOW_MANIFEST_ID"),
+           "code_fingerprint": os.getenv("SHADOW_CODE_FINGERPRINT"),
+           "provider_league_id": match.get("league_id"),
+           "provider_home_team_id": None if match.get("home_team_id") is None else str(match["home_team_id"]),
+           "provider_away_team_id": None if match.get("away_team_id") is None else str(match["away_team_id"])}
     competition = competition_for_fixture(match.get("provider"), match.get("league_id"))
+    row["competition_key"] = competition.key if competition else None
     status = freshness.fixture_quote_status(conn, str(match["id"]), now)
     row.update({"quote_status": status["status"], "quote_age_minutes": status["age_minutes"],
                 "quote_bucket": status["bucket"]})
@@ -401,8 +424,12 @@ def observe(conn, match: dict, kickoff_utc: str, now: datetime, cycle_id: str, h
                                                **{side: r.to_dict() for side, r in exc.resolutions.items()}},
                                               sort_keys=True, default=str)
             row["error"] = "NO_FORECAST: TEAM_IDENTITY_UNRESOLVED"
+            row["inputs_available_json"] = _availability(exc.resolutions)
             raise _Recorded() from None
         row["identity_json"] = json.dumps({**inputs["identity"], "resolved": True}, sort_keys=True, default=str)
+        row["home_canonical_team_id"] = inputs["identity"]["home"].get("canonical_team_id")
+        row["away_canonical_team_id"] = inputs["identity"]["away"].get("canonical_team_id")
+        row["inputs_available_json"] = _availability(inputs["identity"])
         raw = estimate_probabilities_from_inputs(inputs)
         probs = calibrate_probabilities(raw, _pick_calibrator(conn))
         candidates = find_value(match, probs, conn, now=now)

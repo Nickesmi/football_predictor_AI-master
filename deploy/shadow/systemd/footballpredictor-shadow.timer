@@ -1,0 +1,13 @@
+# M3.5 template — NOT installed or enabled.
+[Unit]
+Description=Football predictor forward shadow, every 30 minutes (UTC)
+
+[Timer]
+OnCalendar=*-*-* *:00,30:00 UTC
+AccuracySec=1min
+# No catch-up after downtime: gaps are recorded as missed slots, never back-filled.
+Persistent=false
+Unit=footballpredictor-shadow.service
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,17 @@
+# M3.5 template — NOT installed. Daily read-only report; exit 3 = stale (host or scheduler stopped).
+[Unit]
+Description=Football predictor shadow daily report and stale check
+
+[Service]
+Type=oneshot
+User=shadow
+Group=shadow
+WorkingDirectory=/srv/shadow
+EnvironmentFile=/etc/football-shadow/shadow.env
+ExecStart=/bin/sh -c '/opt/football-shadow/.venv/bin/python /opt/football-shadow/scripts/shadow_report.py \
+  --db /srv/shadow/engine_shadow.db --out /srv/shadow/reports/$(date -u +%%F).json --check-stale-minutes 90'
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/srv/shadow
+PrivateTmp=yes

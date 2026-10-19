@@ -1,0 +1,11 @@
+# M3.5 template — NOT installed or enabled.
+[Unit]
+Description=Football predictor shadow daily report (00:15 UTC)
+
+[Timer]
+OnCalendar=*-*-* 00:15:00 UTC
+Persistent=true
+Unit=footballpredictor-shadow-report.service
+
+[Install]
+WantedBy=timers.target

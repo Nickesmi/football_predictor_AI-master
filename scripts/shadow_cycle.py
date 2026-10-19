@@ -32,6 +32,8 @@ def main() -> int:
     parser.add_argument("--ledger", type=Path, help="shared API-Football ledger for all consumers (API_FOOTBALL_LEDGER)")
     parser.add_argument("--max-age", type=int, default=240, help="ODDS_MAX_AGE_MINUTES for the shadow (provisional)")
     parser.add_argument("--max-requests-per-cycle", type=int, default=None)
+    parser.add_argument("--manifest", type=Path,
+                        help="versioned shadow manifest (src/shadow/manifest.py); required on the shadow host")
     parser.add_argument("--profile", choices=("low", "medium", "full"), default="medium",
                         help="competition set and closing capture (src/shadow/cycle.PROFILES)")
     args = parser.parse_args()
@@ -46,6 +48,11 @@ def main() -> int:
     if not db.exists():
         print(f"refusing: {db} does not exist; create the shadow DB from a verified backup first", file=sys.stderr)
         return 2
+    stop = db.parent / "SHADOW_STOP"
+    if stop.exists():
+        # Emergency stop: no request, no observation, no cycle row (the gap shows as missed slots later).
+        print(json.dumps({"stopped": f"{stop} exists; remove it to resume"}))
+        return 0
     if os.getenv("BASELINE_FREEZE"):
         print("note: BASELINE_FREEZE is set; shadow observations are still never counted", file=sys.stderr)
     os.environ["FOOTBALL_PREDICTOR_DB_PATH"] = str(db)
@@ -83,14 +90,34 @@ def main() -> int:
     from src.db.database import get_db  # noqa: E402
     from src.shadow.cycle import run_cycle  # noqa: E402
 
-    from dataclasses import replace  # noqa: E402
+    from dataclasses import asdict, replace  # noqa: E402
 
     from src.shadow.cycle import PROFILES  # noqa: E402
 
     cfg = PROFILES[args.profile]
     if args.max_requests_per_cycle is not None:
         cfg = replace(cfg, max_requests_per_cycle=max(0, args.max_requests_per_cycle))
-    report = run_cycle(get_db(), config.APIFOOTBALL_API_KEY, config.APIFOOTBALL_HOST, cfg,
+    conn = get_db()
+    if args.manifest or api_guard.required():
+        # Deployment mode: the cycle runs only on exactly the pinned code, data and settings.
+        from src.shadow import manifest as shadow_manifest  # noqa: E402
+
+        if not args.manifest:
+            print("refusing (fail closed): --manifest is required on the shadow host", file=sys.stderr)
+            return 2
+        try:
+            pinned = shadow_manifest.load(args.manifest)
+            profile = {"name": args.profile, **{k: (list(v) if isinstance(v, tuple) else v)
+                                               for k, v in asdict(cfg).items()}}
+            problems = shadow_manifest.problems_runtime(pinned, conn, profile, args.budget)
+        except Exception as exc:
+            problems = [f"manifest unusable: {type(exc).__name__}: {exc}"]
+        if problems:
+            print("refusing (fail closed): " + "; ".join(problems), file=sys.stderr)
+            return 2
+        os.environ["SHADOW_MANIFEST_ID"] = pinned["manifest_id"]
+        os.environ["SHADOW_CODE_FINGERPRINT"] = pinned["code_fingerprint"]["sha256"]
+    report = run_cycle(conn, config.APIFOOTBALL_API_KEY, config.APIFOOTBALL_HOST, cfg,
                        force_discovery=args.force_discovery)
     report["profile"] = args.profile
     print(json.dumps(report, indent=1, default=str))
