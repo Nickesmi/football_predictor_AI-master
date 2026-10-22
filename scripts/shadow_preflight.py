@@ -34,7 +34,7 @@ TESTS = ["tests/test_shadow_validation.py", "tests/test_shadow_operations.py", "
          "tests/test_shadow_manifest.py", "tests/test_team_history_rh1.py", "tests/test_team_identity.py",
          "tests/test_team_registry.py", "tests/test_odds_history_k53.py", "tests/test_odds_m3.py",
          "tests/test_odds_layer.py", "tests/test_workspace_isolation.py", "tests/test_api_guard.py",
-         "tests/test_prepare_shadow_db.py", "tests/test_shadow_mac_recovery.py", "tests/golden"]
+         "tests/test_prepare_shadow_db.py", "tests/test_shadow_mac_recovery.py", "tests/test_shadow_quota.py", "tests/golden"]
 
 
 def _check(results, _name, _passed, **detail):

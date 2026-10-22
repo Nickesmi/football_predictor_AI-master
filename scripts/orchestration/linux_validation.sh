@@ -13,7 +13,7 @@ mkdir -p "$OUT"
 docker info >/dev/null 2>&1 || { echo "BLOCKED: Docker daemon not available (docker info failed)"; exit 3; }
 MOUNT_COPY=()
 if [ -n "$COPY" ]; then cp "$COPY" "$OUT/migration_copy.db"; MOUNT_COPY=(-v "$OUT/migration_copy.db:/work/migration_copy.db"); fi
-# SHADOW_DIR=<prepared shadow dir with shadow_manifest.v3.json>: also run the host preflight (read-only mount)
+# SHADOW_DIR=<prepared shadow dir with shadow_manifest.v4.json>: also run the host preflight (read-only mount)
 if [ -n "${SHADOW_DIR:-}" ]; then MOUNT_COPY+=(-v "$SHADOW_DIR":/shadow_ro:ro); fi
 docker run --rm --platform linux/amd64 \
   -v "$ROOT":/src:ro -v "$OUT":/out "${MOUNT_COPY[@]}" \
@@ -41,10 +41,10 @@ docker run --rm --platform linux/amd64 \
     python scripts/test_integrity_audit.py > /out/integrity_audit.log 2>&1; echo "integrity_audit exit $?" >> /out/summary.txt
     if [ -d /shadow_ro ]; then
       # host preflight on a copy of the prepared shadow DB, with a dummy key and a scratch ledger (no request)
-      mkdir -p /work/shadow && cp /shadow_ro/engine_shadow.db /shadow_ro/shadow_manifest.v3.json /work/shadow/
+      mkdir -p /work/shadow && cp /shadow_ro/engine_shadow.db /shadow_ro/shadow_manifest.v4.json /work/shadow/
       printf "API_FOOTBALL_KEY=linux-validation-dummy-key\nAPI_FOOTBALL_REQUIRE_LEDGER=1\nAPI_FOOTBALL_LEDGER=/work/shadow/ledger.db\nODDS_REQUEST_BUDGET_API_FOOTBALL=70\n" > /work/shadow.env
       chmod 640 /work/shadow.env
-      python scripts/shadow_preflight.py --manifest /work/shadow/shadow_manifest.v3.json --db /work/shadow/engine_shadow.db \
+      python scripts/shadow_preflight.py --manifest /work/shadow/shadow_manifest.v4.json --db /work/shadow/engine_shadow.db \
         --env-file /work/shadow.env --run-tests --offline --out /out/preflight.json > /out/preflight.log 2>&1
       echo "preflight_offline exit $?" >> /out/summary.txt
     fi

@@ -17,5 +17,5 @@ export API_FOOTBALL_CONSUMER=shadow_cycle
 cd "$RUN"
 exec "$ROOT/venv/bin/python" "$ROOT/code/scripts/shadow_cycle.py" \
   --db "$RUN/engine_shadow.db" --ledger "$RUN/api_football_ledger.db" \
-  --manifest "$RUN/shadow_manifest.v3.json" \
+  --manifest "$RUN/shadow_manifest.v4.json" \
   --profile medium --max-requests-per-cycle 20 --budget 70

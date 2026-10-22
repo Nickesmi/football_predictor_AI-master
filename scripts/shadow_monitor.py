@@ -2,7 +2,7 @@
 """
 Shadow monitor (M3.5, Mac host). Read-only; sends no request.
 
-    python scripts/shadow_monitor.py --run <root>/run [--manifest <root>/run/shadow_manifest.v3.json] [--notify]
+    python scripts/shadow_monitor.py --run <root>/run [--manifest <root>/run/shadow_manifest.v4.json] [--notify]
 
 Reports cycle staleness, missed slots, network failures, HTTP 429s, quota (shared ledger and the
 provider's own remaining count), database integrity, the forward-evidence rule, the emergency stop
@@ -99,10 +99,11 @@ def build(run: Path, manifest: dict | None, now: datetime, stale_minutes: int, b
     stop = (run / "SHADOW_STOP").exists()
     host = {"platform": platform.system(), "stop_file_present": stop}
     if platform.system() == "Darwin":
-        pidfile = run / "caffeinate.pid"
-        pid = pidfile.read_text().strip() if pidfile.exists() else None
-        alive = bool(pid) and subprocess.run(["ps", "-p", pid, "-o", "comm="], capture_output=True,
-                                             text=True).stdout.strip().endswith("caffeinate")
+        # Same ownership test as the stop command (pid, start time and command line all match).
+        status = subprocess.run(["/bin/bash", str(PROJECT_ROOT / "scripts/orchestration/shadow/mac_caffeinate.sh"),
+                                 "status", str(run / "caffeinate.pid")], capture_output=True, text=True)
+        alive = status.returncode == 0
+        pid = status.stdout.split()[1] if alive else None
         batt = subprocess.run(["pmset", "-g", "batt"], capture_output=True, text=True).stdout
         host.update({"caffeinate_pid": pid, "caffeinate_running": alive,
                      "power_source": "AC" if "AC Power" in batt else ("battery" if "Battery Power" in batt else None)})
