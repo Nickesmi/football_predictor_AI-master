@@ -6,6 +6,8 @@ import DatePicker from './components/DatePicker';
 import ResultsTracker from './components/ResultsTracker';
 import TennisResultsTracker from './components/TennisResultsTracker';
 import TennisView from './views/TennisView';
+import DemoBar from './components/DemoBar';
+import { allowBackgroundRefresh, confirmText, isDemo, refreshOutcome } from './demo/demoRefresh';
 
 const API = import.meta.env.VITE_API_URL || "/api";
 
@@ -74,6 +76,19 @@ function App() {
   const [coverage, setCoverage] = useState(null);
   const [liveClock, setLiveClock] = useState(Date.now());
   const selectedFixtureRealtimeKeyRef = useRef('');
+  // Demo mode (scripts/demo_server.py): cached fixtures only; API-Football only through 'Refresh fixtures'.
+  const [demoStatus, setDemoStatus] = useState(null);
+  const [demoCache, setDemoCache] = useState(null);
+  const [demoBusy, setDemoBusy] = useState(false);
+  const [demoNotice, setDemoNotice] = useState(null);
+  const demoMode = isDemo(demoStatus);
+
+  useEffect(() => {
+    fetch(`${API}/demo/status`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((s) => { if (isDemo(s)) setDemoStatus(s); })
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
     const updateClock = () => setTodayDate(getRealtimeDate());
@@ -156,6 +171,12 @@ function App() {
         _client_received_at: receivedAt,
       }));
       const noDataMessage = !Array.isArray(data) && data.message ? data.message : null;
+      if (!Array.isArray(data) && data.demo) {
+        setDemoCache(data.demo);
+        if (data.demo.quota) setDemoStatus(data.demo.quota);
+      } else {
+        setDemoCache(null);
+      }
 
       setFixtures(receivedFixtureList);
 
@@ -214,7 +235,7 @@ function App() {
     const handleVisibilityChange = () => {
       const isVisible = !document.hidden;
       setIsTabVisible(isVisible);
-      if (isVisible) {
+      if (isVisible && allowBackgroundRefresh(demoStatus)) {
         fetchFixtures(selectedDate, {
           isBackground: true,
           forceRefresh: selectedDate === todayDate,
@@ -223,7 +244,7 @@ function App() {
     };
     document.addEventListener("visibilitychange", handleVisibilityChange);
     return () => document.removeEventListener("visibilitychange", handleVisibilityChange);
-  }, [selectedDate, todayDate, fetchFixtures]);
+  }, [selectedDate, todayDate, fetchFixtures, demoStatus]);
 
   // Connect to WebSocket for real-time live scores
   useEffect(() => {
@@ -272,7 +293,7 @@ function App() {
   }, [selectedDate, todayDate]);
   // Poll prediction statuses every few seconds if there are pending items
   useEffect(() => {
-    if (!coverage || coverage.predicted_pending === 0) return;
+    if (!coverage || coverage.predicted_pending === 0 || !allowBackgroundRefresh(demoStatus)) return;
     const t = setInterval(() => {
       fetch(`${API}/debug/coverage?date=${selectedDate}`)
         .then(r => r.json())
@@ -280,7 +301,30 @@ function App() {
         .catch(console.error);
     }, 5000);
     return () => clearInterval(t);
-  }, [coverage, selectedDate]);
+  }, [coverage, selectedDate, demoStatus]);
+
+  // The only action that can spend an API-Football request in demo mode: explicit, confirmed, one request.
+  const handleDemoRefresh = useCallback(async () => {
+    if (!demoStatus || demoBusy) return;
+    if (!window.confirm(confirmText(demoStatus, selectedDate))) return;
+    setDemoBusy(true);
+    setDemoNotice(null);
+    try {
+      const res = await fetch(`${API}/demo/refresh-fixtures/${selectedDate}`, { method: 'POST' });
+      const body = await res.json().catch(() => null);
+      const outcome = refreshOutcome(res.status, body);
+      setDemoNotice(outcome.text);
+      const quota = res.ok ? body?.quota : body?.detail?.quota;
+      if (quota) setDemoStatus(quota);
+      if (outcome.ok) await fetchFixtures(selectedDate);
+    } catch {
+      setDemoNotice('Refresh failed (server unreachable); cached fixtures are unchanged.');
+    } finally {
+      setDemoBusy(false);
+    }
+  }, [demoStatus, demoBusy, selectedDate, fetchFixtures]);
+
+  useEffect(() => { setDemoNotice(null); }, [selectedDate]);
 
   const realtimeFixtures = React.useMemo(
     () => fixtures.map((fixture) => withRealtimeStatus(fixture, liveClock)),
@@ -399,7 +443,8 @@ function App() {
         <div className="flex-1" />
         <button
           onClick={handleScanLiveOdds}
-          disabled={isScanning || sport === 'tennis'}
+          disabled={isScanning || sport === 'tennis' || demoMode}
+          title={demoMode ? 'Unavailable in demo mode (it would spend API-Football requests)' : undefined}
           className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gold-500/10 border border-gold-500/25 text-gold-500 hover:bg-gold-500/20 hover:border-gold-500/40 transition-all text-xs font-bold disabled:opacity-50"
         >
           {isScanning ? (
@@ -426,6 +471,9 @@ function App() {
 
       {/* ── Date Picker ──────────────────────────────────── */}
       <DatePicker selectedDate={selectedDate} onDateChange={handleDateChange} today={todayDate} />
+      {sport === 'football' && (
+        <DemoBar status={demoStatus} cache={demoCache} busy={demoBusy} notice={demoNotice} onRefresh={handleDemoRefresh} />
+      )}
 
       {/* ── Tennis View (renders instead of football layout) ─── */}
       {sport === 'tennis' ? (
