@@ -10,7 +10,8 @@ Branch `demo/quota-policy`, from `2bd13a5`, built in the worktree `.worktrees/de
 | **The interface asked for a new date by itself.** `App.jsx` follows "today" in Asia/Tehran. A 60-second clock switches the selected date at Tehran midnight, and the new date is loaded at once. A tab coming back into view also reloads with `force_refresh` for today, and failed loads retry 3 times. | 2026-10-20 **20:30:24** and 2026-10-21 **20:30:46** UTC. Tehran midnight is 20:30 UTC: one request for the new day each time, with nobody clicking. 10-17 20:36, 10-18 19:44 and 10-19 18:49 came from page opens. |
 | The 5 requests were used by 2026-10-21. | 5 rows `allowed = 1`, one `/fixtures?date=…` each for 10-18 to 10-22 |
 | At Tehran midnight on 10-23 (2026-10-22 20:30:36 UTC) the open page asked for 10-23. The guard refused it **before sending** (row 6, `allowed = 0`). The fixture service then reported the refusal as "Football API unavailable…", with no fixtures. | row 6; no 10-23 cache file |
-| Side defect: the refused attempt was still marked as fetched in `demo_fetched_dates` (it is marked in `finally`), so 10-23 could never have been fetched later, even with a new allowance. | `demo_fetched_dates` holds 2026-10-23 |
+| Side defect: the **backend** demo wrapper (`fetch_once_per_date` in `scripts/demo_server.py`, not the frontend) marked the refused attempt as fetched in `demo_fetched_dates` (it marked in `finally`). So 10-23 could never have been fetched later, even with a new allowance. | `demo_fetched_dates` holds 2026-10-23 |
+| **Implicit time zone:** the date switch happened at **Tehran** midnight. Commit `a76ab45` (2026-10-11), with the working code from about 2026-09-20, silently changed "today", the provider request and the stored local times from Europe/Istanbul to Asia/Tehran. In Istanbul it was still 23:30 on 10-22. | `git show a76ab45^:api/services/fixtures_service.py`; cache kick-off minutes flip from mostly `:00` to mostly `:30` on 2026-09-20 |
 
 **Cached dates were never lost.** 2026-05-24 → 2026-10-22 are all in `.cache/`, 146 files. Today, 10-23, had none, and the error replaced the list.
 
@@ -66,6 +67,36 @@ Branch `demo/quota-policy`, from `2bd13a5`, built in the worktree `.worktrees/de
 
 The demo works only on its isolated DB copy and its own cache. It cannot write forward observations, calibration or baseline counts. This branch changes `src/` and `api/`, so its code fingerprint differs from manifest v4. That is intended: the shadow keeps running its own pinned worktree.
 
+## 2b. Second pass (2026-10-23): fixture states, explicit time zone, no automatic external requests
+
+- **A refused, failed or incomplete request is never a successful fetch.**
+  - A date counts as fetched only when its own fixtures are stored, or a successful response said none are scheduled.
+  - The legacy `demo_fetched_dates` table is no longer trusted (it holds the bogus 10-23 mark). It is left unchanged.
+  - A failed refresh never writes or replaces the cache.
+- **Explicit states** in every fixture response (`demo.state`) and refresh result:
+  - `cached`: fixtures served from the cache, with the time of the last recorded successful fetch;
+  - `fresh`: fixtures just retrieved by a refresh;
+  - `no_fixtures`: the provider was asked successfully and has nothing scheduled (recorded, never asked again);
+  - `quota_exhausted`: no authorized request remains, HTTP 429 (returned as 429), or the provider's "request limit" message;
+  - `provider_error`: a network or HTTP failure, or another provider error (502), with the error text kept and shown;
+  - `not_cached`: nothing stored yet, and a refresh is possible.
+- **Time zone:**
+  - Calendar days are explicit **Europe/Istanbul** days (`--display-tz`; the frontend uses the server's `display_timezone`, otherwise `VITE_DISPLAY_TZ`, default Europe/Istanbul).
+  - New fixtures store `kickoff_utc`, the provider's instant in UTC. A refresh asks the provider with `timezone=Europe/Istanbul`.
+  - Older cache files have only local strings. Their basis is inferred per file, only when the kick-off minutes are decisive: at least 20 fixtures and a 2:1 majority. That gives Asia/Tehran from about 2026-09-20 and Europe/Istanbul before.
+  - Fixtures of unknown basis are shown as stored, flagged `time_basis: unknown`, and never moved to another day.
+  - Each fixture carries `kickoff_utc`, `display_timezone` and `time_basis` (`utc`, `inferred:<zone>` or `unknown`).
+  - The production fixture service is unchanged, apart from the extra `kickoff_utc` field and an optional `request_tz` parameter whose default is still Tehran.
+- **No automatic external requests** (`src/ops/demo_network.py`):
+  - In the demo process, DNS for any external name is refused unless permitted. That covers `http.client`, `urllib`, `requests` and `httpx`.
+  - `curl_cffi`, which does its own DNS, is refused at `Session.request`.
+  - Permitted are: API-Football through the counted explicit refresh, logo images (`…/image` on SofaScore, `media.api-sports.io`) and loopback.
+  - The smoke run showed the old demo's **SofaScore direct-fetch fallback ran on every page load** for past and today's dates (7 calls in one run). They are now refused and counted in `/api/demo/status` → `external_requests_blocked`. Match analysis still answers (HTTP 200).
+- **Frontend in demo mode:**
+  - no reload on tab focus, no polling and **no retries** of a failed load;
+  - date changes only read the cache;
+  - the DEMO strip shows the state label, the snapshot time and "Times in Europe/Istanbul".
+
 ## 3. Restoring current fixtures (each step needs your go-ahead)
 
 Today's fixtures need **1 API-Football request**. Nothing below has been run.
@@ -93,16 +124,17 @@ After step 3 the interface already shows every cached date, with update times, a
 | Suite | Result |
 |---|---|
 | `tests/test_demo_refresh_policy.py` (new, 20 tests) | **20 passed** |
+| `tests/test_demo_fixture_states.py` (new, 11 regression tests: the October 23 failure and its grant follow-up, Istanbul/Tehran boundaries, legacy basis inference, unknown basis, repeated loads from 20:00 to 22:00 UTC, no fixtures scheduled, provider limit in the body, a failed refresh keeping the cache, network guard) | **11 passed** |
 | `tests/test_demo_quota.py` (2 tests updated to the new rule: page loads never fetch) | **7 passed** |
-| Full suite, Python 3.11 | **940 passed, 2 skipped** (migration test without a DB copy; service-hold test, since the worktree has no hold file) |
-| Full suite, Python 3.13 | **939 passed, 3 skipped** (the same two, plus `pyflakes` not installed) |
+| Full suite, Python 3.11 | **951 passed, 2 skipped** (migration test without a DB copy; service-hold test, since the worktree has no hold file) |
+| Full suite, Python 3.13 | **950 passed, 3 skipped** (the same two, plus `pyflakes` not installed) |
 | Goldens | 16 passed |
 | Migrations on a DB copy | 4 passed |
 | Integrity audit | PASSED |
-| Frontend `npm test` (`node --test src/demo/`) | **9 passed** |
+| Frontend `npm test` (`node --test src/demo/`) | **13 passed** (including the 20:30/21:00 UTC boundary and no retries in demo mode) |
 | Frontend `eslint .` | clean |
 | Frontend `vite build` | built (output in the scratchpad, not in the repo) |
-| Smoke run of the new server on **copies** of the real demo DB, usage DB and cache (port 8011, no key) | 10-20/21/22 served (239/256/177 fixtures) with their true fetch times; 10-23 "No cached fixtures…"; status `5/5, refused 1, no owner-authorized allowance`; refresh → 403; cached date → 409; **0 requests**; usage copy unchanged |
+| Smoke run of the new server on **copies** of the real demo DB, usage DB and cache (port 8011, no key) | Istanbul days 10-21/10-22 served (255/177 fixtures, basis `inferred:Asia/Tehran`) with their true fetch times; today = 10-23 (Istanbul); 10-23 `quota_exhausted` with a message; analysis 200; 7 automatic SofaScore data calls refused; status `5/5, refused 1, no owner-authorized allowance`; refresh → 403; cached date → 409; **0 requests**; usage copy unchanged |
 
 The scenarios you listed:
 
