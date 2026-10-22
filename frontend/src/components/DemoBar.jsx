@@ -1,6 +1,6 @@
 import React from 'react';
 import { Database, RefreshCw, Loader2, Info } from 'lucide-react';
-import { dataBadge, refreshControl } from '../demo/demoRefresh';
+import { dataBadge, refreshControl, timesNote } from '../demo/demoRefresh';
 
 // Demo-mode strip: what the list shows (cached snapshot and its age), the authorized allowance,
 // and the only control that can spend an API-Football request.
@@ -14,11 +14,13 @@ export default function DemoBar({ status, cache, busy, notice, onRefresh }) {
         Demo
       </span>
       {badge && (
-        <span className={`flex items-center gap-1.5 ${badge.kind === 'cached' ? 'text-slate-300' : 'text-slate-500'}`}>
+        <span className={`flex items-center gap-1.5 ${badge.kind === 'cached' ? 'text-slate-300'
+          : badge.kind === 'problem' ? 'text-amber-400' : 'text-slate-500'}`}>
           <Database className="w-3.5 h-3.5" />
           {badge.text}
         </span>
       )}
+      {timesNote(cache) && <span className="text-slate-500">{timesNote(cache)}</span>}
       <div className="flex-1" />
       <span className="text-slate-500">{control.detail}</span>
       <button

@@ -20,13 +20,32 @@ export const formatUpdated = (iso, nowMs = Date.now()) => {
   return `updated ${ago} (${stamp})`;
 };
 
+// One label per fixture state (api/demo_mode.py); cached data is never presented as live.
+export const STATE_TEXT = {
+  cached: 'Cached snapshot',
+  fresh: 'Just retrieved',
+  no_fixtures: 'No fixtures scheduled',
+  quota_exhausted: 'Not cached · no authorized request left',
+  provider_error: 'Not cached · last refresh failed',
+  not_cached: 'Not cached yet',
+};
+
 export const dataBadge = (cache, nowMs = Date.now()) => {
   if (!cache) return null;
-  if (!cache.cached) return { kind: 'none', text: 'No cached fixtures for this date' };
-  const label = cache.period === 'past' ? 'Cached results snapshot' : 'Cached snapshot · not live';
-  const when = cache.last_updated_at ? formatUpdated(cache.last_updated_at, nowMs) : 'update time unknown';
-  return { kind: 'cached', text: `${label} · ${when}` };
+  const state = cache.state || 'not_cached';
+  if (state === 'cached' || state === 'fresh') {
+    const label = cache.period === 'past' ? 'Cached results snapshot' : 'Cached snapshot · not live';
+    const when = cache.last_updated_at ? formatUpdated(cache.last_updated_at, nowMs) : 'update time unknown';
+    return { kind: 'cached', state, text: `${label} · ${when}` };
+  }
+  if (state === 'no_fixtures') {
+    return { kind: 'empty', state, text: `${STATE_TEXT.no_fixtures} · ${formatUpdated(cache.last_updated_at, nowMs)}` };
+  }
+  const error = state === 'provider_error' && cache.last_attempt?.error ? ` (${cache.last_attempt.error})` : '';
+  return { kind: state === 'not_cached' ? 'none' : 'problem', state, text: `${STATE_TEXT[state] || state}${error}` };
 };
+
+export const timesNote = (cache) => (cache && cache.display_timezone ? `Times in ${cache.display_timezone}` : '');
 
 export const allowanceText = (status) => {
   if (!isDemo(status)) return '';
@@ -39,8 +58,8 @@ export const refreshControl = (status, cache, { busy = false } = {}) => {
   const cost = status.cost_per_refresh || 1;
   const base = { visible: true, cost, label: `Refresh fixtures (${cost} request)`, detail: allowanceText(status) };
   if (busy) return { ...base, enabled: false, label: 'Refreshing…', reason: 'A refresh is running.' };
-  if (cache && cache.cached) {
-    return { ...base, enabled: false, reason: 'This date is already cached; it is never requested again.' };
+  if (cache && cache.fetched) {
+    return { ...base, enabled: false, reason: 'This date was already fetched; it is never requested again.' };
   }
   if (!status.can_refresh) {
     const why = (status.blocked_reasons && status.blocked_reasons[0]) || 'No authorized request remains.';
@@ -59,8 +78,23 @@ export const confirmText = (status, date) => {
 // The message to show after POST /api/demo/refresh-fixtures (FastAPI puts errors under `detail`).
 export const refreshOutcome = (httpStatus, body) => {
   const detail = (body && (body.detail || body)) || {};
-  if (httpStatus === 200) return { ok: true, text: `Fixtures updated: ${detail.cache?.cached_fixtures ?? 0} cached.` };
+  if (httpStatus === 200) return { ok: true, text: detail.message || `Fixtures updated: ${detail.cache?.cached_fixtures ?? 0}.` };
   if (httpStatus === 409) return { ok: false, text: detail.message || 'Already cached or already running.' };
-  if (httpStatus === 403) return { ok: false, text: detail.message || 'No authorized request remains.' };
+  if (httpStatus === 403 || httpStatus === 429) {
+    return { ok: false, text: detail.message || 'No authorized request remains; nothing was sent.' };
+  }
   return { ok: false, text: detail.message || 'Refresh failed; cached fixtures are unchanged.' };
 };
+
+// Calendar day of an instant in an explicit IANA time zone (never the browser's implicit zone).
+export const DEFAULT_DISPLAY_TZ = 'Europe/Istanbul';
+
+export const dateInZone = (instant, timeZone = DEFAULT_DISPLAY_TZ) => {
+  const parts = new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' })
+    .formatToParts(instant);
+  const get = (type) => parts.find((part) => part.type === type)?.value;
+  return `${get('year')}-${get('month')}-${get('day')}`;
+};
+
+// Demo mode: one try per load (a failed load is shown, not retried in the background).
+export const maxLoadRetries = (status) => (isDemo(status) ? 0 : 3);

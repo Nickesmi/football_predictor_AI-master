@@ -7,22 +7,16 @@ import ResultsTracker from './components/ResultsTracker';
 import TennisResultsTracker from './components/TennisResultsTracker';
 import TennisView from './views/TennisView';
 import DemoBar from './components/DemoBar';
-import { allowBackgroundRefresh, confirmText, isDemo, refreshOutcome } from './demo/demoRefresh';
+import {
+  DEFAULT_DISPLAY_TZ, allowBackgroundRefresh, confirmText, dateInZone, isDemo, maxLoadRetries, refreshOutcome,
+} from './demo/demoRefresh';
 
 const API = import.meta.env.VITE_API_URL || "/api";
 
-const fmtDateInTimeZone = (d, timeZone = 'Asia/Tehran') => {
-  const parts = new Intl.DateTimeFormat('en-CA', {
-    timeZone,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).formatToParts(d);
-  const get = (type) => parts.find((part) => part.type === type)?.value;
-  return `${get('year')}-${get('month')}-${get('day')}`;
-};
-
-const getRealtimeDate = () => fmtDateInTimeZone(new Date());
+// Calendar days are shown in one explicit time zone (Europe/Istanbul unless VITE_DISPLAY_TZ says otherwise;
+// in demo mode the server's display_timezone). Kick-off instants stay in UTC on the server.
+const ENV_DISPLAY_TZ = import.meta.env.VITE_DISPLAY_TZ || DEFAULT_DISPLAY_TZ;
+const getRealtimeDate = (timeZone = ENV_DISPLAY_TZ) => dateInZone(new Date(), timeZone);
 
 const isActiveStatus = (status = '') => (
   status.includes('LIVE') ||
@@ -59,8 +53,9 @@ const fixtureRealtimeKey = (fixture) => {
 };
 
 function App() {
-  const [todayDate, setTodayDate] = useState(getRealtimeDate);
-  const [selectedDate, setSelectedDate] = useState(getRealtimeDate);
+  const [displayTz, setDisplayTz] = useState(ENV_DISPLAY_TZ);
+  const [todayDate, setTodayDate] = useState(() => getRealtimeDate());
+  const [selectedDate, setSelectedDate] = useState(() => getRealtimeDate());
   const [followToday, setFollowToday] = useState(true);
   const [fixtures, setFixtures] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -82,20 +77,27 @@ function App() {
   const [demoBusy, setDemoBusy] = useState(false);
   const [demoNotice, setDemoNotice] = useState(null);
   const demoMode = isDemo(demoStatus);
+  const demoStatusRef = useRef(null);
+  useEffect(() => { demoStatusRef.current = demoStatus; }, [demoStatus]);
 
   useEffect(() => {
     fetch(`${API}/demo/status`)
       .then((r) => (r.ok ? r.json() : null))
-      .then((s) => { if (isDemo(s)) setDemoStatus(s); })
+      .then((s) => {
+        if (!isDemo(s)) return;
+        demoStatusRef.current = s;
+        setDemoStatus(s);
+        if (s.display_timezone) setDisplayTz(s.display_timezone);
+      })
       .catch(() => {});
   }, []);
 
   useEffect(() => {
-    const updateClock = () => setTodayDate(getRealtimeDate());
+    const updateClock = () => setTodayDate(getRealtimeDate(displayTz));
     updateClock();
     const t = setInterval(updateClock, 60000);
     return () => clearInterval(t);
-  }, []);
+  }, [displayTz]);
 
   useEffect(() => {
     const tick = () => setLiveClock(Date.now());
@@ -209,7 +211,7 @@ function App() {
     } catch (e) {
       // Auto-retry up to 3 times with increasing delays (2s, 4s, 6s)
       // This handles transient failures like backend still starting up
-      if (retryCount < 3) {
+      if (retryCount < maxLoadRetries(demoStatusRef.current)) {
         const delay = (retryCount + 1) * 2000;
         setTimeout(() => {
           fetchFixtures(dateStr, { ...options, retryCount: retryCount + 1 });
