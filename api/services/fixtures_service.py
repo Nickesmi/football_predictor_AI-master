@@ -152,8 +152,8 @@ def _write_fixture_cache(date_str: str, fixtures: list) -> None:
 _LAST_API_FOOTBALL_ERROR: Optional[str] = None
 
 
-def _fetch_api_football_fixtures(date_str: str) -> list[dict]:
-    """Fetch scheduled/live fixtures from API-Football v3 for a date."""
+def _fetch_api_football_fixtures(date_str: str, request_tz: str = "Asia/Tehran") -> list[dict]:
+    """Fetch scheduled/live fixtures from API-Football v3 for a date (a calendar day in request_tz)."""
     global _LAST_API_FOOTBALL_ERROR
     _LAST_API_FOOTBALL_ERROR = None
 
@@ -162,7 +162,7 @@ def _fetch_api_football_fixtures(date_str: str) -> list[dict]:
         logger.warning("APIFOOTBALL_API_KEY not set; API-Football fixture fetch unavailable")
         return []
 
-    url = f"https://v3.football.api-sports.io/fixtures?date={date_str}&timezone=Asia/Tehran"
+    url = f"https://v3.football.api-sports.io/fixtures?date={date_str}&timezone={request_tz}"
     req = urllib.request.Request(url, headers={
         "x-apisports-key": APIFOOTBALL_API_KEY,
         "Accept": "application/json",
@@ -192,6 +192,15 @@ def _fetch_api_football_fixtures(date_str: str) -> list[dict]:
         _LAST_API_FOOTBALL_ERROR = str(e)
         logger.error(f"API-Football fetch failed for {date_str}: {e}. Returning empty list.")
         return []
+
+
+def _kickoff_utc_iso(api_date_iso: str) -> Optional[str]:
+    """The provider's kick-off instant in UTC (ISO, 'Z'); `date`/`time` stay local display strings."""
+    try:
+        return datetime.fromisoformat(api_date_iso.replace("Z", "+00:00")).astimezone(timezone.utc).strftime(
+            "%Y-%m-%dT%H:%M:%SZ") if api_date_iso else None
+    except ValueError:
+        return None
 
 
 def _api_football_to_fixture(raw: dict, requested_date: str = "") -> dict:
@@ -296,6 +305,7 @@ def _api_football_to_fixture(raw: dict, requested_date: str = "") -> dict:
         "round": league.get("round", ""),
         "source": "api_football",
         "provider": "api_football",
+        "kickoff_utc": _kickoff_utc_iso(api_date_iso),
         "scoreline_source": "api_football" if home_goals is not None and away_goals is not None else None,
     }
 

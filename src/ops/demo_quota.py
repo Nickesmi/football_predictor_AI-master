@@ -79,6 +79,8 @@ def _db() -> sqlite3.Connection:
     conn.execute("CREATE TABLE IF NOT EXISTS demo_fixture_updates (date TEXT NOT NULL, at TEXT NOT NULL, "
                  "fixtures INTEGER NOT NULL, request_id INTEGER)")
     conn.execute("CREATE TABLE IF NOT EXISTS demo_refresh_inflight (date TEXT PRIMARY KEY, started_at TEXT NOT NULL)")
+    conn.execute("CREATE TABLE IF NOT EXISTS demo_refresh_attempts (id INTEGER PRIMARY KEY AUTOINCREMENT, "
+                 "date TEXT NOT NULL, at TEXT NOT NULL, state TEXT NOT NULL, error TEXT, fixtures INTEGER)")
     return conn
 
 
@@ -304,6 +306,61 @@ def last_fixture_update(date_str: str) -> str | None:
             "SELECT f.at FROM demo_fetched_dates f WHERE f.date = ? AND EXISTS (SELECT 1 FROM demo_api_usage u "
             "WHERE u.allowed = 1 AND u.path LIKE '%date=' || f.date || '%')", (date_str,)).fetchone()
         return legacy[0] if legacy else None
+    finally:
+        conn.close()
+
+
+def request_marks() -> tuple[int, int]:
+    """Highest row ids of both request tables; rows above them belong to what happens next."""
+    conn = _db()
+    try:
+        return (conn.execute("SELECT COALESCE(MAX(id), 0) FROM demo_api_usage").fetchone()[0],
+                conn.execute("SELECT COALESCE(MAX(id), 0) FROM demo_requests").fetchone()[0])
+    finally:
+        conn.close()
+
+
+def requests_after(marks: tuple[int, int]) -> list[dict]:
+    """Attempts recorded after `marks`: allowed, reason, HTTP status, outcome (oldest first)."""
+    conn = _db()
+    try:
+        legacy = [{"allowed": bool(a), "reason": None if a else "legacy lifetime allowance used up",
+                   "http_status": None, "outcome": "sent" if a else "refused"}
+                  for (a,) in conn.execute("SELECT allowed FROM demo_api_usage WHERE id > ? ORDER BY id", (marks[0],))]
+        grants = [{"allowed": bool(a), "reason": r, "http_status": h, "outcome": o}
+                  for a, r, h, o in conn.execute("SELECT allowed, reason, http_status, outcome FROM demo_requests "
+                                                 "WHERE id > ? ORDER BY id", (marks[1],))]
+        return legacy + grants
+    finally:
+        conn.close()
+
+
+def record_refresh_attempt(date_str: str, state: str, error: str | None, fixtures: int) -> None:
+    conn = _db()
+    try:
+        conn.execute("INSERT INTO demo_refresh_attempts (date, at, state, error, fixtures) VALUES (?, ?, ?, ?, ?)",
+                     (date_str, _now().isoformat(), state, error, fixtures))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def last_refresh_attempt(date_str: str) -> dict | None:
+    conn = _db()
+    try:
+        row = conn.execute("SELECT at, state, error, fixtures FROM demo_refresh_attempts WHERE date = ? "
+                           "ORDER BY id DESC LIMIT 1", (date_str,)).fetchone()
+        return None if row is None else {"at": row[0], "state": row[1], "error": row[2], "fixtures": row[3]}
+    finally:
+        conn.close()
+
+
+def fetched_with_no_fixtures(date_str: str) -> bool:
+    """A successful fetch recorded for the date that returned no fixtures (none scheduled)."""
+    conn = _db()
+    try:
+        return conn.execute("SELECT 1 FROM demo_fixture_updates WHERE date = ? AND fixtures = 0",
+                            (date_str,)).fetchone() is not None
     finally:
         conn.close()
 

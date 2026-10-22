@@ -22,13 +22,21 @@ PRELUDE = r"""
 import http.client, io, json, os, socket, sys, threading, time
 from pathlib import Path
 SCRIPT = json.loads(os.environ.get("FAKE_RESPONSES", "[]"))
-CALLS = []
+CALLS, URLS, CFFI = [], [], []
 _lock = threading.Lock()
 
 def _no_network(*a, **k):
     raise AssertionError("a real network connection was attempted")
 
-socket.create_connection = _no_network
+socket.socket.connect = _no_network          # DNS guards run first; no socket ever connects
+socket.socket.connect_ex = _no_network
+_inner_put = http.client.HTTPConnection.putrequest
+def _record_put(self, method, url, *a, **k):
+    URLS.append(self.host + url)
+    return _inner_put(self, method, url, *a, **k)
+http.client.HTTPConnection.putrequest = _record_put
+from curl_cffi import requests as _cffi
+_cffi.Session.request = lambda self, method, url, *a, **k: CFFI.append(url) or (_ for _ in ()).throw(AssertionError("curl_cffi reached"))
 http.client.HTTPConnection.connect = lambda self: None
 http.client.HTTPSConnection.connect = lambda self: None
 http.client.HTTPConnection.send = lambda self, data: None
@@ -70,6 +78,8 @@ client = TestClient(app)
 OUT = {}
 def done():
     OUT["calls"] = len(CALLS)
+    OUT["urls"] = [u for u in URLS if "api-sports" in u]
+    OUT["cffi"] = CFFI
     print("RESULT " + json.dumps(OUT, default=str))
 """
 
@@ -168,7 +178,7 @@ OUT["n"] = len(r["fixtures"]); OUT["demo"] = r["demo"]
 s = client.get("/api/demo/status").json(); OUT["status"] = s
 p = client.post("/api/demo/refresh-fixtures/{DATE2}"); OUT["post"] = [p.status_code, p.json()]
 """, cap=5)
-    assert out["n"] == 3 and out["demo"]["cached"] is True and out["demo"]["live"] is False
+    assert out["n"] == 3 and out["demo"]["state"] == "cached" and out["demo"]["live"] is False
     assert out["demo"]["last_updated_at"] is None and out["demo"]["data_source"] == "cache"   # no recorded fetch
     assert out["status"]["legacy"] == {"cap": 5, "used": 5, "refused": 1, "remaining": 0}
     assert out["status"]["can_refresh"] is False and out["status"]["remaining_total"] == 0
@@ -202,7 +212,7 @@ r = client.get("/api/fixtures/{DATE3}").json()
 OUT["r"] = r
 """)
     assert out["r"]["fixtures"] == [] and "No cached fixtures" in out["r"]["message"]
-    assert "unavailable" not in out["r"]["message"] and out["r"]["demo"]["cached"] is False
+    assert "unavailable" not in out["r"]["message"] and out["r"]["demo"]["state"] == "quota_exhausted"
     assert out["calls"] == 0
 
 
@@ -259,12 +269,12 @@ OUT["get"] = client.get("/api/fixtures/{DATE}").json()
 again = client.post("/api/demo/refresh-fixtures/{DATE}"); OUT["again"] = [again.status_code, again.json()]
 """, [_ok(DATE, remaining="91")], cap=5)
     assert out["pre"]["can_refresh"] is True and out["pre"]["remaining_total"] == 3 and out["pre"]["cost_per_refresh"] == 1
-    assert out["post"][0] == 200 and out["post"][1]["cache"]["cached_fixtures"] == 2
+    assert out["post"][0] == 200 and out["post"][1]["state"] == "fresh" and out["post"][1]["cache"]["cached_fixtures"] == 2
     assert out["post"][1]["quota"]["remaining_total"] == 2 and out["post"][1]["quota"]["remaining_today"] == 1
     assert out["post"][1]["quota"]["provider_remaining_today"] == 91
-    assert len(out["get"]["fixtures"]) == 2 and out["get"]["demo"]["cached"] is True
+    assert len(out["get"]["fixtures"]) == 2 and out["get"]["demo"]["state"] == "cached"
     assert out["get"]["demo"]["last_updated_at"] == out["post"][1]["cache"]["last_updated_at"] is not None
-    assert out["again"][0] == 409 and out["again"][1]["detail"]["error"] == "already_cached"
+    assert out["again"][0] == 409 and out["again"][1]["detail"]["error"] == "already_fetched"
     assert out["calls"] == 1
     rows = _usage(env).execute("SELECT grant_id, allowed, http_status, provider_remaining, outcome FROM demo_requests"
                                ).fetchall()
@@ -348,12 +358,12 @@ def test_several_processes_cannot_exceed_one_allowance(env):
 
 # ── Failures ─────────────────────────────────────────────────────────────────
 
-@pytest.mark.parametrize("response, outcome, status", [
-    ({"status": 500}, "http_error", 500),
-    ({"status": 429, "remaining": "0"}, "http_error", 429),
-    ({"raise": True}, "error", None),
+@pytest.mark.parametrize("response, outcome, status, code, state", [
+    ({"status": 500}, "http_error", 500, 502, "provider_error"),
+    ({"status": 429, "remaining": "0"}, "http_error", 429, 429, "quota_exhausted"),
+    ({"raise": True}, "error", None, 502, "provider_error"),
 ])
-def test_failures_are_counted_not_cached_and_retryable_only_with_allowance(env, response, outcome, status):
+def test_failures_are_counted_not_cached_and_retryable_only_with_allowance(env, response, outcome, status, code, state):
     env["work"].mkdir(parents=True, exist_ok=True)
     sqlite3.connect(env["work"] / "demo_api_usage.db").close()
     _grant(env, 3, 3)
@@ -362,7 +372,9 @@ p = client.post("/api/demo/refresh-fixtures/{DATE}"); OUT["p"] = [p.status_code,
 OUT["get"] = client.get("/api/fixtures/{DATE}").json()
 OUT["status"] = client.get("/api/demo/status").json()
 """, [response])
-    assert out["p"][0] == 502 and out["p"][1]["detail"]["ok"] is False and out["p"][1]["detail"]["error"]
+    assert out["p"][0] == code and out["p"][1]["detail"]["ok"] is False and out["p"][1]["detail"]["error"]
+    assert out["p"][1]["detail"]["state"] == state and out["get"]["demo"]["state"] == (
+        "quota_exhausted" if status == 429 else "provider_error")             # the failure is shown, not hidden
     assert out["get"]["fixtures"] == [] and out["calls"] == 1
     assert out["status"]["remaining_total"] == 2                       # the failed request was counted
     rows = _usage(env).execute("SELECT allowed, http_status, outcome FROM demo_requests").fetchall()
@@ -411,7 +423,7 @@ OUT["p"] = client.post("/api/demo/refresh-fixtures/{DATE}").status_code
     assert other["s"]["same_key_as_shadow"] is False and other["s"]["can_refresh"] is True
 
 
-@pytest.mark.parametrize("used_by_shadow, expect", [(70, 502), (69, 200)])
+@pytest.mark.parametrize("used_by_shadow, expect", [(70, 429), (69, 200)])
 def test_shared_ledger_daily_total_of_all_consumers_holds(env, used_by_shadow, expect):
     from datetime import datetime, timezone
 
@@ -437,7 +449,7 @@ def test_shared_ledger_daily_total_of_all_consumers_holds(env, used_by_shadow, e
     reserved = dict(sqlite3.connect(led).execute(
         "SELECT consumer, SUM(cost) FROM ledger WHERE status = 'reserved' GROUP BY 1").fetchall())
     assert sum(reserved.values()) <= 70                          # never above the shadow's ceiling
-    if expect == 502:
+    if expect == 429:
         assert out["calls"] == 0 and "demo" not in reserved
         assert "shared ledger refused" in _usage(env).execute("SELECT reason FROM demo_requests").fetchone()[0]
     else:

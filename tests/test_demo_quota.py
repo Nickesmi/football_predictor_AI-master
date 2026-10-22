@@ -141,7 +141,7 @@ def test_end_to_end_demo_server_with_cap_zero_spends_nothing(tmp_path):
             except Exception:
                 time.sleep(1)
         body = json.loads(urllib.request.urlopen(f"http://127.0.0.1:{port}/api/fixtures/2030-01-04", timeout=60).read())
-        assert body["fixtures"] == [] and body["demo"]["cached"] is False and "No cached fixtures" in body["message"]
+        assert body["fixtures"] == [] and body["demo"]["state"] == "quota_exhausted" and "No cached fixtures" in body["message"]
         status = json.loads(urllib.request.urlopen(f"http://127.0.0.1:{port}/api/demo/status", timeout=30).read())
         assert status["can_refresh"] is False and status["remaining_total"] == 0
         req = urllib.request.Request(f"http://127.0.0.1:{port}/api/demo/refresh-fixtures/2030-01-04", method="POST")

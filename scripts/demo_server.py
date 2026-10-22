@@ -10,6 +10,8 @@ Never the production database.
 * runs from --workdir, so the fixture cache (.cache/) and settings are the demo's own
   (cached fixture files from the repo's .cache are copied in once, never written back);
 * no background tasks: no hourly fixture refresh, no nightly retrain, no live-score loop;
+* dates are calendar days in --display-tz (default Europe/Istanbul); kick-offs are handled in UTC;
+* no external host is contacted automatically (src/ops/demo_network.py; logo images excepted);
 * page loads, date changes and open tabs only read the cache: API-Football is reached only
   through POST /api/demo/refresh-fixtures/<date> (the interface's 'Refresh fixtures' button),
   one request per refresh, for a date that is not cached yet (api/demo_mode.py);
@@ -36,7 +38,8 @@ DEFAULT_SHADOW_ROOT = Path(pwd.getpwuid(os.getuid()).pw_dir) / "FootballShadow"
 
 
 def prepare(db: Path, workdir: Path, cap: int, *, ledger: Path | None = None, ledger_budget: int | None = None,
-            provider_floor: int = 30, shadow_root: Path | None = DEFAULT_SHADOW_ROOT):
+            provider_floor: int = 30, shadow_root: Path | None = DEFAULT_SHADOW_ROOT,
+            display_tz: str = "Europe/Istanbul"):
     if db.resolve() == LIVE_DB:
         raise SystemExit("refusing: the demo never uses data/engine.db")
     if not db.exists():
@@ -69,6 +72,9 @@ def prepare(db: Path, workdir: Path, cap: int, *, ledger: Path | None = None, le
                        ledger=None if ledger is None else ledger.resolve(), ledger_budget=ledger_budget,
                        shadow_key_file=None if shadow_root is None else Path(shadow_root) / "etc" / "api_key.env",
                        api_key=config.APIFOOTBALL_API_KEY)
+    from src.ops import demo_network
+
+    demo_network.install()   # nothing external is contacted automatically (logo images excepted)
 
     import api.services.system_service as system_service
 
@@ -82,7 +88,7 @@ def prepare(db: Path, workdir: Path, cap: int, *, ledger: Path | None = None, le
     from api import demo_mode
     from api.main import app
 
-    demo_mode.install(app)
+    demo_mode.install(app, display_timezone=display_tz)
     return workdir
 
 
@@ -98,11 +104,13 @@ def main() -> int:
                    help="refuse when the provider reports this many or fewer requests left today")
     p.add_argument("--shadow-root", type=Path, default=DEFAULT_SHADOW_ROOT,
                    help="shadow experiment root, to detect a shared API key (digest comparison only)")
+    p.add_argument("--display-tz", default="Europe/Istanbul",
+                   help="time zone of the calendar days shown and requested (kick-offs are kept in UTC)")
     a = p.parse_args()
     if a.ledger and not a.ledger_budget:
         p.error("--ledger needs --ledger-budget")
     prepare(a.db, a.workdir, a.cap, ledger=a.ledger, ledger_budget=a.ledger_budget, provider_floor=a.provider_floor,
-            shadow_root=a.shadow_root)
+            shadow_root=a.shadow_root, display_tz=a.display_tz)
     import uvicorn
 
     from api.main import app
