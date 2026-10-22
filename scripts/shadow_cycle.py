@@ -117,8 +117,12 @@ def main() -> int:
             return 2
         os.environ["SHADOW_MANIFEST_ID"] = pinned["manifest_id"]
         os.environ["SHADOW_CODE_FINGERPRINT"] = pinned["code_fingerprint"]["sha256"]
+    # Emergency stop during the cycle: SHADOW_STOP appearing, or SIGTERM (launchctl kill / bootout, systemctl
+    # stop), ends the cycle before its next request; the cycle row is closed with status 'stopped'.
+    from src.shadow.cycle import stop_signal  # noqa: E402
+
     report = run_cycle(conn, config.APIFOOTBALL_API_KEY, config.APIFOOTBALL_HOST, cfg,
-                       force_discovery=args.force_discovery)
+                       force_discovery=args.force_discovery, stop_requested=stop_signal(stop))
     report["profile"] = args.profile
     print(json.dumps(report, indent=1, default=str))
     return 0

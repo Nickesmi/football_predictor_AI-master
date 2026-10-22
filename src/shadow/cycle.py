@@ -264,7 +264,8 @@ def _fetched_since(f: dict, moment: datetime) -> bool:
 
 
 def _collect_per_fixture(conn, cfg: ShadowConfig, now: datetime, api_key: str, host: str, transport,
-                         sleep: Callable[[float], None], report: dict) -> None:
+                         sleep: Callable[[float], None], report: dict,
+                         stop_requested: Callable[[], bool] | None = None) -> None:
     upcoming = [f for f in _upcoming(conn, now, timedelta(minutes=cfg.decision_lead_minutes
                                                          + cfg.pre_decision_margin_minutes)) if _allowed(f, cfg)]
     decision, closing = [], []
@@ -291,6 +292,8 @@ def _collect_per_fixture(conn, cfg: ShadowConfig, now: datetime, api_key: str, h
         if report["requests_sent"] >= report["request_cap"]:
             report["errors"].append(f"odds: per-cycle request cap {report['request_cap']} reached")
             break
+        if _stop(stop_requested, report, "odds"):
+            break
         if index:
             sleep(collector.api_football_interval())
         report["requests_sent"] += 1
@@ -314,9 +317,9 @@ def _collect_per_fixture(conn, cfg: ShadowConfig, now: datetime, api_key: str, h
 
 
 def collect(conn, cfg: ShadowConfig, now: datetime, api_key: str, host: str, transport,
-            sleep: Callable[[float], None], report: dict) -> None:
+            sleep: Callable[[float], None], report: dict, stop_requested: Callable[[], bool] | None = None) -> None:
     if cfg.odds_mode == "per_fixture":
-        _collect_per_fixture(conn, cfg, now, api_key, host, transport, sleep, report)
+        _collect_per_fixture(conn, cfg, now, api_key, host, transport, sleep, report, stop_requested)
         return
     if report["requests_sent"] >= report["request_cap"]:
         report["errors"].append("odds: per-cycle request cap reached")
@@ -575,9 +578,29 @@ def settle(conn, now: datetime, report: dict) -> None:
 
 # ── Cycle ─────────────────────────────────────────────────────────────────────
 
+def _stop(stop_requested: Callable[[], bool] | None, report: dict, stage: str) -> bool:
+    """Emergency stop during a cycle (SHADOW_STOP or SIGTERM): no further request and no new observation."""
+    if report.get("stopped"):
+        return True
+    if stop_requested is not None and stop_requested():
+        report["stopped"] = f"emergency stop before {stage}"
+        return True
+    return False
+
+
+def stop_signal(stop_file) -> Callable[[], bool]:
+    """Stop check for run_cycle: true once `stop_file` exists or the process has received SIGTERM
+    (launchctl kill / bootout, systemctl stop). Installs the SIGTERM handler; call from the main thread."""
+    import signal
+
+    terminated = []
+    signal.signal(signal.SIGTERM, lambda signum, frame: terminated.append(signum))
+    return lambda: bool(terminated) or Path(stop_file).exists()
+
+
 def run_cycle(conn: sqlite3.Connection, api_key: str, host: str, cfg: ShadowConfig = DEFAULT,
               now: datetime | None = None, transport=None, sleep: Callable[[float], None] = time.sleep,
-              force_discovery: bool = False) -> dict:
+              force_discovery: bool = False, stop_requested: Callable[[], bool] | None = None) -> dict:
     conn.row_factory = sqlite3.Row
     _ensure(conn)
     now = now or datetime.now(timezone.utc)
@@ -616,14 +639,19 @@ def run_cycle(conn: sqlite3.Connection, api_key: str, host: str, cfg: ShadowConf
         dates = [d for d in (now.strftime("%Y-%m-%d"), (now + timedelta(days=1)).strftime("%Y-%m-%d"))
                  if d not in recent]
     dates += [d for d in _awaiting_result_dates(conn, now) if d not in dates]
-    if dates:
+    # A stop stops the rest of the cycle: requests not yet sent are not sent, and no decision is taken from
+    # what was collected, so a fixture whose window then passes is a missed observation (never back-filled).
+    if dates and not _stop(stop_requested, report, "discovery"):
         discover(conn, dates, api_key, host, transport, now, sleep, report)
-    collect(conn, cfg, now, api_key, host, transport, sleep, report)
-    decide(conn, cfg, now, cycle_id, report)
-    settle(conn, now, report)
+    if not _stop(stop_requested, report, "odds"):
+        collect(conn, cfg, now, api_key, host, transport, sleep, report, stop_requested)
+    if not _stop(stop_requested, report, "decisions"):
+        decide(conn, cfg, now, cycle_id, report)
+        settle(conn, now, report)
     report.pop("_competitions", None)
     report["finished_at"] = iso_utc(datetime.now(timezone.utc) if transport is None else now)
-    conn.execute("UPDATE shadow_cycles SET finished_at = ?, report_json = ?, status = 'finished' WHERE cycle_id = ?",
-                 (report["finished_at"], json.dumps(report, default=str), cycle_id))
+    conn.execute("UPDATE shadow_cycles SET finished_at = ?, report_json = ?, status = ? WHERE cycle_id = ?",
+                 (report["finished_at"], json.dumps(report, default=str),
+                  "stopped" if report.get("stopped") else "finished", cycle_id))
     conn.commit()
     return report
