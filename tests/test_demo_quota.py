@@ -5,6 +5,7 @@ import sqlite3
 import subprocess
 import sys
 import time
+import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -82,7 +83,9 @@ def test_launcher_refuses_the_production_database(tmp_path):
     assert r.returncode != 0 and "never uses data/engine.db" in r.stderr
 
 
-def test_each_date_is_fetched_at_most_once(tmp_path):
+def test_page_loads_never_fetch_any_date(tmp_path):
+    """Since 2026-10-23 a fixture read never contacts API-Football (it used to fetch each new date once);
+    only POST /api/demo/refresh-fixtures can send (tests/test_demo_refresh_policy.py)."""
     db = tmp_path / "copy.db"
     sqlite3.connect(db).close()
     code = f"""
@@ -103,7 +106,7 @@ asyncio.run(ss.start_background_tasks())
 print(calls)
 """
     r = _py(code, tmp_path)
-    assert r.stdout.strip().splitlines()[-1] == "['2026-10-18', '2026-10-19']", r.stdout + r.stderr
+    assert r.stdout.strip().splitlines()[-1] == "[]", r.stdout + r.stderr
 
 
 def _free_port():
@@ -115,7 +118,8 @@ def _free_port():
 
 
 def test_end_to_end_demo_server_with_cap_zero_spends_nothing(tmp_path):
-    """Real server, real fixture endpoint, cap 0: the API request is counted as refused and never sent."""
+    """Real server, real fixture endpoint, cap 0 and no grant: the page load attempts nothing, and an
+    explicit refresh is refused before anything is sent."""
     db = tmp_path / "copy.db"
     from src.db.database import init_db
 
@@ -136,15 +140,23 @@ def test_end_to_end_demo_server_with_cap_zero_spends_nothing(tmp_path):
                 break
             except Exception:
                 time.sleep(1)
-        body = urllib.request.urlopen(f"http://127.0.0.1:{port}/api/fixtures/2030-01-04", timeout=60).read()
-        assert isinstance(json.loads(body), (list, dict))
+        body = json.loads(urllib.request.urlopen(f"http://127.0.0.1:{port}/api/fixtures/2030-01-04", timeout=60).read())
+        assert body["fixtures"] == [] and body["demo"]["cached"] is False and "No cached fixtures" in body["message"]
+        status = json.loads(urllib.request.urlopen(f"http://127.0.0.1:{port}/api/demo/status", timeout=30).read())
+        assert status["can_refresh"] is False and status["remaining_total"] == 0
+        req = urllib.request.Request(f"http://127.0.0.1:{port}/api/demo/refresh-fixtures/2030-01-04", method="POST")
+        try:
+            urllib.request.urlopen(req, timeout=30)
+            refused = False
+        except urllib.error.HTTPError as exc:
+            refused = exc.code == 403
     finally:
         proc.terminate()
         out = proc.communicate(timeout=30)[0]
-    rows = sqlite3.connect(work / "demo_api_usage.db").execute(
-        "SELECT allowed, COUNT(*) FROM demo_api_usage GROUP BY 1").fetchall()
-    assert dict(rows).get(1, 0) == 0                      # nothing sent
-    assert dict(rows).get(0, 0) >= 1                      # the attempt was counted and refused
+    usage = sqlite3.connect(work / "demo_api_usage.db")
+    assert refused
+    assert usage.execute("SELECT COUNT(*) FROM demo_api_usage").fetchone()[0] == 0     # nothing attempted
+    assert usage.execute("SELECT COUNT(*) FROM demo_requests WHERE allowed = 1").fetchone()[0] == 0
     assert "background tasks disabled" in out
     assert (work / ".cache").is_dir()                     # the demo's own cache, not the repository's
     assert not (ROOT / ".cache" / "fixtures-2030-01-04.json").exists()
