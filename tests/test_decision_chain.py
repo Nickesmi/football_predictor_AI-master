@@ -105,7 +105,8 @@ def test_small_positive_edge_is_rejected_with_the_risk_threshold_it_failed(engin
     assert 0 < reason["value"] < 0.04
 
 
-def test_stale_prices_and_markets_the_model_does_not_price_are_ignored(engine_db):
+def test_stale_prices_and_markets_the_model_does_not_price_are_ignored(engine_db, monkeypatch):
+    monkeypatch.setenv("ODDS_MAX_AGE_MINUTES", "60")   # the default window; the shadow host exports 240
     _forecast(engine_db)
     old = iso_utc(datetime.now(timezone.utc) - timedelta(hours=3))
     store.store_quotes(engine_db, "chain-1", [synthetic_quote("1X2", "home", 9.0, KICKOFF, observed=old)], recent(0))

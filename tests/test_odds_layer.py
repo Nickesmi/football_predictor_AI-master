@@ -332,11 +332,17 @@ def test_value_uses_best_fresh_price_and_the_matching_line_only(engine_db):
     assert candidates[("O/U 2.5", "over")]["odds"] == 1.95
 
 
-def test_no_fresh_real_price_means_no_candidate(engine_db):
+def test_no_fresh_real_price_means_no_candidate(engine_db, monkeypatch):
+    # The window is set explicitly: the shadow host exports ODDS_MAX_AGE_MINUTES=240, under which a
+    # 120-minute-old quote is legitimately fresh.
+    monkeypatch.setenv("ODDS_MAX_AGE_MINUTES", "60")
     _fixture(engine_db)
     assert find_value(MATCH, PROBS, engine_db, now=NOW) == []
     store.store_quotes(engine_db, "fx-1", [_quote("home", 2.0, _ago(120))], _ago(0))
     assert find_value(MATCH, PROBS, engine_db, now=NOW) == []
+    monkeypatch.setenv("ODDS_MAX_AGE_MINUTES", "240")       # the shadow's window: older than 240 min is not fresh
+    store.store_quotes(engine_db, "fx-1", [_quote("home", 2.1, _ago(300))], _ago(0))
+    assert all(c["odds"] != 2.1 for c in find_value(MATCH, PROBS, engine_db, now=NOW))
 
 
 # ── Crowd votes are kept apart and never become prices ──────────────────────
