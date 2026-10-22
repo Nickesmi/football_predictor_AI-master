@@ -1,6 +1,6 @@
 # M3.5 — Mac host runbook: the 14-day Medium shadow on this MacBook Pro
 
-**Host chosen by the owner: this Mac.** Nothing here has been executed. Steps marked ⛔ need explicit owner authorization:
+**Host chosen by the owner: this Mac.** §1–§2 were executed in M3.5.1 (2026-10-22). Nothing else here has been executed. For activation, the authoritative step-by-step checklist is `docs/M3_5_1_ACTIVATION_PREFLIGHT_REPORT.md` §5. Steps marked ⛔ need explicit owner authorization:
 - entering the API key;
 - the one counted provider check;
 - installing or enabling launchd jobs;
@@ -30,7 +30,7 @@ Pinned:
 ## 1. Layout (outside Desktop, Documents and iCloud)
 
 `~/FootballShadow/` holds four folders:
-- `code/`: a detached git worktree at `0708a80`, unaffected by edits in the main repo;
+- `code/`: a detached git worktree at `7b8a29c` (runtime code identical to `0708a80`; same fingerprint), unaffected by edits in the main repo;
 - `venv/`: Python 3.11 from `requirements-lock.txt`;
 - `etc/`: `shadow.env` and `api_key.env`, both mode 0600;
 - `run/`: `engine_shadow.db`, the manifests, `api_football_ledger.db`, `caffeinate.pid`, `SHADOW_STOP` (only to stop), and the `logs/`, `reports/`, `backups/` and `workspace/.cache` folders.
@@ -42,7 +42,7 @@ The run lives outside `~/Desktop` for two reasons. macOS privacy controls (TCC) 
 ```
 R=~/FootballShadow
 mkdir -p $R/etc $R/run/logs $R/run/reports $R/run/backups $R/run/workspace/.cache && chmod 700 $R $R/etc
-git -C ~/Desktop/football_predictor_ai-master worktree add --detach $R/code 0708a80
+git -C ~/Desktop/football_predictor_ai-master worktree add --detach $R/code 7b8a29c
 /opt/homebrew/bin/python3.11 -m venv $R/venv && $R/venv/bin/pip install -r $R/code/requirements-lock.txt
 S=~/Desktop/football_predictor_backups/m3_4_1_shadow
 cp $S/engine_shadow.db $S/shadow_manifest.json $S/shadow_manifest.v2.json $S/shadow_manifest.v3.json $S/shadow_manifest.v4.json $R/run/
