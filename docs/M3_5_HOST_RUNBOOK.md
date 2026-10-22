@@ -2,7 +2,7 @@
 
 > **Not the deployment plan.** The owner chose this Mac as the host; see `docs/M3_5_MAC_RUNBOOK.md`. This file is kept as an optional future artefact.
 >
-> Its pins (v2, `ddbf39e`) are **superseded** by manifest v3 `m35-f00a477c1cad226d` (`f624d0d`). If this path is ever used, substitute `shadow_manifest.v3.json` and `f624d0d`. The cycle refuses any other code anyway.
+> Its pins (v2, `ddbf39e`) are **superseded** by manifest v4 `m35-f206ea91f8facda2` (`0708a80`), which superseded v3. If this path is ever used, substitute `shadow_manifest.v4.json` and `0708a80`. The cycle refuses any other code anyway.
 
 
 **Nothing in this runbook has been executed.** Some steps need a separate owner authorization, marked ⛔:

@@ -2,6 +2,12 @@
 
 Date: 2026-10-19. Branch `m3.5/forward-shadow-prep`, created from `7d0deb0`, tag `backup/m3.4.1/complete`. Not merged, not pushed.
 
+> **Update 2026-10-22:** see `docs/M3_5_MAC_READINESS_REPORT.md`.
+> - The caffeinate lifecycle was hardened, an emergency stop during a cycle was added, and the quota, monitor and template validation was completed.
+> - The run is now pinned to **manifest v4 `m35-f206ea91f8facda2`** (commit `0708a80`). v3 is kept unchanged but no longer matches the code.
+> - The demo's 5-request cap is now used up (5 / 5).
+> - Values below that say v3, `f624d0d` or "2 / 5" are the 2026-10-19 state.
+
 **Host: this MacBook Pro, as you chose.** The Linux/VPS artefacts are kept as optional future alternatives only:
 - `docs/M3_5_HOST_RUNBOOK.md`;
 - `deploy/shadow/systemd/`;
@@ -20,7 +26,8 @@ Date: 2026-10-19. Branch `m3.5/forward-shadow-prep`, created from `7d0deb0`, tag
 |---|---|---|---|
 | v1 `shadow_manifest.json` (sha256 `c72b2571…`) | — | `47094d1` | kept unchanged. Its rh1 hash included the AUTOINCREMENT `id`, so it could not be reproduced. |
 | v2 `shadow_manifest.v2.json` (`129051ee…`) | `m35-59658cae50a480cc` | `ddbf39e` | kept unchanged; superseded by v3 because Mac support changed runtime files |
-| **v3 `shadow_manifest.v3.json`** (`9cd6cabe…`) | **`m35-f00a477c1cad226d`** | **`f624d0d`** | **pinned for the run** |
+| v3 `shadow_manifest.v3.json` (`9cd6cabe…`) | `m35-f00a477c1cad226d` | `f624d0d` | kept unchanged; superseded by v4 (caffeinate fix, mid-cycle stop) |
+| **v4 `shadow_manifest.v4.json`** (`fcc91b86…`) | **`m35-f206ea91f8facda2`** | **`0708a80`** | **pinned for the run** (2026-10-22) |
 
 v3 pins the following. It was built from a clean working tree, through a read-only in-memory copy, so the DB stays `0f892593…`.
 
@@ -173,12 +180,12 @@ It uses the same key, so its requests count only on the provider side. The worst
 **All** of these must be true at activation:
 1. Your written authorization to activate. ⛔
 2. The Mac is on **AC power**, with the lid open (or proper clamshell), and you are logged in. You decide whether to defer macOS auto-updates for 14 days.
-3. The layout from runbook §2 exists outside Desktop: a worktree at `f624d0d`, a 3.11 venv from the lock file, the DB sha256 `0f892593…`, and the manifests copied read-only.
+3. The layout from runbook §2 exists outside Desktop: a worktree at `0708a80` (manifest v4), a 3.11 venv from the lock file, the DB sha256 `0f892593…`, and the manifests copied read-only.
 4. You have typed the key into `~/FootballShadow/etc/api_key.env` (mode 0600). ⛔
 5. The preflight exits **0** with `--run-tests --check-provider`: every check passes, including `3_provider_quota` (1 counted `/status`). ⛔
 6. The experiment caffeinate is loaded first, and its assertion is visible under its pid.
 7. The first supervised cycle (`kickstart`) finishes without refusal, and the ledger shows only `shadow_cycle`.
-8. No other consumer of the key is planned beyond the demo's remaining ≤ 3.
+8. No other consumer of the key is planned. The demo has 0 requests left (5 / 5 used).
 
 **GO** for the 14-day Medium forward shadow on this Mac when 1–8 hold. The technical preparation for that is complete.
 
@@ -202,7 +209,7 @@ No model, weights, calibration, selection or policy file changed, and no golden 
 - `data/engine.db`: mtime 2026-10-16 15:35, WAL 15:43. The read-only `.dump` hash is `c530e65b4dc213fa`, which equals the verified backup. Unchanged.
 - Service hold `m3-hold-20261016-401a4675` is present.
 - The production app was not restarted.
-- Demo pid 2670 is running at **2 / 5**, not touched.
+- Demo pid 2670 is running at **2 / 5** on 2026-10-19; **5 / 5** (cap used up, by its own daily refresh) on 2026-10-22. Not touched.
 - No football LaunchAgent is in `~/Library/LaunchAgents` or loaded. There is no crontab, and no shadow or odds process.
 - `~/FootballShadow` has not been created.
 - No experiment caffeinate is running. The only caffeinate seen is the unrelated recurring `caffeinate -i -t 300`.

@@ -1,6 +1,8 @@
 # M3.5 — Frozen 14-day forward shadow protocol
 
-**Status: FROZEN at manifest v3 `m35-f00a477c1cad226d`**. The manifest pins code commit `f624d0d` and code fingerprint `dbab5d26…`. It supersedes v2 `m35-59658cae50a480cc` and v1; both are kept unchanged.
+**Status: FROZEN at manifest v4 `m35-f206ea91f8facda2`**. The manifest pins code commit `0708a80` and code fingerprint `215dbba63b5b8f43…`. It supersedes v3 `m35-f00a477c1cad226d`, v2 `m35-59658cae50a480cc` and v1; all are kept unchanged.
+
+> Re-pin record (2026-10-22, before any observation existed): v3 → v4 because runtime files changed. The changes were the caffeinate ownership fix and the emergency stop during a cycle, which closes the cycle with `shadow_cycles.status = 'stopped'`. No field, metric, threshold or stop criterion of this protocol changed.
 
 Host: **this MacBook Pro** (owner's choice). See `docs/M3_5_MAC_RUNBOOK.md`.
 
@@ -27,7 +29,7 @@ This is a research observation experiment. It is **not** the official 1,000-pick
 
 An observation is forward evidence **only if all** of these hold:
 1. A shadow cycle wrote it, and its `cycle_id` is in `shadow_cycles`.
-2. Its `manifest_id` equals `m35-f00a477c1cad226d`.
+2. Its `manifest_id` equals `m35-f206ea91f8facda2`.
 3. `decided_at < kickoff`.
 4. It was written once per fixture (`UNIQUE (fixture_id)`), never updated afterwards.
 
@@ -55,7 +57,7 @@ Never forward evidence:
 | Input data quality | `data_quality`, `model_source`, `probability_inputs_json` |
 | Qualification and rejection reasons | `legacy_json`, `v1_json`, `v1_1_json` (selected plus funnel with reasons), `bilqe_json` (layer gates, rejections by layer), `error` (`NO_FORECAST: TEAM_IDENTITY_UNRESOLVED`, …) |
 | Eventual verified result | `shadow_outcomes` (regulation-time score from API-Football `score.fulltime`, status FT/AET/PEN, `recorded_at`). Settled selections are in `shadow_selection_results`. |
-| Missed slots, provider failures | `shadow_cycles.missed_slots`, `gap_minutes`, `status`; `report_json.errors`; `provider_quota_log` (every request with status); the shared ledger |
+| Missed slots, provider failures | `shadow_cycles.missed_slots`, `gap_minutes`, `status` (`finished`, `skipped`, `stopped`, or `running` if killed); `report_json.errors`; `provider_quota_log` (every request with status); the shared ledger |
 
 Unresolved identities are recorded as `NO_FORECAST` with the identity evidence; they are never filled in. Missing data is stored as missing.
 
