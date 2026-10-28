@@ -158,8 +158,23 @@ def install(app=None, display_timezone: str = fixture_time.DEFAULT_DISPLAY_TZ) -
             payload["message"] = MESSAGES[state["state"]].format(date=date_str, when=when, error=error)
         return payload
 
+    _original["convert"] = fs._api_football_to_fixture
+
+    def convert_in_display_tz(raw: dict, requested_date: str = "") -> dict:
+        # The shared converter labels fixtures with Asia/Tehran date/time. A kick-off at 23:30-23:59 in
+        # Istanbul is the next Tehran day, and the service's page-load rewrite of a day's cache keeps only
+        # fixtures labelled with that day, which silently dropped those matches. Label by the display time
+        # zone from the UTC kick-off instead.
+        fixture = _original["convert"](raw, requested_date)
+        if fixture.get("kickoff_utc"):
+            local = datetime.fromisoformat(fixture["kickoff_utc"].replace("Z", "+00:00")).astimezone(
+                fixture_time.zone(display_tz()))
+            fixture["date"], fixture["time"] = local.date().isoformat(), local.strftime("%H:%M")
+        return fixture
+
     fs._fetch_api_football_fixtures = cache_only_fetch
     fs.get_fixtures_by_date_service = demo_fixtures
+    fs._api_football_to_fixture = convert_in_display_tz
     if app is not None:
         app.include_router(router)
 

@@ -235,3 +235,30 @@ OUT["blocked"] = client.get("/api/demo/status").json()["external_requests_blocke
     assert "sent" not in out["res"].values() and out["cffi"] == []          # curl_cffi never reached its transport
     assert out["allowed_image"] is True and out["allowed_data"] is False
     assert {"api.sofascore.com", "api.the-odds-api.com", "api.openai.com", "example.org"} <= set(out["blocked"])
+
+
+def test_late_evening_istanbul_kickoffs_survive_page_loads(env):
+    """2026-10-28: kick-offs at 23:30-23:59 Istanbul (00:00-00:29 Tehran) were dropped from the day's cache by
+    the page-load rewrite. They must stay, at their Istanbul time, through any number of reloads."""
+    env["work"].mkdir(parents=True, exist_ok=True)
+    sqlite3.connect(env["work"] / "demo_api_usage.db").close()
+    _grant(env, 3, 3)
+    fx = [{"fixture": {"id": 700 + i, "date": utc, "status": {"short": "NS"}},
+           "league": {"id": 39, "name": "L", "country": "C", "logo": "", "season": 2030},
+           "teams": {"home": {"id": 1, "name": f"H{i}", "logo": ""}, "away": {"id": 2, "name": f"A{i}", "logo": ""}},
+           "goals": {"home": None, "away": None}, "score": {}}
+          for i, utc in enumerate(["2030-01-05T09:00:00+00:00", "2030-01-05T20:10:00+00:00",
+                                   "2030-01-05T20:45:00+00:00", "2030-01-05T20:59:00+00:00"])]
+    out = _run(env, f"""
+OUT["p"] = client.post("/api/demo/refresh-fixtures/{D}").status_code
+for _ in range(3):
+    r = client.get("/api/fixtures/{D}").json()
+OUT["times"] = [f["time"] for f in r["fixtures"]]
+OUT["next"] = [f["time"] for f in client.get("/api/fixtures/2030-01-06").json()["fixtures"]]
+import json
+OUT["stored"] = sorted(f["time"] for f in json.load(open(r"{env['work']}/.cache/fixtures-{D}.json")))
+""", [{"status": 200, "remaining": "90", "fixtures": fx}])
+    assert out["p"] == 200 and out["calls"] == 1
+    assert out["times"] == ["12:00", "23:10", "23:45", "23:59"]       # all four, at Istanbul time
+    assert out["stored"] == ["12:00", "23:10", "23:45", "23:59"]      # still in the cache after reloads
+    assert out["next"] == []                                          # none leaks into the next day
