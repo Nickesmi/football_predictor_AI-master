@@ -106,3 +106,12 @@ test('demo mode never retries a failed load in the background', () => {
   assert.equal(maxLoadRetries(exhausted), 0);
   assert.equal(maxLoadRetries(null), 3);
 });
+
+test('football-data.org provider: its own label, daily count and refresh wording', () => {
+  const fd = { mode: 'demo', provider: 'football_data', provider_label: 'football-data.org', cost_per_refresh: 1,
+    can_refresh: true, remaining_today: 39, remaining_total: 39, daily_limit: 40, blocked_reasons: [] };
+  assert.equal(allowanceText(fd), 'football-data.org · 39 of 40 requests left today');
+  assert.match(confirmText(fd, '2026-10-31'), /^Request fixtures for 2026-10-31 from football-data\.org\?/);
+  assert.match(refreshControl(fd, { fetched: true, provider: 'football_data' }).reason, /15 minutes/);
+  assert.equal(refreshControl(fd, { fetched: false }).enabled, true);
+});

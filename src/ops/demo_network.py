@@ -4,6 +4,7 @@ install() (after src/ops/demo_quota.install) makes every external host unreachab
 process unless a request is explicitly permitted:
   * API-Football (*.api-sports.io): left to demo_quota (counted, explicit refresh only);
   * logo images: GET paths ending in /image on SofaScore image endpoints, and media.api-sports.io;
+  * a host named in `explicit(host)`, only inside that block on that thread (football-data.org refresh);
   * loopback is always allowed.
 Everything else (SofaScore data, odds providers, LLM calls, scrapers) is refused before any
 connection: DNS for unpermitted external names fails (covers http.client, urllib3, requests, httpx),
@@ -17,6 +18,7 @@ import ipaddress
 import re
 import socket
 import threading
+from contextlib import contextmanager
 from urllib.parse import urlsplit
 
 IMAGE_HOSTS = {"api.sofascore.com", "api.sofascore.app", "img.sofascore.com"}
@@ -44,9 +46,20 @@ def _api_football(host: str) -> bool:
     return (host or "").lower().rstrip(".").endswith("api-sports.io")
 
 
+@contextmanager
+def explicit(host: str):
+    """Admit one external host for the duration of an explicit, already-counted request."""
+    previous = getattr(_local, "explicit", None)
+    _local.explicit = host.lower()
+    try:
+        yield
+    finally:
+        _local.explicit = previous
+
+
 def allowed(host: str, path: str) -> bool:
     h = (host or "").lower().rstrip(".")
-    if _loopback(h) or h == "media.api-sports.io":
+    if _loopback(h) or h == "media.api-sports.io" or h == getattr(_local, "explicit", None):
         return True
     return h in IMAGE_HOSTS and bool(IMAGE_PATH.search(urlsplit(path).path if "://" in path else path.split("?")[0]))
 

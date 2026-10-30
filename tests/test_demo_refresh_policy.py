@@ -70,7 +70,8 @@ ARGS = json.loads(os.environ["DEMO_ARGS"])
 demo_server.prepare(Path(ARGS["db"]), Path(ARGS["workdir"]), ARGS.get("cap", 0),
                     ledger=Path(ARGS["ledger"]) if ARGS.get("ledger") else None,
                     ledger_budget=ARGS.get("ledger_budget"), provider_floor=ARGS.get("floor", 30),
-                    shadow_root=Path(ARGS["shadow_root"]))
+                    shadow_root=Path(ARGS["shadow_root"]),
+                    fixture_provider=ARGS.get("fixture_provider", "api_football"))
 from fastapi.testclient import TestClient
 from api.main import app
 from src.ops import demo_quota
@@ -116,7 +117,8 @@ def _run(env, body, responses=(), **args):
                        capture_output=True, text=True,
                        env={"PATH": "/usr/bin:/bin", "HOME": str(env["tmp"]), "PYTHONPATH": str(ROOT),
                             "DEMO_ROOT": str(ROOT), "DEMO_ARGS": json.dumps(a), "FAKE_RESPONSES": json.dumps(list(responses)),
-                            "APIFOOTBALL_API_KEY": KEY, "API_FOOTBALL_KEY": KEY})
+                            "APIFOOTBALL_API_KEY": KEY, "API_FOOTBALL_KEY": KEY,
+                            "FOOTBALL_DATA_TOKEN": args.get("fd_token", "fd-test-token-not-real")})
     lines = [line for line in r.stdout.splitlines() if line.startswith("RESULT ")]
     assert r.returncode == 0 and lines, r.stdout[-3000:] + r.stderr[-3000:]
     return json.loads(lines[-1][7:])

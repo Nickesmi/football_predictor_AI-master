@@ -1,5 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { Loader2, AlertCircle, ShieldAlert, Cpu, ChevronDown, ChevronRight, Activity, Zap, Target, CornerUpRight, CreditCard, Trophy, Layers, Filter, BarChart3, TrendingUp, Shuffle, Crosshair, Crown, Shield, Dice5 } from 'lucide-react';
+import { predictionAvailability } from '../demo/predictionInputs';
 
 const getBarColor = (pct) => {
   if (pct >= 95) return "bg-emerald-500";
@@ -675,6 +676,32 @@ const MatchDetail = ({ fixture, analysis, loading, error }) => {
 
   if (!analysis) return null;
 
+  const inputs = predictionAvailability(analysis);
+  if (!inputs.available) {
+    return (
+      <div className="max-w-4xl mx-auto p-4 sm:p-6 animate-fade-in text-slate-200">
+        <div className="bg-[#111318] border border-white/5 rounded-2xl p-6 mb-6 text-center">
+          <h2 className="text-lg font-bold text-white tracking-wide">
+            {fixture.home_team.name} <span className="text-slate-500">vs</span> {fixture.away_team.name}
+          </h2>
+          <p className="text-[11px] text-slate-500 mt-1">{fixture.league?.name} · {fixture.time}</p>
+        </div>
+        <div className="bg-amber-500/10 border border-amber-500/25 rounded-xl p-6">
+          <div className="flex items-center gap-2 text-amber-400 font-bold mb-2">
+            <AlertCircle className="w-5 h-5" /> Prediction unavailable: required data is missing
+          </div>
+          <p className="text-sm text-slate-300 mb-3">
+            The model has no historical data for this team, so any probability would come only from fallback
+            defaults. No probabilities or picks are shown.
+          </p>
+          <ul className="text-xs text-slate-400 list-disc pl-5 space-y-1">
+            {[...inputs.blocking, ...inputs.warnings].map((n) => <li key={n}>{n}</li>)}
+          </ul>
+        </div>
+      </div>
+    );
+  }
+
   const fullAnalysis = analysis.full_analysis || {};
   const poisson = analysis.poisson;
   const scorePrediction = analysis.score_prediction;
@@ -751,6 +778,15 @@ const MatchDetail = ({ fixture, analysis, loading, error }) => {
           {analysis.total_qualified} QUALIFIED (≥80%)
         </span>
       </div>
+
+      {inputs.warnings.length > 0 && (
+        <div className="bg-amber-500/5 border border-amber-500/20 rounded-xl px-4 py-3 mb-6 text-[11px] text-amber-300/90">
+          <div className="font-bold uppercase tracking-wider mb-1">Limited input data</div>
+          <ul className="list-disc pl-5 space-y-0.5 text-slate-400">
+            {inputs.warnings.map((n) => <li key={n}>{n}</li>)}
+          </ul>
+        </div>
+      )}
 
       {/* ── Score Prediction + Dominance ──────────────── */}
       <ScorePrediction 

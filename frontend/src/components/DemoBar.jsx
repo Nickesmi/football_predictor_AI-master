@@ -1,6 +1,6 @@
 import React from 'react';
 import { Database, RefreshCw, Loader2, Info } from 'lucide-react';
-import { dataBadge, refreshControl, timesNote } from '../demo/demoRefresh';
+import { dataBadge, providerLabel, refreshControl, timesNote } from '../demo/demoRefresh';
 
 // Demo-mode strip: what the list shows (cached snapshot and its age), the authorized allowance,
 // and the only control that can spend an API-Football request.
@@ -26,7 +26,7 @@ export default function DemoBar({ status, cache, busy, notice, onRefresh }) {
       <button
         onClick={onRefresh}
         disabled={!control.enabled}
-        title={control.reason || `Uses ${control.cost} API-Football request`}
+        title={control.reason || `Uses ${control.cost} ${providerLabel(status)} request`}
         className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gold-500/10 border border-gold-500/25 text-gold-500 hover:bg-gold-500/20 transition-all font-bold disabled:opacity-40 disabled:cursor-not-allowed"
       >
         {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}

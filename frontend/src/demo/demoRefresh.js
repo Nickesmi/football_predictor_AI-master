@@ -47,8 +47,15 @@ export const dataBadge = (cache, nowMs = Date.now()) => {
 
 export const timesNote = (cache) => (cache && cache.display_timezone ? `Times in ${cache.display_timezone}` : '');
 
+// The fixture provider the demo refreshes from (api/demo_mode.py): API-Football, or football-data.org.
+export const providerLabel = (status) => (status && status.provider_label) || 'API-Football';
+const isFootballData = (status) => Boolean(status && status.provider === 'football_data');
+
 export const allowanceText = (status) => {
   if (!isDemo(status)) return '';
+  if (isFootballData(status)) {
+    return `${providerLabel(status)} · ${status.remaining_today} of ${status.daily_limit} requests left today`;
+  }
   const legacy = status.legacy && status.legacy.remaining > 0 ? `${status.legacy.remaining} legacy · ` : '';
   return `${legacy}${status.remaining_today} left today · ${status.remaining_total} left in authorized allowance`;
 };
@@ -59,7 +66,10 @@ export const refreshControl = (status, cache, { busy = false } = {}) => {
   const base = { visible: true, cost, label: `Refresh fixtures (${cost} request)`, detail: allowanceText(status) };
   if (busy) return { ...base, enabled: false, label: 'Refreshing…', reason: 'A refresh is running.' };
   if (cache && cache.fetched) {
-    return { ...base, enabled: false, reason: 'This date was already fetched; it is never requested again.' };
+    const reason = isFootballData(status) && cache.provider === 'football_data'
+      ? 'Cached. A day can be refreshed again 15 minutes after its last update, until the day is over.'
+      : 'This date was already fetched; it is never requested again.';
+    return { ...base, enabled: false, reason };
   }
   if (!status.can_refresh) {
     const why = (status.blocked_reasons && status.blocked_reasons[0]) || 'No authorized request remains.';
@@ -70,6 +80,10 @@ export const refreshControl = (status, cache, { busy = false } = {}) => {
 
 export const confirmText = (status, date) => {
   const cost = status.cost_per_refresh || 1;
+  if (isFootballData(status)) {
+    return `Request fixtures for ${date} from ${providerLabel(status)}?\n\n`
+      + `Cost: ${cost} request.\nRemaining after this: ${Math.max(0, status.remaining_today - cost)} today.`;
+  }
   return `Request fixtures for ${date} from API-Football?\n\n`
     + `Cost: ${cost} request.\nRemaining after this: ${Math.max(0, status.remaining_today - cost)} today, `
     + `${Math.max(0, status.remaining_total - cost)} in the authorized allowance.`;

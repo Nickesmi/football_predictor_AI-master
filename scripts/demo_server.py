@@ -21,6 +21,8 @@ Never the production database.
 * the provider's own remaining count reported today must stay above --provider-floor;
 * if the shadow experiment's key file (<shadow-root>/etc/api_key.env) holds the same key, a grant
   request also needs --ledger (the shadow's shared ledger) and is reserved there as consumer "demo";
+* --fixture-provider football_data (2026-10-31): days not already fetched from API-Football come from
+  football-data.org through the same explicit refresh (src/ops/football_data.py);
 * prediction, identity and calibration settings are the repository defaults
   (PROBABILITY_INPUTS unset = legacy, BASELINE_FREEZE unset).
 """
@@ -39,7 +41,7 @@ DEFAULT_SHADOW_ROOT = Path(pwd.getpwuid(os.getuid()).pw_dir) / "FootballShadow"
 
 def prepare(db: Path, workdir: Path, cap: int, *, ledger: Path | None = None, ledger_budget: int | None = None,
             provider_floor: int = 30, shadow_root: Path | None = DEFAULT_SHADOW_ROOT,
-            display_tz: str = "Europe/Istanbul"):
+            display_tz: str = "Europe/Istanbul", fixture_provider: str = "api_football"):
     if db.resolve() == LIVE_DB:
         raise SystemExit("refusing: the demo never uses data/engine.db")
     if not db.exists():
@@ -85,10 +87,13 @@ def prepare(db: Path, workdir: Path, cap: int, *, ledger: Path | None = None, le
 
     system_service.start_background_tasks = no_background_tasks
 
+    if fixture_provider == "football_data":
+        from src.ops import football_data
+        football_data.install(workdir / "football_data_requests.db", cache)
     from api import demo_mode
     from api.main import app
 
-    demo_mode.install(app, display_timezone=display_tz)
+    demo_mode.install(app, display_timezone=display_tz, fixture_provider=fixture_provider)
     return workdir
 
 
@@ -106,11 +111,14 @@ def main() -> int:
                    help="shadow experiment root, to detect a shared API key (digest comparison only)")
     p.add_argument("--display-tz", default="Europe/Istanbul",
                    help="time zone of the calendar days shown and requested (kick-offs are kept in UTC)")
+    p.add_argument("--fixture-provider", choices=["api_football", "football_data"], default="api_football",
+                   help="football_data: days not fetched from API-Football come from football-data.org "
+                        "(FOOTBALL_DATA_TOKEN in .env); API-Football is then never contacted")
     a = p.parse_args()
     if a.ledger and not a.ledger_budget:
         p.error("--ledger needs --ledger-budget")
     prepare(a.db, a.workdir, a.cap, ledger=a.ledger, ledger_budget=a.ledger_budget, provider_floor=a.provider_floor,
-            shadow_root=a.shadow_root, display_tz=a.display_tz)
+            shadow_root=a.shadow_root, display_tz=a.display_tz, fixture_provider=a.fixture_provider)
     import uvicorn
 
     from api.main import app

@@ -22,6 +22,11 @@ A refused, failed or incomplete request is never recorded as a successful fetch,
 replaces cached fixtures.
 
 Quota rules live in src/ops/demo_quota.py; this module never decides an allowance itself.
+
+Fixture provider "football_data" (2026-10-31, API-Football account suspended): a day already fetched from
+API-Football keeps its cache and is never requested again; any other day is read from, and refreshed
+through, football-data.org (src/ops/football_data.py, its own cache files and limits). API-Football is
+then never contacted.
 """
 from __future__ import annotations
 
@@ -32,12 +37,12 @@ from datetime import date, datetime, timedelta
 from fastapi import APIRouter, BackgroundTasks, HTTPException
 
 from api import fixture_time
-from src.ops import demo_network, demo_quota
+from src.ops import demo_network, demo_quota, football_data
 
 router = APIRouter()
 _explicit = threading.local()
 _original: dict = {}
-_settings = {"display_tz": fixture_time.DEFAULT_DISPLAY_TZ}
+_settings = {"display_tz": fixture_time.DEFAULT_DISPLAY_TZ, "provider": "api_football"}
 PROVIDER_LIMIT_WORDS = ("request limit", "requests limit", "reached the limit", "too many requests", "429")
 
 
@@ -49,6 +54,11 @@ def _fs():
 
 def display_tz() -> str:
     return _settings["display_tz"]
+
+
+def _fd(date_str: str | None = None) -> bool:
+    """football-data.org serves this day (provider football_data, and no API-Football fetch of the day)."""
+    return _settings["provider"] == football_data.PROVIDER and (date_str is None or not fetched(date_str))
 
 
 def _today() -> str:
@@ -87,6 +97,9 @@ def _neighbours(date_str: str) -> tuple[str, str]:
 def day_fixtures(date_str: str, background_tasks: BackgroundTasks | None) -> list[dict]:
     """The display-time-zone day, from the storage date (through the fixture service, which also adds
     stored results) and the raw cache of the neighbouring storage dates (for kick-offs near midnight)."""
+    if _fd(date_str):
+        cached = football_data.read_cache(date_str)
+        return list(cached["fixtures"]) if cached else []
     result = _original["service"](date_str, background_tasks or BackgroundTasks(), force_refresh=False)
     own = result if isinstance(result, list) else result.get("fixtures", [])
     before, after = _neighbours(date_str)
@@ -94,8 +107,32 @@ def day_fixtures(date_str: str, background_tasks: BackgroundTasks | None) -> lis
                                  {before: _storage_file(before), date_str: own, after: _storage_file(after)})
 
 
+def _fd_cache_state(date_str: str, fixtures: list | None) -> dict:
+    tz, today = display_tz(), _today()
+    cached, last = football_data.read_cache(date_str), football_data.last_attempt(date_str)
+    quota = demo_status()
+    if fixtures:
+        state = "cached"
+    elif cached is not None:
+        state = "no_fixtures"
+    elif last and last["state"] in ("quota_exhausted", "provider_error"):
+        state = last["state"]
+    elif not quota["can_refresh"]:
+        state = "quota_exhausted"
+    else:
+        state = "not_cached"
+    return {"date": date_str, "state": state, "fetched": not football_data.refreshable(date_str, tz),
+            "cached_fixtures": len(fixtures) if fixtures is not None else None, "unknown_time_basis": 0,
+            "last_updated_at": cached["fetched_at"] if cached else None, "last_attempt": last,
+            "period": "past" if date_str < today else ("today" if date_str == today else "upcoming"),
+            "display_timezone": tz, "today": today, "data_source": "cache", "live": False,
+            "provider": football_data.PROVIDER, "provider_label": football_data.LABEL, "quota": quota}
+
+
 def cache_state(date_str: str, fixtures: list | None = None) -> dict:
-    quota = demo_quota.status()
+    if _fd(date_str):
+        return _fd_cache_state(date_str, fixtures)
+    quota = demo_status() if _fd() else demo_quota.status()
     today = _today()
     count = len(fixtures) if fixtures is not None else None
     last = demo_quota.last_refresh_attempt(date_str)
@@ -123,6 +160,13 @@ MESSAGES = {
     "provider_error": "No cached fixtures for {date}. The last refresh failed: {error}. Cached dates stay available.",
     "not_cached": "No cached fixtures for {date}. Use 'Refresh fixtures' to request it (1 API-Football request).",
 }
+FD_MESSAGES = {
+    "no_fixtures": "No fixtures in football-data.org's competitions for {date} (checked {when}).",
+    "quota_exhausted": "No cached fixtures for {date}: {error}. Cached dates stay available.",
+    "provider_error": "No cached fixtures for {date}. The last football-data.org refresh failed: {error}. "
+                      "Cached dates stay available.",
+    "not_cached": "No cached fixtures for {date}. Use 'Refresh fixtures' to request it (1 football-data.org request).",
+}
 
 
 def _validate(date_str: str) -> None:
@@ -132,9 +176,13 @@ def _validate(date_str: str) -> None:
         raise HTTPException(status_code=400, detail=f"Invalid date format: {date_str!r}. Use YYYY-MM-DD.")
 
 
-def install(app=None, display_timezone: str = fixture_time.DEFAULT_DISPLAY_TZ) -> None:
+def install(app=None, display_timezone: str = fixture_time.DEFAULT_DISPLAY_TZ,
+            fixture_provider: str = "api_football") -> None:
     fixture_time.zone(display_timezone)   # an unknown zone fails here, at start-up
+    if fixture_provider not in ("api_football", football_data.PROVIDER):
+        raise ValueError(f"unknown fixture provider {fixture_provider!r}")
     _settings["display_tz"] = display_timezone
+    _settings["provider"] = fixture_provider
     fs = _fs()
     if _original:
         return
@@ -155,7 +203,8 @@ def install(app=None, display_timezone: str = fixture_time.DEFAULT_DISPLAY_TZ) -
         if state["state"] != "cached":
             when = state["last_updated_at"] or "earlier"
             error = (state["last_attempt"] or {}).get("error") or "unknown error"
-            payload["message"] = MESSAGES[state["state"]].format(date=date_str, when=when, error=error)
+            texts = FD_MESSAGES if state.get("provider") == football_data.PROVIDER else MESSAGES
+            payload["message"] = texts[state["state"]].format(date=date_str, when=when, error=error)
         return payload
 
     _original["convert"] = fs._api_football_to_fixture
@@ -181,8 +230,12 @@ def install(app=None, display_timezone: str = fixture_time.DEFAULT_DISPLAY_TZ) -
 
 @router.get("/api/demo/status")
 def demo_status():
-    return {**demo_quota.status(), "today": _today(), "display_timezone": display_tz(),
-            "external_requests_blocked": demo_network.blocked_counts()}
+    base = {"today": _today(), "display_timezone": display_tz(), "external_requests_blocked": demo_network.blocked_counts()}
+    if _fd():
+        return {"mode": "demo", "explicit_only": True, "cost_per_refresh": 1, "legacy": None,
+                **football_data.status(display_tz()), **base,
+                "api_football": "disabled: account suspended; days fetched earlier stay cached"}
+    return {**demo_quota.status(), "provider": "api_football", "provider_label": "API-Football", **base}
 
 
 @router.get("/api/demo/fixture-cache/{date_str}")
@@ -205,9 +258,39 @@ def _classify(attempts: list[dict], error: str | None, own: int) -> tuple[str, s
     return ("fresh", None) if own else ("no_fixtures", None)
 
 
+def _fd_refresh(date_str: str):
+    if not football_data.refreshable(date_str, display_tz()):
+        state = cache_state(date_str, day_fixtures(date_str, None))
+        raise HTTPException(status_code=409, detail={
+            "error": "already_fetched", "state": state["state"], "cache": state,
+            "message": f"{date_str} is cached and was updated less than {football_data.REFRESH_AFTER // 60} min ago "
+                       "(or after the day ended); no request sent."})
+    quota = demo_status()
+    if not quota["can_refresh"]:
+        raise HTTPException(status_code=403, detail={"error": "no_allowance", "state": "quota_exhausted",
+                                                     "reasons": quota["blocked_reasons"], "quota": quota,
+                                                     "message": f"{quota['blocked_reasons'][0]}; nothing was sent."})
+    result = football_data.refresh(date_str, display_tz())
+    state, reason = result["state"], result["error"]
+    cache = cache_state(date_str, day_fixtures(date_str, None))
+    body = {"ok": state in ("fresh", "no_fixtures"), "state": state, "date": date_str, "error": reason, "cache": cache,
+            "quota": cache["quota"], "provider": football_data.PROVIDER}
+    if state == "fresh":
+        body["message"] = f"Fixtures updated from football-data.org: {cache['cached_fixtures']} for {date_str}."
+        return body
+    if state == "no_fixtures":
+        body["message"] = f"No fixtures in football-data.org's competitions for {date_str}."
+        return body
+    body["message"] = (f"Refresh did not return fixtures ({state.replace('_', ' ')}): {reason}. "
+                       "Cached fixtures are unchanged.")
+    raise HTTPException(status_code=429 if state == "quota_exhausted" else 502, detail=body)
+
+
 @router.post("/api/demo/refresh-fixtures/{date_str}")
 def refresh_fixtures(date_str: str, background_tasks: BackgroundTasks):
     _validate(date_str)
+    if _fd(date_str):
+        return _fd_refresh(date_str)
     if fetched(date_str):
         state = cache_state(date_str, day_fixtures(date_str, background_tasks))
         raise HTTPException(status_code=409, detail={"error": "already_fetched", "state": state["state"], "cache": state,
