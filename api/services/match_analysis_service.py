@@ -1611,13 +1611,22 @@ def get_match_analysis(
 
         identity_inputs = None
         if provider:
+            import sqlite3
+
+            from src.db.database import DB_PATH
             from src.identity.analysis_inputs import resolve_for_analysis
 
-            identity_inputs = resolve_for_analysis(
-                get_db(), provider=provider, league_id=league_id, league_name=league, country=country,
-                league_code=league_code, home=home_name, away=away_name, home_id=home_id, away_id=away_id,
-                profile_key=LEAGUE_NAME_MAP.get(league, league),
-                match_date=(kickoff_utc or "")[:10] or _get_istanbul_today())
+            # Its own read-only connection: the shared get_db() connection is used by every request
+            # thread at once, and interleaved cursors fail ("another row available").
+            ro = sqlite3.connect(f"file:{DB_PATH}?mode=ro", uri=True, timeout=30)
+            try:
+                identity_inputs = resolve_for_analysis(
+                    ro, provider=provider, league_id=league_id, league_name=league, country=country,
+                    league_code=league_code, home=home_name, away=away_name, home_id=home_id, away_id=away_id,
+                    profile_key=LEAGUE_NAME_MAP.get(league, league),
+                    match_date=(kickoff_utc or "")[:10] or _get_istanbul_today())
+            finally:
+                ro.close()
         match_info = {"home_team": home_name, "away_team": away_name, "league_name": league,
                       "season": "2024/25", "date": _get_istanbul_today()}
         if identity_inputs is not None and not identity_inputs["available"]:
