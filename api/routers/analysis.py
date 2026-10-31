@@ -16,6 +16,13 @@ def analyze_match_endpoint(
     league: str = "Premier League",
     status: str = "",
     start_time: str = "",
+    provider: str | None = None,
+    league_id: str | None = None,
+    league_code: str | None = None,
+    country: str = "",
+    home_id: str | None = None,
+    away_id: str | None = None,
+    kickoff_utc: str | None = None,
 ) -> dict[str, Any]:
     """
     Per-match prediction endpoint.
@@ -28,4 +35,11 @@ def analyze_match_endpoint(
         league=league,
         status=status,
         start_time=start_time,
+        provider=provider,
+        league_id=league_id,
+        league_code=league_code,
+        country=country,
+        home_id=home_id,
+        away_id=away_id,
+        kickoff_utc=kickoff_utc,
     )

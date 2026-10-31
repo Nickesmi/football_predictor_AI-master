@@ -227,7 +227,7 @@ def _build_joint_matrix(lam_h: float, lam_a: float, max_goals: int,
     return matrix
 
 
-def _compute_match_analysis(home_name: str, away_name: str, league_name: str = "Premier League", shuffle_tiers: bool = True, feature_flags: dict = None, fixture_id: str = "") -> dict:
+def _compute_match_analysis(home_name: str, away_name: str, league_name: str = "Premier League", shuffle_tiers: bool = True, feature_flags: dict = None, fixture_id: str = "", identity_inputs: dict | None = None) -> dict:
     """
     Per-match MODULAR analysis — 2-Layer Architecture:
 
@@ -254,8 +254,12 @@ def _compute_match_analysis(home_name: str, away_name: str, league_name: str = "
     league_key = LEAGUE_NAME_MAP.get(league_name, league_name)
 
     # ── Step 1: Team stats ──
-    home_stats = get_team_stats(home_name, "home", league_key)
-    away_stats = get_team_stats(away_name, "away", league_key)
+    if identity_inputs is not None:
+        # Identity-checked history (src/identity/analysis_inputs.py): the resolved record, never a name guess.
+        home_stats, away_stats = identity_inputs["home_stats"], identity_inputs["away_stats"]
+    else:
+        home_stats = get_team_stats(home_name, "home", league_key)
+        away_stats = get_team_stats(away_name, "away", league_key)
 
     logger.info(
         "⚽ %s (H: %.1f/%.1f, C:%.1f, K:%.1f) vs %s (A: %.1f/%.1f, C:%.1f, K:%.1f) [%s]",
@@ -390,6 +394,8 @@ def _compute_match_analysis(home_name: str, away_name: str, league_name: str = "
 
     # Build missing inputs list for audit transparency
     _missing_inputs = []
+    if identity_inputs is not None:
+        _missing_inputs.extend(identity_inputs["warnings"])
     # Check if teams are from real data or fallback using the same alias-aware
     # lookup that get_team_stats() uses — previously used broken substring matching.
     from src.ml.team_stats_db import ALL_HOME, ALL_AWAY, _lookup_in_db
@@ -408,12 +414,16 @@ def _compute_match_analysis(home_name: str, away_name: str, league_name: str = "
     except Exception:
         pass
 
-    if not _h_in_hardcoded and not _h_in_live:
+    if identity_inputs is not None:
+        pass   # both sides resolved to a verified record; thin or old history is listed above
+    elif not _h_in_hardcoded and not _h_in_live:
         _missing_inputs.append(f"home_team '{home_name}' has NO real data — using fallback defaults")
         data_quality = max(0, data_quality - 30)  # Severe penalty for truly unknown teams
     elif home_profile.matches_played < 5:
         _missing_inputs.append(f"home_team '{home_name}' has only {home_profile.matches_played} matches")
-    if not _a_in_hardcoded and not _a_in_live:
+    if identity_inputs is not None:
+        pass
+    elif not _a_in_hardcoded and not _a_in_live:
         _missing_inputs.append(f"away_team '{away_name}' has NO real data — using fallback defaults")
         data_quality = max(0, data_quality - 30)  # Severe penalty for truly unknown teams
     elif away_profile.matches_played < 5:
@@ -1578,10 +1588,19 @@ def get_match_analysis(
     league: str = "Premier League",
     status: str = "",
     start_time: str = "",
+    provider: str | None = None,
+    league_id: str | None = None,
+    league_code: str | None = None,
+    country: str = "",
+    home_id: str | None = None,
+    away_id: str | None = None,
+    kickoff_utc: str | None = None,
 ) -> dict[str, Any]:
     """
     Per-match prediction service. Every match gets UNIQUE probabilities.
     Computes analysis across all betting markets and records predictions in error intelligence DB.
+    With the fixture's provider ids, each team is resolved with team-identity-v1
+    (src/identity/analysis_inputs.py); an unresolved team gets no forecast.
     """
     home_name = home or "Unknown Home"
     away_name = away or "Unknown Away"
@@ -1590,20 +1609,36 @@ def get_match_analysis(
         if fixture_id in _ANALYSIS_CACHE:
             return _ANALYSIS_CACHE[fixture_id]
 
+        identity_inputs = None
+        if provider:
+            from src.identity.analysis_inputs import resolve_for_analysis
+
+            identity_inputs = resolve_for_analysis(
+                get_db(), provider=provider, league_id=league_id, league_name=league, country=country,
+                league_code=league_code, home=home_name, away=away_name, home_id=home_id, away_id=away_id,
+                profile_key=LEAGUE_NAME_MAP.get(league, league),
+                match_date=(kickoff_utc or "")[:10] or _get_istanbul_today())
+        match_info = {"home_team": home_name, "away_team": away_name, "league_name": league,
+                      "season": "2024/25", "date": _get_istanbul_today()}
+        if identity_inputs is not None and not identity_inputs["available"]:
+            analysis = {"prediction_available": False, "missing_inputs": identity_inputs["blocking"] + identity_inputs["warnings"],
+                        "identity": identity_inputs["identity"], "total_markets_scanned": 0, "top_picks": [],
+                        "match": match_info}
+            _ANALYSIS_CACHE[fixture_id] = analysis
+            return analysis
+
         logger.info(f"Per-match engine: {home_name} vs {away_name} [{league}]")
         analysis = _compute_match_analysis(
             home_name=home_name,
             away_name=away_name,
             league_name=league,
             fixture_id=fixture_id,
+            identity_inputs=identity_inputs,
         )
-        analysis["match"] = {
-            "home_team": home_name,
-            "away_team": away_name,
-            "league_name": league,
-            "season": "2024/25",
-            "date": _get_istanbul_today(),
-        }
+        analysis["prediction_available"] = True
+        if identity_inputs is not None:
+            analysis["identity"] = identity_inputs["identity"]
+        analysis["match"] = match_info
         _ANALYSIS_CACHE[fixture_id] = analysis
 
         # ── Store 1X2 prediction in error intelligence system ──

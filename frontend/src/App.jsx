@@ -10,6 +10,7 @@ import DemoBar from './components/DemoBar';
 import {
   DEFAULT_DISPLAY_TZ, allowBackgroundRefresh, confirmText, dateInZone, isDemo, maxLoadRetries, refreshOutcome,
 } from './demo/demoRefresh';
+import { identityQuery } from './demo/predictionInputs';
 
 const API = import.meta.env.VITE_API_URL || "/api";
 
@@ -125,7 +126,7 @@ function App() {
     }
     setAnalysisError(null);
     try {
-      const res = await fetch(`${API}/analysis/match/${fixture.id}?home=${encodeURIComponent(fixture.home_team.name)}&away=${encodeURIComponent(fixture.away_team.name)}&league=${encodeURIComponent(fixture.league.name)}&live_home=${fixture.home_goals || 0}&live_away=${fixture.away_goals || 0}&status=${encodeURIComponent(fixture.status)}&start_time=${encodeURIComponent(fixture.time)}`);
+      const res = await fetch(`${API}/analysis/match/${fixture.id}?home=${encodeURIComponent(fixture.home_team.name)}&away=${encodeURIComponent(fixture.away_team.name)}&league=${encodeURIComponent(fixture.league.name)}&live_home=${fixture.home_goals || 0}&live_away=${fixture.away_goals || 0}&status=${encodeURIComponent(fixture.status)}&start_time=${encodeURIComponent(fixture.time)}${identityQuery(fixture)}`);
       if (!res.ok) throw new Error("Analysis failed");
       const data = await res.json();
       // Merge fixture display info
