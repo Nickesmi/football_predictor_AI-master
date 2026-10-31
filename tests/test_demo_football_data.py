@@ -134,3 +134,26 @@ OUT["p"] = client.post("/api/demo/refresh-fixtures/{D}").status_code
 OUT["fx"] = [(f["id"], f["provider"]) for f in client.get("/api/fixtures/{D}").json()["fixtures"]]
 """, [_ok()])
     assert out["p"] == 409 and out["calls"] == 0 and out["fx"] == [["9001", "api_football"]]
+
+
+def test_api_football_mode_shows_football_data_days_until_api_football_fetches_them(env):
+    from tests.test_demo_refresh_policy import _grant, _ok as _af_ok
+
+    cache = env["work"] / ".cache"
+    cache.mkdir(parents=True)
+    fx = [{"id": "fd-9", "kickoff_utc": "2030-01-05T12:00:00Z", "time": "15:00", "date": D, "provider": "football_data",
+           "home_team": {"name": "H"}, "away_team": {"name": "A"}, "league": {"name": "L"}, "status": "NS"}]
+    (cache / f"fd-fixtures-{D}.json").write_text(json.dumps({"fetched_at": "2030-01-05T09:00:00+00:00", "fixtures": fx}))
+    import sqlite3
+    sqlite3.connect(env["work"] / "demo_api_usage.db").close()
+    _grant(env, 3, 3)
+    out = _run(env, f"""
+r = client.get("/api/fixtures/{D}").json()
+OUT["before"] = ([f["id"] for f in r["fixtures"]], r["demo"]["state"], r["demo"]["provider"], r["demo"]["fetched"])
+OUT["p"] = client.post("/api/demo/refresh-fixtures/{D}").status_code
+r = client.get("/api/fixtures/{D}").json()
+OUT["after"] = (sorted({{f["provider"] for f in r["fixtures"]}}), len(r["fixtures"]), r["demo"]["provider"])
+OUT["fd_kept"] = (Path(r"{cache}") / "fd-fixtures-{D}.json").exists()
+""", [_af_ok(D)], fixture_provider="api_football")
+    assert out["before"] == [["fd-9"], "cached", "football_data", False]
+    assert out["p"] == 200 and out["urls"] and out["after"] == [["api_football"], 2, "api_football"] and out["fd_kept"]

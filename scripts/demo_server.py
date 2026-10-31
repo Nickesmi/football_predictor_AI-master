@@ -87,9 +87,8 @@ def prepare(db: Path, workdir: Path, cap: int, *, ledger: Path | None = None, le
 
     system_service.start_background_tasks = no_background_tasks
 
-    if fixture_provider == "football_data":
-        from src.ops import football_data
-        football_data.install(workdir / "football_data_requests.db", cache)
+    from src.ops import football_data
+    football_data.install(workdir / "football_data_requests.db", cache)   # its cached days stay readable in either mode
     from api import demo_mode
     from api.main import app
 

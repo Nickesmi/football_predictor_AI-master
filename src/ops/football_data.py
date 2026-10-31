@@ -56,6 +56,10 @@ def install(db_path: Path, cache_dir: Path) -> None:
                   "outcome TEXT, fixtures INTEGER, reason TEXT)")
 
 
+def installed() -> bool:
+    return _state["cache_dir"] is not None
+
+
 def _conn() -> sqlite3.Connection:
     return sqlite3.connect(_state["db"], timeout=30)
 

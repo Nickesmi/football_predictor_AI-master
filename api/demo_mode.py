@@ -97,9 +97,12 @@ def _neighbours(date_str: str) -> tuple[str, str]:
 def day_fixtures(date_str: str, background_tasks: BackgroundTasks | None) -> list[dict]:
     """The display-time-zone day, from the storage date (through the fixture service, which also adds
     stored results) and the raw cache of the neighbouring storage dates (for kick-offs near midnight)."""
-    if _fd(date_str):
-        cached = football_data.read_cache(date_str)
-        return list(cached["fixtures"]) if cached else []
+    if not fetched(date_str):
+        # football-data.org days (fetched while API-Football was suspended) stay visible in either mode
+        # until an API-Football fetch of the day replaces them.
+        cached = football_data.read_cache(date_str) if football_data.installed() else None
+        if cached or _fd(date_str):
+            return list(cached["fixtures"]) if cached else []
     result = _original["service"](date_str, background_tasks or BackgroundTasks(), force_refresh=False)
     own = result if isinstance(result, list) else result.get("fixtures", [])
     before, after = _neighbours(date_str)
@@ -147,8 +150,11 @@ def cache_state(date_str: str, fixtures: list | None = None) -> dict:
     else:
         state = "not_cached"
     unknown = sum(1 for f in fixtures or [] if f.get("time_basis") == "unknown")
+    fd_cached = football_data.read_cache(date_str) if football_data.installed() and not fetched(date_str) else None
+    updated = fd_cached["fetched_at"] if fd_cached else demo_quota.last_fixture_update(date_str)
     return {"date": date_str, "state": state, "fetched": fetched(date_str), "cached_fixtures": count,
-            "unknown_time_basis": unknown, "last_updated_at": demo_quota.last_fixture_update(date_str),
+            "unknown_time_basis": unknown, "last_updated_at": updated,
+            "provider": football_data.PROVIDER if fd_cached else "api_football",
             "last_attempt": last, "period": "past" if date_str < today else ("today" if date_str == today else "upcoming"),
             "display_timezone": display_tz(), "today": today, "data_source": "cache", "live": False, "quota": quota}
 
