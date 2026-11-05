@@ -1581,6 +1581,66 @@ def _compute_match_analysis(home_name: str, away_name: str, league_name: str = "
     }
 
 
+def build_match_analysis(fixture_id: str, *, home: str, away: str, league: str, provider: str | None = None,
+                         league_id=None, league_code: str | None = None, country: str = "", home_id=None,
+                         away_id=None, kickoff_utc: str | None = None,
+                         persist_qualification: bool = True) -> dict[str, Any]:
+    """The analysis of one fixture, cached by fixture id, no prediction recorded (2026-11-03).
+
+    persist_qualification=False (page-load precompute) computes without the fixture id, as the precompute always
+    did, so it writes no qualification_log row; the endpoint keeps passing the fixture id.
+
+    Used by the analysis endpoint and by the page-load precompute. The precompute used to call
+    _compute_match_analysis without the fixture's provider ids and stored that legacy, name-only result under
+    the same cache key, so the endpoint later served it even when it was called with the ids (Feyenoord vs
+    Inter: "has NO real data — using fallback defaults" from the legacy name check). Both paths now resolve
+    teams the same way. With the fixture's provider ids, each team is resolved with team-identity-v1
+    (src/identity/analysis_inputs.py); an unresolved team gets no forecast."""
+    if fixture_id in _ANALYSIS_CACHE:
+        return _ANALYSIS_CACHE[fixture_id]
+    identity_inputs = None
+    if provider:
+        import sqlite3
+
+        from src.db.database import DB_PATH
+        from src.identity.analysis_inputs import resolve_for_analysis
+
+        # Its own read-only connection: the shared get_db() connection is used by every request
+        # thread at once, and interleaved cursors fail ("another row available").
+        ro = sqlite3.connect(f"file:{DB_PATH}?mode=ro", uri=True, timeout=30)
+        try:
+            identity_inputs = resolve_for_analysis(
+                ro, provider=provider, league_id=league_id, league_name=league, country=country,
+                league_code=league_code, home=home, away=away, home_id=home_id, away_id=away_id,
+                profile_key=LEAGUE_NAME_MAP.get(league, league),
+                match_date=(kickoff_utc or "")[:10] or _get_istanbul_today())
+        finally:
+            ro.close()
+    match_info = {"home_team": home, "away_team": away, "league_name": league,
+                  "season": "2024/25", "date": _get_istanbul_today()}
+    if identity_inputs is not None and not identity_inputs["available"]:
+        analysis = {"prediction_available": False, "missing_inputs": identity_inputs["blocking"] + identity_inputs["warnings"],
+                    "identity": identity_inputs["identity"], "total_markets_scanned": 0, "top_picks": [],
+                    "match": match_info}
+        _ANALYSIS_CACHE[fixture_id] = analysis
+        return analysis
+
+    logger.info(f"Per-match engine: {home} vs {away} [{league}]")
+    analysis = _compute_match_analysis(
+        home_name=home,
+        away_name=away,
+        league_name=league,
+        fixture_id=fixture_id if persist_qualification else "",
+        identity_inputs=identity_inputs,
+    )
+    analysis["prediction_available"] = True
+    if identity_inputs is not None:
+        analysis["identity"] = identity_inputs["identity"]
+    analysis["match"] = match_info
+    _ANALYSIS_CACHE[fixture_id] = analysis
+    return analysis
+
+
 def get_match_analysis(
     fixture_id: str,
     home: str = "",
@@ -1608,47 +1668,12 @@ def get_match_analysis(
     try:
         if fixture_id in _ANALYSIS_CACHE:
             return _ANALYSIS_CACHE[fixture_id]
-
-        identity_inputs = None
-        if provider:
-            import sqlite3
-
-            from src.db.database import DB_PATH
-            from src.identity.analysis_inputs import resolve_for_analysis
-
-            # Its own read-only connection: the shared get_db() connection is used by every request
-            # thread at once, and interleaved cursors fail ("another row available").
-            ro = sqlite3.connect(f"file:{DB_PATH}?mode=ro", uri=True, timeout=30)
-            try:
-                identity_inputs = resolve_for_analysis(
-                    ro, provider=provider, league_id=league_id, league_name=league, country=country,
-                    league_code=league_code, home=home_name, away=away_name, home_id=home_id, away_id=away_id,
-                    profile_key=LEAGUE_NAME_MAP.get(league, league),
-                    match_date=(kickoff_utc or "")[:10] or _get_istanbul_today())
-            finally:
-                ro.close()
-        match_info = {"home_team": home_name, "away_team": away_name, "league_name": league,
-                      "season": "2024/25", "date": _get_istanbul_today()}
-        if identity_inputs is not None and not identity_inputs["available"]:
-            analysis = {"prediction_available": False, "missing_inputs": identity_inputs["blocking"] + identity_inputs["warnings"],
-                        "identity": identity_inputs["identity"], "total_markets_scanned": 0, "top_picks": [],
-                        "match": match_info}
-            _ANALYSIS_CACHE[fixture_id] = analysis
+        analysis = build_match_analysis(fixture_id, home=home_name, away=away_name, league=league,
+                                        provider=provider, league_id=league_id, league_code=league_code,
+                                        country=country, home_id=home_id, away_id=away_id,
+                                        kickoff_utc=kickoff_utc)
+        if not analysis.get("prediction_available", True):
             return analysis
-
-        logger.info(f"Per-match engine: {home_name} vs {away_name} [{league}]")
-        analysis = _compute_match_analysis(
-            home_name=home_name,
-            away_name=away_name,
-            league_name=league,
-            fixture_id=fixture_id,
-            identity_inputs=identity_inputs,
-        )
-        analysis["prediction_available"] = True
-        if identity_inputs is not None:
-            analysis["identity"] = identity_inputs["identity"]
-        analysis["match"] = match_info
-        _ANALYSIS_CACHE[fixture_id] = analysis
 
         # ── Store 1X2 prediction in error intelligence system ──
         try:

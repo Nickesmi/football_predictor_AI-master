@@ -26,7 +26,7 @@ from src.config import logger, TOP_LEAGUES, APIFOOTBALL_API_KEY, APIFOOTBALL_HOS
 from src.db.database import get_db
 from src.db.competition_tracker import upsert_competition
 from api.services.logo_service import resolve_team_logo as _resolve_team_logo
-from api.services.match_analysis_service import _compute_match_analysis, _ANALYSIS_CACHE
+from api.services.match_analysis_service import _compute_match_analysis, _ANALYSIS_CACHE, build_match_analysis
 from src.data.sofascore_fetcher import fetch_fixtures_by_date
 from src.data.live_score_provider import fetch_live_scores
 
@@ -1005,6 +1005,19 @@ def _track_competitions_from_fixtures(fixtures: list) -> None:
         logger.warning(f"Competition tracking failed: {e}")
 
 
+def fixture_identity_params(f: dict) -> dict:
+    """Analysis inputs of a cached fixture, as the frontend sends them (frontend/src/demo/predictionInputs.js)."""
+    lg = f.get("league") or {}
+    provider = f.get("provider")
+    if provider:
+        provider = "football_data" if provider == "football_data" else (f.get("source") or provider)
+    return {"home": (f.get("home_team") or {}).get("name") or "", "away": (f.get("away_team") or {}).get("name") or "",
+            "league": lg.get("name") or "", "provider": provider or None,
+            "league_id": f.get("league_id_apifootball") or lg.get("id"), "league_code": lg.get("code"),
+            "country": lg.get("country") or "", "home_id": (f.get("home_team") or {}).get("id"),
+            "away_id": (f.get("away_team") or {}).get("id"), "kickoff_utc": f.get("kickoff_utc")}
+
+
 def _precompute_predictions_for_date(date_str: str, fixtures: list) -> None:
     """Background task: pre-warm analysis cache for all fixtures on a date."""
     global _PREDICTION_STATUS, _ANALYSIS_CACHE
@@ -1015,18 +1028,9 @@ def _precompute_predictions_for_date(date_str: str, fixtures: list) -> None:
             continue  # already computed
         _PREDICTION_STATUS[fid] = {"status": "pending", "computed_at": None}
         try:
-            home = f["home_team"]["name"]
-            away = f["away_team"]["name"]
-            league = f["league"]["name"]
-            analysis = _compute_match_analysis(home, away, league, shuffle_tiers=False)
-            analysis["match"] = {
-                "home_team": home,
-                "away_team": away,
-                "league_name": league,
-                "season": "2024/25",
-                "date": _get_istanbul_today(),
-            }
-            _ANALYSIS_CACHE[fid] = analysis
+            # Same inputs as the analysis endpoint (frontend identityQuery): the result is cached under the
+            # fixture id and served by the endpoint, so it must not be a name-only legacy analysis.
+            build_match_analysis(fid, **fixture_identity_params(f), persist_qualification=False)
             from datetime import datetime
             _PREDICTION_STATUS[fid] = {
                 "status": "ready",
