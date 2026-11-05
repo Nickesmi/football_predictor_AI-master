@@ -1,9 +1,10 @@
 // Whether the model's required inputs were available for a match (api/services/match_analysis_service.py
-// returns them as `missing_inputs`). A team with no real data means the probabilities would come only
-// from fallback defaults: the prediction is shown as unavailable instead.
+// returns them as `missing_inputs`). A team with no real data, or whose only history record already contains
+// results from on or after the kick-off (src/identity/analysis_inputs.py), gets no prediction.
+const BLOCKING = /has NO real data|already includes results dated/;
 export const predictionAvailability = (analysis) => {
   const notes = analysis && Array.isArray(analysis.missing_inputs) ? analysis.missing_inputs : [];
-  const blocking = notes.filter((n) => /has NO real data/.test(n));
+  const blocking = notes.filter((n) => BLOCKING.test(n));
   const available = blocking.length === 0 && !(analysis && analysis.prediction_available === false);
   return { available, blocking, warnings: notes.filter((n) => !blocking.includes(n)) };
 };

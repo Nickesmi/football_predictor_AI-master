@@ -691,8 +691,8 @@ const MatchDetail = ({ fixture, analysis, loading, error }) => {
             <AlertCircle className="w-5 h-5" /> Prediction unavailable: required data is missing
           </div>
           <p className="text-sm text-slate-300 mb-3">
-            The model has no historical data for this team, so any probability would come only from fallback
-            defaults. No probabilities or picks are shown.
+            At least one team has no verified history that can be used for this match, so no probabilities or
+            picks are shown. Nothing is filled in from defaults. Reasons:
           </p>
           <ul className="text-xs text-slate-400 list-disc pl-5 space-y-1">
             {[...inputs.blocking, ...inputs.warnings].map((n) => <li key={n}>{n}</li>)}

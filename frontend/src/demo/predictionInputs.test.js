@@ -33,3 +33,20 @@ test('the analysis request carries the provider ids for identity resolution', ()
   assert.match(identityQuery(fd), /^&provider=football_data&league_id=fd-2014&league_code=PD&/);
   assert.equal(identityQuery({}), '');
 });
+
+test('a history record that already contains results from the kick-off on blocks the prediction', () => {
+  const leak = "away_team 'Inter' history record 'Serie A' already includes results dated 2026-11-03, on or after "
+    + "this match's kick-off date 2026-11-03; no point-in-time record is available, so it is not used";
+  const a = predictionAvailability({ prediction_available: false, missing_inputs: [leak, "home_team 'X' has only 3 matches"] });
+  assert.equal(a.available, false);
+  assert.deepEqual(a.blocking, [leak]);
+});
+
+test('cross-competition notes on an available prediction stay warnings', () => {
+  const notes = ["home_team 'Feyenoord' uses its domestic 'Eredivisie' history (8 matches); it has 2 verified "
+    + "'uefa-champions-league' matches",
+  "home and away statistics come from different competitions ('Eredivisie', 'Serie A'); the model applies no "
+    + "league-strength adjustment"];
+  assert.deepEqual(predictionAvailability({ prediction_available: true, missing_inputs: notes }),
+    { available: true, blocking: [], warnings: notes });
+});
