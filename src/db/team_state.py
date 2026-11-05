@@ -135,6 +135,25 @@ def get_team_state(
     )
 
 
+def get_team_state_exact(conn: sqlite3.Connection, team_name: str, league: str, venue: str) -> Optional[TeamState]:
+    """The record with exactly this (lower-cased) name, label and venue, or None. Never a substring match:
+    get_team_state's LIKE fallback can return another club's record ("Inter" -> "Internacional")."""
+    row = conn.execute(
+        """SELECT team_name, league, venue, elo, attack_rating, defense_rating, rolling_scored, rolling_conceded,
+                  rolling_xg, rolling_xga, rolling_corners, rolling_cards, form_last5, form_last10, win_streak,
+                  unbeaten_streak, matches_last_14d, rest_days, matches_played, last_match_date, last_match_id
+           FROM team_state WHERE team_name_lower = ? AND league = ? AND venue = ?""",
+        (team_name.lower().strip(), league, venue),
+    ).fetchone()
+    if row is None:
+        return None
+    names = ("team_name", "league", "venue", "elo", "attack_rating", "defense_rating", "rolling_scored",
+             "rolling_conceded", "rolling_xg", "rolling_xga", "rolling_corners", "rolling_cards", "form_last5",
+             "form_last10", "win_streak", "unbeaten_streak", "matches_last_14d", "rest_days", "matches_played",
+             "last_match_date", "last_match_id")
+    return TeamState(**dict(zip(names, tuple(row))))
+
+
 def upsert_team_state(conn: sqlite3.Connection, state: TeamState) -> None:
     """Insert or update a team's state in the database.
 

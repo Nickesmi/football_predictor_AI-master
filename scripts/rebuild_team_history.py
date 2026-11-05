@@ -237,9 +237,16 @@ def replay(db: Path, rows: list[dict], exact: bool) -> None:
     conn.execute("DELETE FROM match_history")
     conn.execute("DELETE FROM team_state")
     conn.commit()
-    original = live_updater.get_team_state
+    # Since 2026-11-05 the live pipeline itself files results by exact record (live_updater.resolve_record,
+    # get_team_state_exact). exact=False reproduces the pipeline as it was: raw names and the substring lookup.
+    from src.db.team_state import get_team_state as legacy_lookup
+
+    original = (live_updater.get_team_state_exact, live_updater.resolve_record)
     if exact:
-        live_updater.get_team_state = _exact_get_team_state
+        live_updater.get_team_state_exact = _exact_get_team_state
+    else:
+        live_updater.get_team_state_exact = legacy_lookup
+        live_updater.resolve_record = lambda conn, name, league, *a, **k: (name, "legacy")
     try:
         for r in rows:
             live_updater.on_match_finished(conn, r["match_id"], r["match_date"], r["league"], r["home_team"],
@@ -247,7 +254,7 @@ def replay(db: Path, rows: list[dict], exact: bool) -> None:
                                            r.get("away_xg"), r.get("home_corners"), r.get("away_corners"),
                                            r.get("home_cards"), r.get("away_cards"))
     finally:
-        live_updater.get_team_state = original
+        live_updater.get_team_state_exact, live_updater.resolve_record = original
     if orphan_states:
         cols = orphan_states[0].keys()
         conn.executemany(f"INSERT OR IGNORE INTO team_state ({', '.join(c for c in cols if c != 'id')}) VALUES "

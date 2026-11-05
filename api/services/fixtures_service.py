@@ -589,6 +589,9 @@ def _persist_finished_fixture_result(fixture: dict) -> bool:
             away_team=away.get("name", "Unknown"),
             home_goals=home_goals,
             away_goals=away_goals,
+            provider=fixture.get("source") or fixture.get("provider"),
+            home_team_id=home.get("id"),
+            away_team_id=away.get("id"),
         )
         return True
     except Exception as e:

@@ -43,7 +43,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 sys.path.insert(0, str(PROJECT_ROOT / "scripts"))
 
-from rebuild_team_history import backup, history_rows, integrity, replay  # noqa: E402
+from rebuild_team_history import backup, history_rows, integrity  # noqa: E402
 
 IMPORTER_VERSION = "cache-recovery-v2"
 
@@ -362,6 +362,38 @@ def select(conn: sqlite3.Connection, cands: list[dict], names_by_id, ids_by_name
     return accepted, rejected, details, dup
 
 
+def replay_with_ids(db: Path, rows: list[dict]) -> None:
+    """rebuild_team_history.replay, but each result carries its provider team ids, so on_match_finished
+    files it by id (src/engine/live_updater.resolve_record) and records the binding in team_state_ids."""
+    from src.engine import live_updater
+
+    conn = sqlite3.connect(db)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA synchronous=OFF")
+    orphan_states = conn.execute(
+        """SELECT * FROM team_state s WHERE NOT EXISTS (SELECT 1 FROM match_history h WHERE
+           (h.home_team = s.team_name OR h.away_team = s.team_name) AND h.league = s.league)""").fetchall()
+    conn.execute("DELETE FROM match_history")
+    conn.execute("DELETE FROM team_state")
+    conn.execute("DROP TABLE IF EXISTS team_state_ids")
+    conn.commit()
+    for r in rows:
+        ids = r.get("home_team_id") is not None or r.get("away_team_id") is not None
+        live_updater.on_match_finished(conn, r["match_id"], r["match_date"], r["league"], r["home_team"],
+                                       r["away_team"], r["home_goals"], r["away_goals"], r.get("home_xg"),
+                                       r.get("away_xg"), r.get("home_corners"), r.get("away_corners"),
+                                       r.get("home_cards"), r.get("away_cards"),
+                                       provider="api_football" if ids else None,
+                                       home_team_id=r.get("home_team_id"), away_team_id=r.get("away_team_id"))
+    if orphan_states:
+        cols = orphan_states[0].keys()
+        conn.executemany(f"INSERT OR IGNORE INTO team_state ({', '.join(c for c in cols if c != 'id')}) VALUES "
+                         f"({', '.join('?' for c in cols if c != 'id')})",
+                         [tuple(r[c] for c in cols if c != "id") for r in orphan_states])
+    conn.commit()
+    conn.close()
+
+
 def main() -> int:
     from src.identity import club_membership
 
@@ -414,7 +446,19 @@ def main() -> int:
             c[side] = merges.get((c["label"], c[side].lower().strip()), c[side])
     imported = [{"match_id": c["id"], "match_date": c["date"], "league": c["label"], "home_team": c["home_record"],
                  "away_team": c["away_record"], "home_goals": c["home_goals"], "away_goals": c["away_goals"],
-                 "_order": 1} for c in accepted]
+                 "home_team_id": c["home_id"], "away_team_id": c["away_id"], "_order": 1} for c in accepted]
+    # Provider team ids of stored history fixtures that the cached lists know (API-Football id space, same league).
+    sconn = sqlite3.connect(f"file:{snap}?mode=ro", uri=True)
+    lids = {r[0]: r[1] for r in sconn.execute("SELECT id, league_id FROM matches WHERE provider IN "
+                                              "('api_football', 'matches_db') AND league_id IS NOT NULL")}
+    sconn.close()
+    with_ids = 0
+    for r in base_rows:
+        sides = fixture_sides.get(str(r["match_id"]))
+        if sides and str(r["match_id"]) in lids and int(lids[str(r["match_id"])]) == sides[0]:
+            r["home_team_id"], r["away_team_id"] = sides[1] or None, sides[2] or None
+            with_ids += 1
+    report["history_rows_with_provider_ids"] = with_ids
     ordered = sorted([{**r, "_order": 0} for r in base_rows] + imported,
                      key=lambda r: (r["match_date"], r["_order"], r.get("id") or 0, r["match_id"]))
 
@@ -437,7 +481,7 @@ def main() -> int:
     report["membership_rows"] = club_membership.write(conn, club_membership.collect(a.cache), f"cache:{a.cache}")
     conn.commit()
     conn.close()
-    replay(rec, ordered, exact=True)
+    replay_with_ids(rec, ordered)
     report["recovered_integrity"] = integrity(rec)
     (out / "recovered.json").write_text(json.dumps(accepted, indent=1, ensure_ascii=False))
     (out / "rejected.json").write_text(json.dumps(details, indent=1, ensure_ascii=False))

@@ -37,7 +37,7 @@ import logging
 from datetime import date, datetime, timedelta
 from typing import Optional
 
-from src.db.team_state import TeamState, get_team_state, upsert_team_state
+from src.db.team_state import TeamState, get_team_state_exact, upsert_team_state
 
 logger = logging.getLogger("football_predictor")
 
@@ -200,6 +200,73 @@ def _compute_rest_days(
     return 7  # default: assume normal rest
 
 
+TEAM_STATE_IDS_SCHEMA = """
+CREATE TABLE IF NOT EXISTS team_state_ids (
+    provider          TEXT NOT NULL,
+    provider_team_id  TEXT NOT NULL,
+    league            TEXT NOT NULL,
+    team_name_lower   TEXT NOT NULL,
+    team_name         TEXT NOT NULL,
+    how               TEXT NOT NULL,
+    created_at        TEXT NOT NULL,
+    PRIMARY KEY (provider, provider_team_id, league)
+);
+"""
+
+
+def _norm(name: str) -> str:
+    from src.identity.teams import normalise_team
+
+    return _norm_cache.get(name) or _norm_cache.setdefault(name, normalise_team(name))
+
+
+_norm_cache: dict[str, str] = {}
+
+
+def resolve_record(conn: sqlite3.Connection, team_name: str, league: str, provider: Optional[str] = None,
+                   provider_team_id=None) -> tuple[str, str]:
+    """The team_state record (name) a result is filed under, and how it was chosen (2026-11-05).
+
+    Order: 1. the record already bound to this provider team id in this label; 2. without a binding, the
+    record with exactly this name, then the single record whose normalised name is equal
+    (src/identity/teams.normalise_team: accents, FC/SC, a leading "1."; youth, reserve and women's markers
+    are kept); 3. otherwise a new record. A record bound to a different id of the same provider is never
+    used: that is another club, and its new record is named "<name> #<id>". Never a substring match.
+    When an id is given, the choice is bound to it in team_state_ids."""
+    name = (team_name or "").strip()
+    pid = None if provider_team_id in (None, "") else str(provider_team_id)
+    if provider and pid:
+        conn.execute(TEAM_STATE_IDS_SCHEMA)
+        row = conn.execute("SELECT team_name FROM team_state_ids WHERE provider = ? AND provider_team_id = ? "
+                           "AND league = ?", (provider, pid, league)).fetchone()
+        if row:
+            return row[0], "provider_id"
+        claimed = {r[0]: r[1] for r in conn.execute(
+            "SELECT team_name_lower, provider_team_id FROM team_state_ids WHERE provider = ? AND league = ?",
+            (provider, league))}
+    else:
+        claimed = {}
+    free = lambda lower: lower not in claimed   # noqa: E731  (bound to another id = another club)
+    exact = conn.execute("SELECT team_name FROM team_state WHERE team_name_lower = ? AND league = ? AND "
+                         "venue = 'overall'", (name.lower(), league)).fetchone()
+    if exact and free(name.lower()):
+        record, how = exact[0], "exact_name"
+    else:
+        key = _norm(name)
+        same = {r[0].lower(): r[0] for r in conn.execute(
+            "SELECT team_name FROM team_state WHERE league = ? AND venue = 'overall'", (league,))
+                if _norm(r[0]) == key and free(r[0].lower())}
+        if len(same) == 1 and not exact:
+            record, how = next(iter(same.values())), "normalised_name"
+        else:
+            record, how = (f"{name} #{pid}" if (exact or same) and pid else name), "new_record"
+    if provider and pid:
+        conn.execute("INSERT OR IGNORE INTO team_state_ids VALUES (?, ?, ?, ?, ?, ?, ?)",
+                     (provider, pid, league, record.lower().strip(), record, how,
+                      datetime.utcnow().replace(microsecond=0).isoformat() + "Z"))
+    return record, how
+
+
 def _load_or_create_state(
     conn: sqlite3.Connection,
     team_name: str,
@@ -207,8 +274,8 @@ def _load_or_create_state(
     venue: str,
     defaults: dict,
 ) -> TeamState:
-    """Load state from DB or create a fresh one with defaults."""
-    state = get_team_state(conn, team_name, league, venue)
+    """Load the record with exactly this name (resolve_record chose it), or create a fresh one."""
+    state = get_team_state_exact(conn, team_name, league, venue)
     if state is None:
         state = TeamState(
             team_name=team_name,
@@ -265,8 +332,15 @@ def on_match_finished(
     away_corners: int = None,
     home_cards: int = None,
     away_cards: int = None,
+    *,
+    provider: str = None,
+    home_team_id=None,
+    away_team_id=None,
 ) -> dict:
     """Core event handler: a match has finished.
+
+    Each team is filed under the record resolve_record() chooses (provider team id first, then exact or
+    exact normalised name; never a substring). History, form and fatigue use that record's name.
 
     This is the function that makes the system LIVE.
 
@@ -305,6 +379,13 @@ def on_match_finished(
     if existing:
         logger.debug(f"Match {match_id} already ingested, skipping")
         return {"skipped": True, "match_id": match_id}
+
+    # ── 1b. Which record each team's result belongs to ──
+    home_team, _home_how = resolve_record(conn, home_team, league, provider, home_team_id)
+    away_team, _away_how = resolve_record(conn, away_team, league, provider, away_team_id)
+    if home_team.lower() == away_team.lower():
+        logger.warning(f"Match {match_id}: both sides resolve to {home_team!r} in {league!r}; not ingested")
+        return {"skipped": True, "match_id": match_id, "reason": "both sides resolve to one record"}
 
     # ── 2. Load all states for both teams ──
     # Venue-specific (for granular analysis)
@@ -488,6 +569,9 @@ def ingest_day_results(conn: sqlite3.Connection, matches: list[dict]) -> dict:
             away_corners=m.get("away_corners"),
             home_cards=m.get("home_cards"),
             away_cards=m.get("away_cards"),
+            provider=m.get("provider"),
+            home_team_id=m.get("home_team_id"),
+            away_team_id=m.get("away_team_id"),
         )
 
         if result.get("skipped"):

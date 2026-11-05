@@ -344,17 +344,27 @@ def test_recovery_refuses_to_write_next_to_the_source_or_into_the_cache(tmp_path
 
 
 # 5/6. Fragmented records: spelling splits merged only with one provider id
-def test_spelling_split_is_merged_only_when_provider_ids_agree(tmp_path):
-    from src.engine.live_updater import on_match_finished
+def _legacy(conn, mid, d, home, away, label="Bundesliga", league_id=78, provider="api_football"):
+    """A result as the pre-2026-11-05 pipeline stored it: raw names in match_history, the result folded into
+    whatever record the substring lookup found (the folded records are seeded with _state)."""
+    if league_id is not None:
+        conn.execute("INSERT INTO matches (id, date, home_team, away_team, league_name, league_id, status, "
+                     "home_goals, away_goals, provider) VALUES (?, ?, ?, ?, ?, ?, 'FT', 1, 0, ?)",
+                     (mid, d, home, away, label, league_id, provider))
+    conn.execute("INSERT INTO match_history (match_id, match_date, league, home_team, away_team, home_goals, "
+                 "away_goals) VALUES (?, ?, ?, ?, ?, 1, 0)", (mid, d, label, home, away))
 
+
+def test_spelling_split_is_merged_only_when_provider_ids_agree(tmp_path):
     conn = _db(tmp_path / "engine.db")
-    # Seeded through the live pipeline: its substring state lookup folds "Bayern München" into the
-    # "FC Bayern München" record, and "FC Köln" into "1. FC Köln" although they are different ids here.
-    _played(conn, "1575140", "2026-08-28", "FC Bayern München", "VfB Stuttgart", 5, 1, "Bundesliga", 78)
-    _played(conn, "1575156", "2026-09-05", "FC Schalke 04", "Bayern München", 0, 0, "Bundesliga", 78)
-    _played(conn, "1575200", "2026-09-06", "1. FC Köln", "Union Berlin", 1, 1, "Bundesliga", 78)
-    _played(conn, "1575201", "2026-09-13", "FC Köln", "Mainz", 2, 0, "Bundesliga", 78)
-    on_match_finished(conn, "12499528", "2025-05-10", "Bundesliga", "Bayern Munich", "Hertha", 2, 0)  # older feed
+    _legacy(conn, "1575140", "2026-08-28", "FC Bayern München", "VfB Stuttgart", provider="matches_db")
+    _legacy(conn, "1575156", "2026-09-05", "FC Schalke 04", "Bayern München")
+    _legacy(conn, "1575200", "2026-09-06", "1. FC Köln", "Union Berlin")
+    _legacy(conn, "1575201", "2026-09-13", "FC Köln", "Mainz")
+    _legacy(conn, "12499528", "2025-05-10", "Bayern Munich", "Hertha", league_id=None)    # older feed, no id
+    for name in ("FC Bayern München", "VfB Stuttgart", "FC Schalke 04", "1. FC Köln", "Union Berlin", "Mainz",
+                 "Bayern Munich", "Hertha"):
+        _state(conn, name, "Bundesliga", 1)
     conn.commit()
     sides = {"1575140": (78, "157", "172"), "1575156": (78, "174", "157"),
              "1575200": (78, "192", "182"), "1575201": (78, "999", "164")}     # two different 'Köln' ids
@@ -368,11 +378,11 @@ def test_spelling_split_is_merged_only_when_provider_ids_agree(tmp_path):
 
 
 def test_imported_results_count_as_provider_id_evidence(tmp_path):
-    from src.engine.live_updater import on_match_finished
-
     conn = _db(tmp_path / "engine.db")
-    on_match_finished(conn, "12499528", "2025-05-10", "Bundesliga", "FC Bayern München", "Hertha", 2, 0)  # older feed
-    _played(conn, "1575156", "2026-09-05", "FC Schalke 04", "Bayern München", 0, 0, "Bundesliga", 78)
+    _legacy(conn, "12499528", "2025-05-10", "FC Bayern München", "Hertha", league_id=None)
+    _legacy(conn, "1575156", "2026-09-05", "FC Schalke 04", "Bayern München")
+    for name in ("FC Bayern München", "Hertha", "FC Schalke 04"):
+        _state(conn, name, "Bundesliga", 1)
     conn.commit()
     mapping, rows, _ = recover.verified_merges(conn, {"1575156": (78, "174", "157")},
                                                [("Bundesliga", "157", "FC Bayern München")] * 3)
