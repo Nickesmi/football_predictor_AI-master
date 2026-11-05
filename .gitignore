@@ -96,3 +96,7 @@ Claude/
 Claude
 agent_prompt.md
 patch_markets.py
+
+# Local live-demo launch scripts (read the API key from a file outside the repo)
+start_live_demo.sh
+stop_live_demo.sh
