@@ -245,6 +245,14 @@ def install(app=None, display_timezone: str = fixture_time.DEFAULT_DISPLAY_TZ,
             fixture["date"], fixture["time"] = local.date().isoformat(), local.strftime("%H:%M")
         return fixture
 
+    _original["read_cache"] = fs._read_fixture_cache
+
+    def read_cache(date_str: str):
+        if getattr(_explicit, "bypass", None) == date_str:
+            return None                     # live refresh of this date (see _refresh)
+        return _original["read_cache"](date_str)
+
+    fs._read_fixture_cache = read_cache
     fs._fetch_api_football_fixtures = cache_only_fetch
     fs.get_fixtures_by_date_service = demo_fixtures
     fs._api_football_to_fixture = convert_in_display_tz
@@ -367,16 +375,30 @@ def _refresh(date_str: str, background_tasks: BackgroundTasks, automatic: bool):
                                                      "message": f"A refresh of {date_str} is already running."})
     fs = _fs()
     marks = demo_quota.request_marks()
+    # Live mode refreshes a date that is already cached: the fixture service never re-fetches a cached
+    # API-Football day and skips fixtures whose id it already holds, so statuses and results would never
+    # change. The service therefore reads no cache for this one call; if the request does not succeed, the
+    # previous cache file is put back unchanged.
+    path = fs._get_cache_path(date_str)
+    previous = path.read_bytes() if live() and path.exists() else None
     try:
         _explicit.date = date_str
+        _explicit.bypass = date_str if live() else None
         fs._LAST_API_FOOTBALL_ERROR = None
         _original["service"](date_str, background_tasks, force_refresh=False)
         error = fs._LAST_API_FOOTBALL_ERROR
     finally:
         _explicit.date = None
+        _explicit.bypass = None
         demo_quota.end_refresh(date_str)
     own = _own_fixtures(date_str)
-    state, reason = _classify(demo_quota.requests_after(marks), error, own)
+    attempts = demo_quota.requests_after(marks)
+    state, reason = _classify(attempts, error, own)
+    if live() and state == "fresh" and not attempts:
+        state, reason = "provider_error", "no request was sent"
+    if previous is not None and state != "fresh":
+        path.write_bytes(previous)        # a failed, refused or empty live refresh never replaces the cache
+        own = _own_fixtures(date_str)
     demo_quota.record_refresh_attempt(date_str, state, reason, own)
     if state in ("fresh", "no_fixtures"):
         demo_quota.record_fixture_update(date_str, own)

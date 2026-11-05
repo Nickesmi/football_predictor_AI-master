@@ -120,3 +120,42 @@ r = client.get("/api/fixtures/{TODAY}").json(); OUT["state"] = r["demo"]["state"
 OUT["mode"] = client.get("/api/demo/status").json()["mode"]
 """, [_ok(TODAY)], extra_env={"APP_MODE": "demo"})
     assert r.returncode == 0 and out["calls"] == 0 and out["mode"] == "demo" and out["live"] is False
+
+
+def _finished(date, n=2):
+    from tests.test_demo_refresh_policy import _fixture
+    out = []
+    for i in range(n):
+        f = _fixture(9000 + i, date)
+        f["fixture"]["status"]["short"] = "FT"
+        f["goals"] = {"home": 2, "away": 1}
+        out.append(f)
+    return {"status": 200, "remaining": "90", "fixtures": out}
+
+
+LATER = "demo_quota._state['clock'] = lambda: datetime(2030, 1, 5, 15, 0, tzinfo=timezone.utc)\n"
+
+
+def test_a_cached_day_is_fetched_again_and_its_results_are_collected(env):
+    out = _ok_live(env, f"""
+client.get("/api/fixtures/{TODAY}")
+{LATER}
+r = client.get("/api/fixtures/{TODAY}").json()
+OUT["statuses"] = sorted(f["status"] for f in r["fixtures"])
+import sqlite3
+OUT["history"] = sqlite3.connect(os.environ["FOOTBALL_PREDICTOR_DB_PATH"]).execute("SELECT COUNT(*) FROM match_history").fetchone()[0]
+""", [_ok(TODAY), _finished(TODAY)])
+    assert out["calls"] == 2 and out["statuses"] == ["FT", "FT"] and out["history"] == 2
+
+
+def test_a_failed_live_refresh_keeps_the_previous_cache(env):
+    out = _ok_live(env, f"""
+client.get("/api/fixtures/{TODAY}")
+before = (Path(os.environ["FOOTBALL_PREDICTOR_CACHE_DIR"]) / "fixtures-{TODAY}.json").read_bytes()
+{LATER}
+r = client.get("/api/fixtures/{TODAY}").json()
+after = (Path(os.environ["FOOTBALL_PREDICTOR_CACHE_DIR"]) / "fixtures-{TODAY}.json").read_bytes()
+OUT["same"] = before == after; OUT["n"] = len(r["fixtures"])
+OUT["last"] = r["demo"]["last_attempt"]["state"]
+""", [_ok(TODAY), {"status": 500}])
+    assert out["calls"] == 2 and out["same"] and out["n"] == 2 and out["last"] == "provider_error"
