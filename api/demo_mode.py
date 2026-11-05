@@ -1,5 +1,9 @@
 """Local demo mode: cached fixtures by default, API-Football only on an explicit refresh.
 
+APP_MODE=live (2026-11-05, src/ops/app_mode.py): the same endpoints, but yesterday, today and tomorrow are
+fetched automatically when due (page load or the live scheduler), within a daily request budget instead of
+owner grants; a date can be refreshed again; manual refreshes are refused only shortly after an update.
+
 Loaded only by scripts/demo_server.py (never by the production app). install() makes the fixture
 endpoints read the demo's own cache and database without contacting API-Football, and adds:
 
@@ -42,7 +46,13 @@ from src.ops import demo_network, demo_quota, football_data
 router = APIRouter()
 _explicit = threading.local()
 _original: dict = {}
-_settings = {"display_tz": fixture_time.DEFAULT_DISPLAY_TZ, "provider": "api_football"}
+_settings = {"display_tz": fixture_time.DEFAULT_DISPLAY_TZ, "provider": "api_football", "mode": None}
+
+
+def live() -> bool:
+    """APP_MODE=live (src/ops/app_mode.py) with API-Football as the provider."""
+    m = _settings.get("mode")
+    return bool(m is not None and m.live and _settings["provider"] == "api_football")
 PROVIDER_LIMIT_WORDS = ("request limit", "requests limit", "reached the limit", "too many requests", "429")
 
 
@@ -156,7 +166,9 @@ def cache_state(date_str: str, fixtures: list | None = None) -> dict:
             "unknown_time_basis": unknown, "last_updated_at": updated,
             "provider": football_data.PROVIDER if fd_cached else "api_football",
             "last_attempt": last, "period": "past" if date_str < today else ("today" if date_str == today else "upcoming"),
-            "display_timezone": display_tz(), "today": today, "data_source": "cache", "live": False, "quota": quota}
+            "display_timezone": display_tz(), "today": today, "data_source": "cache", "live": live(),
+            "mode": "live" if live() else "demo", "refresh": _due(date_str, fixtures)[1] if live() else None,
+            "quota": quota}
 
 
 MESSAGES = {
@@ -183,12 +195,16 @@ def _validate(date_str: str) -> None:
 
 
 def install(app=None, display_timezone: str = fixture_time.DEFAULT_DISPLAY_TZ,
-            fixture_provider: str = "api_football") -> None:
+            fixture_provider: str = "api_football", mode=None) -> None:
+    """mode: src.ops.app_mode.ModeSettings (None = demo)."""
     fixture_time.zone(display_timezone)   # an unknown zone fails here, at start-up
     if fixture_provider not in ("api_football", football_data.PROVIDER):
         raise ValueError(f"unknown fixture provider {fixture_provider!r}")
+    if mode is not None and mode.live and fixture_provider != "api_football":
+        raise ValueError("APP_MODE=live needs --fixture-provider api_football")
     _settings["display_tz"] = display_timezone
     _settings["provider"] = fixture_provider
+    _settings["mode"] = mode
     fs = _fs()
     if _original:
         return
@@ -203,6 +219,8 @@ def install(app=None, display_timezone: str = fixture_time.DEFAULT_DISPLAY_TZ,
             return _original["fetch"](date_str, request_tz=display_tz())
 
     def demo_fixtures(date_str: str, background_tasks: BackgroundTasks, force_refresh: bool = False):
+        if live() and _due(date_str)[0]:
+            _refresh(date_str, background_tasks, automatic=True)   # outcome is recorded; the cache is shown
         fixtures = day_fixtures(date_str, background_tasks)
         state = cache_state(date_str, fixtures)
         payload = {"fixtures": fixtures, "demo": state}
@@ -292,21 +310,59 @@ def _fd_refresh(date_str: str):
     raise HTTPException(status_code=429 if state == "quota_exhausted" else 502, detail=body)
 
 
+def _due(date_str: str, fixtures: list | None = None) -> tuple[bool, str]:
+    from src.ops import app_mode
+
+    if not live():
+        return False, "demo mode"
+    if fixtures is None:
+        fixtures = _storage_file(date_str)
+    return app_mode.refresh_due(_settings["mode"], date_str, _today(), demo_quota.last_fixture_update(date_str),
+                                fixtures, demo_quota._now())
+
+
+def _manual_too_soon(date_str: str) -> str | None:
+    from src.ops import app_mode
+
+    m = _settings["mode"]
+    age = app_mode._age_minutes(demo_quota.last_fixture_update(date_str), demo_quota._now())
+    if age is not None and age < m.manual_min_minutes:
+        return (f"{date_str} was updated {int(age)} min ago; a manual refresh is possible "
+                f"{m.manual_min_minutes} min after the last update. No request sent.")
+    return None
+
+
 @router.post("/api/demo/refresh-fixtures/{date_str}")
 def refresh_fixtures(date_str: str, background_tasks: BackgroundTasks):
     _validate(date_str)
     if _fd(date_str):
         return _fd_refresh(date_str)
-    if fetched(date_str):
+    if live():
+        too_soon = _manual_too_soon(date_str)
+        if too_soon:
+            state = cache_state(date_str, day_fixtures(date_str, background_tasks))
+            raise HTTPException(status_code=409, detail={"error": "recently_updated", "state": state["state"],
+                                                         "cache": state, "message": too_soon})
+    elif fetched(date_str):
         state = cache_state(date_str, day_fixtures(date_str, background_tasks))
         raise HTTPException(status_code=409, detail={"error": "already_fetched", "state": state["state"], "cache": state,
                                                      "message": f"{date_str} was already fetched; no request sent."})
+    return _refresh(date_str, background_tasks, automatic=False)
+
+
+def _refresh(date_str: str, background_tasks: BackgroundTasks, automatic: bool):
+    """One counted API-Football request for a date. Manual: raises HTTPException on any failure.
+    Automatic (live page load or scheduler): never raises; the outcome is recorded and returned."""
     quota = demo_quota.status()
+    if automatic and not quota["can_refresh"]:
+        return {"ok": False, "state": "quota_exhausted", "date": date_str, "error": quota["blocked_reasons"][0]}
     if not quota["can_refresh"]:
         raise HTTPException(status_code=403, detail={"error": "no_allowance", "state": "quota_exhausted",
                                                      "reasons": quota["blocked_reasons"], "quota": quota,
                                                      "message": "No authorized request remains; nothing was sent."})
     if not demo_quota.begin_refresh(date_str):
+        if automatic:
+            return {"ok": False, "state": "in_progress", "date": date_str, "error": None}
         raise HTTPException(status_code=409, detail={"error": "in_progress",
                                                      "message": f"A refresh of {date_str} is already running."})
     fs = _fs()
@@ -336,4 +392,49 @@ def refresh_fixtures(date_str: str, background_tasks: BackgroundTasks):
         return body
     body["message"] = (f"Refresh did not return fixtures ({state.replace('_', ' ')}): {reason}. "
                        "Cached fixtures are unchanged.")
+    if automatic:
+        return body
     raise HTTPException(status_code=429 if state == "quota_exhausted" else 502, detail=body)
+
+
+# ── Live scheduler (APP_MODE=live): yesterday, today and tomorrow, whenever they are due ─────────────
+
+_scheduler: dict = {}
+
+
+def live_tick() -> list[dict]:
+    """One pass: refresh each of yesterday/today/tomorrow that is due. Returns what was done (no keys)."""
+    if not live():
+        return []
+    d = date.fromisoformat(_today())
+    out = []
+    for day in ((d - timedelta(days=1)).isoformat(), d.isoformat(), (d + timedelta(days=1)).isoformat()):
+        due, why = _due(day)
+        if due:
+            r = _refresh(day, BackgroundTasks(), automatic=True)
+            out.append({"date": day, "reason": why, "state": r.get("state")})
+    return out
+
+
+def start_live_scheduler(interval_seconds: int = 600) -> bool:
+    """A daemon thread calling live_tick() every `interval_seconds` (live mode only)."""
+    if not live() or _scheduler.get("thread"):
+        return False
+    stop = threading.Event()
+
+    def loop():
+        from src.config import logger
+
+        while not stop.wait(5 if not _scheduler.get("ran") else interval_seconds):
+            _scheduler["ran"] = True
+            try:
+                done = live_tick()
+                if done:
+                    logger.info(f"[LIVE] scheduler: {done}")
+            except Exception as e:   # recorded, never fatal
+                logger.warning(f"[LIVE] scheduler pass failed: {type(e).__name__}: {e}")
+
+    t = threading.Thread(target=loop, name="live-fixture-scheduler", daemon=True)
+    _scheduler.update(thread=t, stop=stop)
+    t.start()
+    return True

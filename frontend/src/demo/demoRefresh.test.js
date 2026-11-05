@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  allowBackgroundRefresh, allowanceText, confirmText, dataBadge, dateInZone, formatUpdated, isDemo, maxLoadRetries,
+  allowBackgroundRefresh, allowanceText, confirmText, dataBadge, dateInZone, formatUpdated, isDemo, isLive, isManaged, maxLoadRetries,
   refreshControl, refreshOutcome, timesNote,
 } from './demoRefresh.js';
 
@@ -114,4 +114,26 @@ test('football-data.org provider: its own label, daily count and refresh wording
   assert.match(confirmText(fd, '2026-10-31'), /^Request fixtures for 2026-10-31 from football-data\.org\?/);
   assert.match(refreshControl(fd, { fetched: true, provider: 'football_data' }).reason, /15 minutes/);
   assert.equal(refreshControl(fd, { fetched: false }).enabled, true);
+});
+
+test('live mode: budget text, live badge, a fetched date can be refreshed again', () => {
+  const live = { mode: 'live', cost_per_refresh: 1, can_refresh: true, remaining_today: 27, daily_limit: 30 };
+  assert.equal(isLive(live), true);
+  assert.equal(isManaged(live), true);
+  assert.equal(allowBackgroundRefresh(live), true);
+  assert.equal(allowanceText(live), '27 of 30 requests left today (live budget)');
+  const c = refreshControl(live, { fetched: true, state: 'cached' });
+  assert.equal(c.visible, true);
+  assert.equal(c.enabled, true);
+  const badge = dataBadge({ state: 'cached', live: true, period: 'today', last_updated_at: null });
+  assert.match(badge.text, /^Live fixtures/);
+  assert.match(confirmText(live, '2030-01-05'), /26 of 30 today \(live budget\)/);
+});
+
+test('live mode with the budget used up: refresh disabled with the backend reason', () => {
+  const live = { mode: 'live', cost_per_refresh: 1, can_refresh: false, remaining_today: 0, daily_limit: 30,
+    blocked_reasons: ['daily budget 30 reached (resets 00:00 UTC)'] };
+  const c = refreshControl(live, { fetched: true });
+  assert.equal(c.enabled, false);
+  assert.match(c.reason, /daily budget 30 reached/);
 });

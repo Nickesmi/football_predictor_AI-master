@@ -1,18 +1,24 @@
 import React from 'react';
 import { Database, RefreshCw, Loader2, Info } from 'lucide-react';
-import { dataBadge, providerLabel, refreshControl, timesNote } from '../demo/demoRefresh';
+import { dataBadge, isLive, providerLabel, refreshControl, timesNote } from '../demo/demoRefresh';
 
-// Demo-mode strip: what the list shows (cached snapshot and its age), the authorized allowance,
-// and the only control that can spend an API-Football request.
+// Demo/live strip: what the list shows (cached snapshot or live list, and its age), the request allowance
+// (owner grant in demo mode, daily budget in live mode), and the manual refresh control.
 export default function DemoBar({ status, cache, busy, notice, onRefresh }) {
   const control = refreshControl(status, cache, { busy });
   if (!control.visible) return null;
   const badge = dataBadge(cache);
   return (
     <div className="shrink-0 bg-surface-1 border-b border-border px-4 py-2 flex flex-wrap items-center gap-3 text-[11px]">
-      <span className="px-2 py-0.5 rounded bg-amber-500/15 border border-amber-500/30 text-amber-400 font-bold tracking-widest uppercase">
-        Demo
-      </span>
+      {isLive(status) ? (
+        <span className="px-2 py-0.5 rounded bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 font-bold tracking-widest uppercase">
+          Live
+        </span>
+      ) : (
+        <span className="px-2 py-0.5 rounded bg-amber-500/15 border border-amber-500/30 text-amber-400 font-bold tracking-widest uppercase">
+          Demo
+        </span>
+      )}
       {badge && (
         <span className={`flex items-center gap-1.5 ${badge.kind === 'cached' ? 'text-slate-300'
           : badge.kind === 'problem' ? 'text-amber-400' : 'text-slate-500'}`}>

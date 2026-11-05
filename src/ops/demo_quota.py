@@ -136,9 +136,11 @@ def _same_key_as_shadow() -> bool | None:
 def _grant_blockers(conn, now: datetime) -> tuple[dict | None, list[str], dict]:
     """The grant a request would use, and every reason it cannot be used (empty list = allowed)."""
     day = now.strftime("%Y-%m-%d")
-    grants = _active_grants(conn, now)
     used_today = conn.execute("SELECT COUNT(*) FROM demo_requests WHERE day = ? AND allowed = 1",
                               (day,)).fetchone()[0]
+    if _state.get("live_budget"):
+        return _live_blockers(conn, day, used_today)
+    grants = _active_grants(conn, now)
     usable = [g for g in grants if g["remaining"] > 0]
     grant = usable[0] if usable else None
     daily_limit = min(GRANT_DAILY_MAX, grant["daily_limit"]) if grant else 0
@@ -164,6 +166,32 @@ def _grant_blockers(conn, now: datetime) -> tuple[dict | None, list[str], dict]:
     return grant, reasons, info
 
 
+def _shadow_and_floor(conn, day: str) -> tuple[list[str], int | None, int, bool | None]:
+    remaining = _provider_remaining_today(conn, day)
+    floor = _state.get("provider_floor", DEFAULT_PROVIDER_FLOOR)
+    reasons = []
+    if remaining is not None and remaining <= floor:
+        reasons.append(f"provider reports {remaining} requests left today (floor {floor})")
+    same = _same_key_as_shadow()
+    if same is not False and not _state.get("ledger"):
+        reasons.append("same API key as the shadow experiment: the shared ledger is required"
+                       if same else "shadow key file unreadable: the shared ledger is required")
+    return reasons, remaining, floor, same
+
+
+def _live_blockers(conn, day: str, used_today: int) -> tuple[dict | None, list[str], dict]:
+    """APP_MODE=live (src/ops/app_mode.py): one daily budget instead of owner grants. The provider floor,
+    the shadow-key rule and the shared ledger apply exactly as for grants."""
+    budget = int(_state["live_budget"])
+    reasons, remaining, floor, same = _shadow_and_floor(conn, day)
+    if used_today >= budget:
+        reasons.insert(0, f"daily budget {budget} reached (resets 00:00 UTC)")
+    info = {"day": day, "used_today": used_today, "daily_limit": budget,
+            "remaining_today": max(0, budget - used_today), "remaining_total": None,
+            "provider_remaining_today": remaining, "provider_floor": floor, "same_key_as_shadow": same, "grants": []}
+    return {"id": None}, reasons, info
+
+
 def status() -> dict:
     """Everything the interface shows before a refresh. Sends nothing."""
     now = _now()
@@ -177,7 +205,10 @@ def status() -> dict:
     finally:
         conn.close()
     legacy_left = max(0, _state.get("cap", 0) - legacy_used)
-    return {"mode": "demo", "cost_per_refresh": 1, "can_refresh": legacy_left > 0 or not reasons,
+    if _state.get("live_budget"):
+        legacy_left = 0
+    return {"mode": "live" if _state.get("live_budget") else "demo", "cost_per_refresh": 1,
+            "can_refresh": legacy_left > 0 or not reasons,
             "blocked_reasons": [] if legacy_left > 0 else reasons,
             "legacy": {"cap": _state.get("cap", 0), "used": legacy_used, "refused": legacy_refused,
                        "remaining": legacy_left},
@@ -210,13 +241,14 @@ def _reserve(host: str, path: str) -> bool:
         try:
             conn.execute("BEGIN IMMEDIATE")
             n = conn.execute("SELECT COUNT(*) FROM demo_api_usage WHERE allowed = 1").fetchone()[0]
-            if n < _state["cap"]:
+            live = bool(_state.get("live_budget"))
+            if not live and n < _state["cap"]:
                 ok = _shared_ledger_ok(path, now)
                 conn.execute("INSERT INTO demo_api_usage (at, host, path, allowed) VALUES (?, ?, ?, ?)",
                              (now.isoformat(), host, _logged_path(path), int(ok)))
                 conn.commit()
                 return ok
-            if not _has_grants(conn):
+            if not live and not _has_grants(conn):
                 # No grant has ever been made: the legacy behaviour (the refusal goes in the legacy table).
                 conn.execute("INSERT INTO demo_api_usage (at, host, path, allowed) VALUES (?, ?, ?, 0)",
                              (now.isoformat(), host, _logged_path(path)))
@@ -428,14 +460,23 @@ def explicit(max_requests: int = 1):
 
 def install(usage_db: Path, cap: int, *, explicit_only: bool = False, provider_floor: int = DEFAULT_PROVIDER_FLOOR,
             ledger: Path | None = None, ledger_budget: int | None = None, shadow_key_file: Path | None = None,
-            api_key: str | None = None, clock=None) -> None:
+            api_key: str | None = None, clock=None, live_budget: int | None = None) -> None:
+    """live_budget (APP_MODE=live): requests per UTC day instead of owner grants; implies explicit_only=False
+    (page loads and the live scheduler may send) and ignores the legacy cap."""
     if not 0 <= cap <= HARD_MAXIMUM:
         raise ValueError(f"demo cap must be between 0 and {HARD_MAXIMUM}")
+    if live_budget is not None:
+        from src.ops.app_mode import LIVE_BUDGET_MAX
+
+        if not 1 <= live_budget <= LIVE_BUDGET_MAX:
+            raise ValueError(f"live budget must be between 1 and {LIVE_BUDGET_MAX}")
+        explicit_only = False
     if ledger is not None and not (ledger_budget and 0 < ledger_budget <= 70):
         raise ValueError("a shared ledger needs ledger_budget between 1 and 70 (the shadow's daily ceiling)")
     settings = dict(path=str(usage_db), cap=cap, explicit_only=explicit_only, provider_floor=max(0, provider_floor),
                     ledger=None if ledger is None else str(ledger), ledger_budget=ledger_budget,
-                    shadow_key_file=None if shadow_key_file is None else str(shadow_key_file), api_key=api_key)
+                    shadow_key_file=None if shadow_key_file is None else str(shadow_key_file), api_key=api_key,
+                    live_budget=live_budget)
     if clock is not None:
         settings["clock"] = clock
     if _state.get("installed"):

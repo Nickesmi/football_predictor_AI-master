@@ -8,7 +8,7 @@ import TennisResultsTracker from './components/TennisResultsTracker';
 import TennisView from './views/TennisView';
 import DemoBar from './components/DemoBar';
 import {
-  DEFAULT_DISPLAY_TZ, allowBackgroundRefresh, confirmText, dateInZone, isDemo, maxLoadRetries, refreshOutcome,
+  DEFAULT_DISPLAY_TZ, allowBackgroundRefresh, confirmText, dateInZone, isManaged, maxLoadRetries, refreshOutcome,
 } from './demo/demoRefresh';
 import { identityQuery } from './demo/predictionInputs';
 
@@ -77,7 +77,7 @@ function App() {
   const [demoCache, setDemoCache] = useState(null);
   const [demoBusy, setDemoBusy] = useState(false);
   const [demoNotice, setDemoNotice] = useState(null);
-  const demoMode = isDemo(demoStatus);
+  const demoMode = isManaged(demoStatus);   // demo or live launcher: requests are counted by the backend
   const demoStatusRef = useRef(null);
   useEffect(() => { demoStatusRef.current = demoStatus; }, [demoStatus]);
 
@@ -85,7 +85,7 @@ function App() {
     fetch(`${API}/demo/status`)
       .then((r) => (r.ok ? r.json() : null))
       .then((s) => {
-        if (!isDemo(s)) return;
+        if (!isManaged(s)) return;
         demoStatusRef.current = s;
         setDemoStatus(s);
         if (s.display_timezone) setDisplayTz(s.display_timezone);
@@ -447,7 +447,7 @@ function App() {
         <button
           onClick={handleScanLiveOdds}
           disabled={isScanning || sport === 'tennis' || demoMode}
-          title={demoMode ? 'Unavailable in demo mode (it would spend API-Football requests)' : undefined}
+          title={demoMode ? 'Unavailable in demo and live launcher modes (it would spend many API-Football requests)' : undefined}
           className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gold-500/10 border border-gold-500/25 text-gold-500 hover:bg-gold-500/20 hover:border-gold-500/40 transition-all text-xs font-bold disabled:opacity-50"
         >
           {isScanning ? (

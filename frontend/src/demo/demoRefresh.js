@@ -3,6 +3,10 @@
 // quota (src/ops/demo_quota.py); these rules only keep the interface from asking for requests.
 
 export const isDemo = (status) => Boolean(status && status.mode === 'demo');
+// APP_MODE=live (src/ops/app_mode.py): same launcher, automatic fetching within a daily request budget.
+export const isLive = (status) => Boolean(status && status.mode === 'live');
+// Either launcher mode: the backend counts every API-Football request (src/ops/demo_quota.py).
+export const isManaged = (status) => isDemo(status) || isLive(status);
 
 // In demo mode nothing refreshes by itself: no refetch on tab focus, no polling.
 export const allowBackgroundRefresh = (status) => !isDemo(status);
@@ -34,7 +38,9 @@ export const dataBadge = (cache, nowMs = Date.now()) => {
   if (!cache) return null;
   const state = cache.state || 'not_cached';
   if (state === 'cached' || state === 'fresh') {
-    const label = cache.period === 'past' ? 'Cached results snapshot' : 'Cached snapshot · not live';
+    const label = cache.live
+      ? (cache.period === 'past' ? 'Live results' : 'Live fixtures')
+      : (cache.period === 'past' ? 'Cached results snapshot' : 'Cached snapshot · not live');
     const when = cache.last_updated_at ? formatUpdated(cache.last_updated_at, nowMs) : 'update time unknown';
     return { kind: 'cached', state, text: `${label} · ${when}` };
   }
@@ -52,6 +58,7 @@ export const providerLabel = (status) => (status && status.provider_label) || 'A
 const isFootballData = (status) => Boolean(status && status.provider === 'football_data');
 
 export const allowanceText = (status) => {
+  if (isLive(status)) return `${status.remaining_today} of ${status.daily_limit} requests left today (live budget)`;
   if (!isDemo(status)) return '';
   if (isFootballData(status)) {
     return `${providerLabel(status)} · ${status.remaining_today} of ${status.daily_limit} requests left today`;
@@ -61,18 +68,19 @@ export const allowanceText = (status) => {
 };
 
 export const refreshControl = (status, cache, { busy = false } = {}) => {
-  if (!isDemo(status)) return { visible: false, enabled: false };
+  if (!isManaged(status)) return { visible: false, enabled: false };
   const cost = status.cost_per_refresh || 1;
   const base = { visible: true, cost, label: `Refresh fixtures (${cost} request)`, detail: allowanceText(status) };
   if (busy) return { ...base, enabled: false, label: 'Refreshing…', reason: 'A refresh is running.' };
-  if (cache && cache.fetched) {
+  if (cache && cache.fetched && !isLive(status)) {
     const reason = isFootballData(status) && cache.provider === 'football_data'
       ? 'Cached. A day can be refreshed again 15 minutes after its last update, until the day is over.'
       : 'This date was already fetched; it is never requested again.';
     return { ...base, enabled: false, reason };
   }
   if (!status.can_refresh) {
-    const why = (status.blocked_reasons && status.blocked_reasons[0]) || 'No authorized request remains.';
+    const why = (status.blocked_reasons && status.blocked_reasons[0])
+      || (isLive(status) ? 'The daily request budget is used up.' : 'No authorized request remains.');
     return { ...base, enabled: false, reason: `Refresh unavailable: ${why}. Cached fixtures stay visible.` };
   }
   return { ...base, enabled: true, reason: '' };
@@ -80,6 +88,11 @@ export const refreshControl = (status, cache, { busy = false } = {}) => {
 
 export const confirmText = (status, date) => {
   const cost = status.cost_per_refresh || 1;
+  if (isLive(status)) {
+    return `Request fixtures for ${date} from API-Football now?\n\n`
+      + `Cost: ${cost} request.\nRemaining after this: ${Math.max(0, status.remaining_today - cost)} of `
+      + `${status.daily_limit} today (live budget).`;
+  }
   if (isFootballData(status)) {
     return `Request fixtures for ${date} from ${providerLabel(status)}?\n\n`
       + `Cost: ${cost} request.\nRemaining after this: ${Math.max(0, status.remaining_today - cost)} today.`;

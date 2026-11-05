@@ -23,6 +23,10 @@ Never the production database.
   request also needs --ledger (the shadow's shared ledger) and is reserved there as consumer "demo";
 * --fixture-provider football_data (2026-10-31): days not already fetched from API-Football come from
   football-data.org through the same explicit refresh (src/ops/football_data.py);
+* APP_MODE=live (environment or .env; src/ops/app_mode.py): fixtures of yesterday, today and tomorrow are
+  fetched automatically when due, within API_FOOTBALL_DAILY_BUDGET requests per UTC day (default 30) instead
+  of owner grants; the provider floor and the shadow-key rule still apply. APP_MODE=demo (default) is the
+  behaviour above, unchanged;
 * prediction, identity and calibration settings are the repository defaults
   (PROBABILITY_INPUTS unset = legacy, BASELINE_FREEZE unset).
 """
@@ -41,7 +45,7 @@ DEFAULT_SHADOW_ROOT = Path(pwd.getpwuid(os.getuid()).pw_dir) / "FootballShadow"
 
 def prepare(db: Path, workdir: Path, cap: int, *, ledger: Path | None = None, ledger_budget: int | None = None,
             provider_floor: int = 30, shadow_root: Path | None = DEFAULT_SHADOW_ROOT,
-            display_tz: str = "Europe/Istanbul", fixture_provider: str = "api_football"):
+            display_tz: str = "Europe/Istanbul", fixture_provider: str = "api_football", start_scheduler: bool = False):
     if db.resolve() == LIVE_DB:
         raise SystemExit("refusing: the demo never uses data/engine.db")
     if not db.exists():
@@ -68,12 +72,18 @@ def prepare(db: Path, workdir: Path, cap: int, *, ledger: Path | None = None, le
     sys.path.insert(0, str(PROJECT_ROOT))
 
     from src import config
-    from src.ops import demo_quota
+    from src.ops import app_mode, demo_quota
 
+    mode = app_mode.settings()          # APP_MODE / API_FOOTBALL_DAILY_BUDGET from the environment or .env
+    if mode.live and fixture_provider != "api_football":
+        raise SystemExit("refusing: APP_MODE=live needs --fixture-provider api_football")
     demo_quota.install(workdir / "demo_api_usage.db", cap, explicit_only=True, provider_floor=provider_floor,
                        ledger=None if ledger is None else ledger.resolve(), ledger_budget=ledger_budget,
                        shadow_key_file=None if shadow_root is None else Path(shadow_root) / "etc" / "api_key.env",
-                       api_key=config.APIFOOTBALL_API_KEY)
+                       api_key=config.APIFOOTBALL_API_KEY, live_budget=mode.daily_budget)
+    config.logger.info(f"[{mode.mode.upper()}] APP_MODE={mode.mode}"
+                       + (f", API-Football budget {mode.daily_budget}/UTC day, provider floor {provider_floor}"
+                          if mode.live else ""))
     from src.ops import demo_network
 
     demo_network.install()   # nothing external is contacted automatically (logo images excepted)
@@ -92,7 +102,9 @@ def prepare(db: Path, workdir: Path, cap: int, *, ledger: Path | None = None, le
     from api import demo_mode
     from api.main import app
 
-    demo_mode.install(app, display_timezone=display_tz, fixture_provider=fixture_provider)
+    demo_mode.install(app, display_timezone=display_tz, fixture_provider=fixture_provider, mode=mode)
+    if start_scheduler:
+        demo_mode.start_live_scheduler()   # live mode only: yesterday/today/tomorrow when due
     return workdir
 
 
@@ -117,7 +129,8 @@ def main() -> int:
     if a.ledger and not a.ledger_budget:
         p.error("--ledger needs --ledger-budget")
     prepare(a.db, a.workdir, a.cap, ledger=a.ledger, ledger_budget=a.ledger_budget, provider_floor=a.provider_floor,
-            shadow_root=a.shadow_root, display_tz=a.display_tz, fixture_provider=a.fixture_provider)
+            shadow_root=a.shadow_root, display_tz=a.display_tz, fixture_provider=a.fixture_provider,
+            start_scheduler=True)
     import uvicorn
 
     from api.main import app
