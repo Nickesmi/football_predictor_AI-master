@@ -220,3 +220,15 @@ def test_best_bets_leave_out_low_confidence_unless_included(tmp_path, monkeypatc
     assert [p["fixture_id"] for p in out["picks"]] == ["f1"] and out["excluded_low_confidence_matches"] == 1
     out = fs.best_bets_service("2030-01-01", include_low=True)
     assert [(p["fixture_id"], p["confidence"]) for p in out["picks"]] == [("f2", "Low"), ("f1", "High")]
+
+
+def test_precompute_uses_the_stored_list_even_when_the_freshness_rule_expires_it(tmp_path, monkeypatch):
+    import json
+    from fastapi import BackgroundTasks
+    from api.services import fixtures_service as fs
+    monkeypatch.setattr(fs, "_FIXTURE_CACHE_DIR", tmp_path)
+    monkeypatch.setattr(fs, "_read_fixture_cache", lambda d: None)          # "expired"
+    (tmp_path / "fixtures-2030-01-01.json").write_text(json.dumps([{"id": "f1", "status": "NS"}]))
+    bt = BackgroundTasks()
+    out = fs.precompute_predictions_service("2030-01-01", bt)
+    assert out["status"] == "queued" and out["fixture_count"] == 1 and len(bt.tasks) == 1

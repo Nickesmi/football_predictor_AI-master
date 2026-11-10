@@ -1056,7 +1056,9 @@ def precompute_predictions_service(date_str: str, background_tasks: BackgroundTa
     except ValueError:
         raise HTTPException(status_code=400, detail=f"Invalid date: {date_str!r}")
 
-    fixtures = _read_fixture_cache(date_str)
+    # The stored list, whatever its freshness: _read_fixture_cache answers "fetch again?" and returns None for a
+    # day it considers expired, which left the page-load precompute (and best bets) with nothing to do.
+    fixtures = _read_fixture_cache(date_str) or cached_fixture_list(date_str)
     if not fixtures:
         return {"status": "no_fixtures", "date": date_str, "count": 0}
 
@@ -1083,17 +1085,22 @@ def get_prediction_status_service(fixture_id: str):
 BEST_BET_STATUSES = {"NS", "TBD", ""}
 
 
+def cached_fixture_list(date_str: str) -> list:
+    """The fixture list stored for a date, without any freshness rule; [] when there is none."""
+    path = _get_cache_path(date_str)
+    if not path.exists():
+        return []
+    try:
+        return _coerce_fixture_list(json.loads(path.read_text(encoding="utf-8")))
+    except (OSError, ValueError):
+        return []
+
+
 def best_bets_service(date_str: str, include_low: bool = False, limit: int = 50) -> dict:
     """Bankroll-qualified picks across the date's fixtures (2026-11-10), from analyses already computed
     (the page-load precompute fills them; nothing is computed here). Low data-confidence matches are left
     out unless include_low: their picks are listed with confidence "Low" and their pre-confidence gate."""
-    fixtures = []
-    path = _get_cache_path(date_str)
-    if path.exists():
-        try:
-            fixtures = _coerce_fixture_list(json.loads(path.read_text(encoding="utf-8")))
-        except (OSError, ValueError):
-            fixtures = []
+    fixtures = cached_fixture_list(date_str)
     picks, pending, excluded_low = [], 0, 0
     for f in fixtures:
         if (f.get("status") or "") not in BEST_BET_STATUSES:
