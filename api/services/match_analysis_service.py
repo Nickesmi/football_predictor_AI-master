@@ -333,6 +333,13 @@ def _compute_match_analysis(home_name: str, away_name: str, league_name: str = "
     _low_data = (home_stats.matches_played < 5 or away_stats.matches_played < 5)
     _regress_factor = 0.25 if _low_data else 0.15
     poisson_model = PoissonGoalModel(league_key)
+    if identity_inputs is not None and identity_inputs.get("league_profile"):
+        # No stored profile for this league: its averages from stored results (fallback chain), not the
+        # hard-coded "default" profile.
+        from src.ml.poisson_model import LeagueProfile
+        _lp = identity_inputs["league_profile"]
+        poisson_model.profile = LeagueProfile(_lp["avg_home_goals"], _lp["avg_away_goals"],
+                                              round(_lp["avg_home_goals"] + _lp["avg_away_goals"], 3))
     pred = poisson_model.predict(
         home_scored=h_scored_adj, home_conceded=h_conceded_adj,
         away_scored=a_scored_adj, away_conceded=a_conceded_adj,
@@ -428,7 +435,7 @@ def _compute_match_analysis(home_name: str, away_name: str, league_name: str = "
         data_quality = max(0, data_quality - 30)  # Severe penalty for truly unknown teams
     elif away_profile.matches_played < 5:
         _missing_inputs.append(f"away_team '{away_name}' has only {away_profile.matches_played} matches")
-    if league_key not in ('Premier League', 'LaLiga', 'Serie A', 'Bundesliga', 'Ligue 1', 'Champions League', 'International'):
+    if identity_inputs is None and league_key not in ('Premier League', 'LaLiga', 'Serie A', 'Bundesliga', 'Ligue 1', 'Champions League', 'International'):
         _missing_inputs.append(f"league '{league_name}' uses fallback Poisson profile")
     from src.engine.audit_engine import classify_prediction_quality
     _prediction_quality = classify_prediction_quality(data_quality)
@@ -1581,6 +1588,63 @@ def _compute_match_analysis(home_name: str, away_name: str, league_name: str = "
     }
 
 
+def apply_confidence(analysis: dict, identity_inputs: dict) -> None:
+    """Attach the data confidence (High / Medium / Low) and what each side is based on (fallback chain,
+    src/identity/fallback_chain.py). Low-confidence matches keep every probability and pick, but no pick is
+    bankroll-qualified: best-bet / value lists leave them out unless the viewer includes them."""
+    conf = identity_inputs.get("confidence")
+    if not conf:
+        return
+    analysis["confidence"] = conf
+    analysis["data_basis"] = identity_inputs.get("basis") or {}
+    if identity_inputs.get("league_profile"):
+        analysis["league_profile"] = identity_inputs["league_profile"]
+    drop = set(identity_inputs.get("unavailable_markets") or [])
+    if drop:
+        # no stored corners/cards data at any level: those markets are removed, never computed from defaults
+        analysis["unavailable_markets"] = sorted(drop)
+        keep = lambda p: not (isinstance(p, dict) and p.get("section") in drop)   # noqa: E731
+        for key in ("top_picks", "suggested_picks"):
+            if isinstance(analysis.get(key), list):
+                analysis[key] = [p for p in analysis[key] if keep(p)]
+        if isinstance(analysis.get("suggested_pick"), dict) and not keep(analysis["suggested_pick"]):
+            analysis["suggested_pick"] = (analysis.get("suggested_picks") or [None])[0]
+        for tier in analysis.get("tiers") or []:
+            tier["picks"] = [p for p in tier.get("picks") or [] if keep(p)]
+        analysis["categories"] = [c for c in analysis.get("categories") or [] if c.get("category") not in drop]
+        for key in ("full_analysis", "sections"):
+            if isinstance(analysis.get(key), dict):
+                analysis[key] = {k: v for k, v in analysis[key].items() if k not in drop}
+        for side in ("home", "away"):
+            av = (analysis.get("averages") or {}).get(side) or {}
+            for k in drop:
+                av.pop(f"avg_{k.lower()}", None)
+    if conf["level"] != "Low":
+        return
+    seen = set()
+
+    def _exclude(p):
+        if isinstance(p, dict) and id(p) not in seen:
+            seen.add(id(p))
+            if p.get("bankroll_qualified"):
+                p["gate_qualified_before_confidence"] = True
+            p["bankroll_qualified"] = False
+            p["best_bet_excluded"] = "low data confidence"
+    for p in analysis.get("top_picks") or []:
+        _exclude(p)
+    for p in analysis.get("suggested_picks") or []:
+        _exclude(p)
+    if isinstance(analysis.get("suggested_pick"), dict):
+        _exclude(analysis["suggested_pick"])
+    for tier in analysis.get("tiers") or []:
+        for p in tier.get("picks") or []:
+            _exclude(p)
+        tier["bankroll_qualified_count"] = 0
+    for cat in analysis.get("categories") or []:
+        for p in (cat.get("picks") if isinstance(cat, dict) else None) or []:
+            _exclude(p)
+
+
 def build_match_analysis(fixture_id: str, *, home: str, away: str, league: str, provider: str | None = None,
                          league_id=None, league_code: str | None = None, country: str = "", home_id=None,
                          away_id=None, kickoff_utc: str | None = None,
@@ -1636,9 +1700,35 @@ def build_match_analysis(fixture_id: str, *, home: str, away: str, league: str, 
     analysis["prediction_available"] = True
     if identity_inputs is not None:
         analysis["identity"] = identity_inputs["identity"]
+        apply_confidence(analysis, identity_inputs)
     analysis["match"] = match_info
     _ANALYSIS_CACHE[fixture_id] = analysis
     return analysis
+
+
+def _fetch_thin_history(analysis: dict, provider, team_ids: dict) -> bool:
+    """On demand (live mode, TEAM_HISTORY_FETCH=on): one request per side with thin history and a provider
+    team id, unless fetched in the last 24 h. True when new results were stored."""
+    from src.ops import team_history_fetch as thf
+
+    if provider != "api_football" or not thf.enabled():
+        return False
+    from src.db.database import get_db
+    from src.identity.fallback_chain import FULL_HISTORY
+
+    conn, stored = get_db(), 0
+    if thf.provider_refused_recently(conn):
+        return False
+    for side, info in (analysis.get("data_basis") or {}).items():
+        tid = team_ids.get(side)
+        if not tid or info.get("own_matches", 0) >= FULL_HISTORY or thf.recently_fetched(conn, tid):
+            continue
+        r = thf.fetch_team(conn, tid, info.get("team", ""))
+        logger.info(f"[HISTORY] on-demand {side} team {tid}: {r.get('outcome')} inserted={r.get('inserted', 0)}")
+        stored += r.get("inserted", 0)
+        if r["outcome"] != "ok":
+            break
+    return stored > 0
 
 
 def get_match_analysis(
@@ -1668,10 +1758,13 @@ def get_match_analysis(
     try:
         if fixture_id in _ANALYSIS_CACHE:
             return _ANALYSIS_CACHE[fixture_id]
-        analysis = build_match_analysis(fixture_id, home=home_name, away=away_name, league=league,
-                                        provider=provider, league_id=league_id, league_code=league_code,
-                                        country=country, home_id=home_id, away_id=away_id,
-                                        kickoff_utc=kickoff_utc)
+        kw = dict(home=home_name, away=away_name, league=league, provider=provider, league_id=league_id,
+                  league_code=league_code, country=country, home_id=home_id, away_id=away_id,
+                  kickoff_utc=kickoff_utc)
+        analysis = build_match_analysis(fixture_id, **kw)
+        if _fetch_thin_history(analysis, provider, {"home": home_id, "away": away_id}):
+            _ANALYSIS_CACHE.pop(fixture_id, None)
+            analysis = build_match_analysis(fixture_id, **kw)
         if not analysis.get("prediction_available", True):
             return analysis
 

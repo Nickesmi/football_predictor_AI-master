@@ -11,6 +11,16 @@ def _resolve(conn, **kw):
     return resolve_for_analysis(conn, **{**base, **kw})
 
 
+def _history(conn, label, league_id, n=40, d="2026-09-10"):
+    """n stored results between other clubs: the fallback chain's league baseline (home 2, away 1)."""
+    for i in range(n):
+        fid = f"{league_id}-{i}"
+        conn.execute("INSERT INTO matches (id, date, home_team, away_team, league_name, league_id, status, provider) "
+                     "VALUES (?, ?, ?, ?, ?, ?, 'FT', 'api_football')", (fid, d, f"H{i}", f"A{i}", label, league_id))
+        conn.execute("INSERT INTO match_history (match_id, match_date, league, home_team, away_team, home_goals, "
+                     "away_goals) VALUES (?, ?, ?, ?, ?, 2, 1)", (fid, d, label, f"H{i}", f"A{i}"))
+
+
 def _laliga(conn):
     _state(conn, "Real Madrid", "LaLiga", 1)                     # stale label the legacy lookup reads
     _state(conn, "Real Madrid", "La Liga", 4, scored=2.5)        # the current history
@@ -18,15 +28,17 @@ def _laliga(conn):
     _fixture(conn, "Real Madrid", "Elche", "La Liga", 140)
     _fixture(conn, "Real Madrid", "Elche", "LaLiga", 140)
     conn.execute("UPDATE team_state SET last_match_date = '2026-09-20'")
+    _history(conn, "La Liga", 140)
 
 
 def test_split_labels_use_the_verified_record_with_the_most_matches(engine_db):
     _laliga(engine_db)
     out = _resolve(engine_db)
     assert out["available"] and out["identity"]["home"]["history_league"] == "La Liga"
-    assert out["home_stats"].matches_played == 4 and out["home_stats"].scored == round(2.5 * 1.12, 2)
-    assert out["warnings"] == ["home_team 'Real Madrid' has only 4 matches in its 'La Liga' history",
-                               "away_team 'Elche' has only 4 matches in its 'La Liga' history"]
+    # 4 matches (< FULL_HISTORY): the chain; the stale "LaLiga" record is never one of its sources
+    h = out["basis"]["home"]
+    assert h["path"] == "chain" and h["goals"]["baseline_level"] == "league" and h["records"] == ["Real Madrid | La Liga"]
+    assert out["confidence"]["level"] == "Low"
 
 
 def test_provider_spellings_resolve_by_normalised_name_only(engine_db):
@@ -34,9 +46,8 @@ def test_provider_spellings_resolve_by_normalised_name_only(engine_db):
     out = _resolve(engine_db, provider="football_data", league_id="fd-2014", league_code="PD", home="Real Madrid CF",
                    away="Real Racing Club de Santander")
     assert out["identity"]["home"]["team_name_lower"] == "real madrid"
-    assert not out["available"] and out["away_stats"] is None
-    assert out["blocking"][0].startswith("away_team 'Real Racing Club de Santander' has NO real data — identity "
-                                         "UNRESOLVED_NO_HISTORY")
+    assert out["available"] and out["basis"]["away"]["identity"].startswith("UNRESOLVED_NO_HISTORY")
+    assert out["basis"]["away"]["own_matches"] == 0 and out["confidence"]["level"] == "Low"
 
 
 def test_any_api_football_league_uses_its_own_id_and_label_and_detects_contamination(engine_db):
@@ -45,11 +56,16 @@ def test_any_api_football_league_uses_its_own_id_and_label_and_detects_contamina
     _fixture(engine_db, "SC Villa", "Bantu", "Premier League", 386)        # another country's "Premier League"
     _state(engine_db, "Vipers", "Premier League", 8)
     _fixture(engine_db, "Vipers", "Express", "Premier League", 585)
+    _history(engine_db, "Premier League", 585)
     out = _resolve(engine_db, league_id="585", league_name="Premier League", country="Uganda", home="Vipers",
                    away="SC Villa", profile_key="Premier League")
     assert out["identity"]["competition"] == "api-football-585"
     assert out["identity"]["home"]["status"] == "RESOLVED"
-    assert out["identity"]["away"]["status"] == "CONTAMINATED_HISTORY" and not out["available"]
+    assert out["identity"]["away"]["status"] == "CONTAMINATED_HISTORY"
+    # the contaminated record is never read; SC Villa is predicted from Uganda's league averages, labelled Low
+    a = out["basis"]["away"]
+    assert out["available"] and a["path"] == "chain" and a["records"] == [] and a["identity"].startswith("CONTAMINATED")
+    assert out["confidence"]["baseline"]["source"] == "Premier League" and out["confidence"]["level"] == "Low"
 
 
 def test_women_and_youth_teams_never_take_the_senior_record(engine_db):
@@ -63,9 +79,11 @@ def test_women_and_youth_teams_never_take_the_senior_record(engine_db):
 
 def test_old_history_is_reported_and_unknown_competitions_keep_the_legacy_path(engine_db):
     _laliga(engine_db)
+    engine_db.execute("UPDATE team_state SET matches_played = 12 WHERE team_name = 'Real Madrid' AND league = 'La Liga'")
     out = _resolve(engine_db, match_date="2026-11-01")
-    assert "home_team 'Real Madrid' history ends 2026-09-20 (42 days before this match); newer results are not " \
+    assert "home_team 'Real Madrid' latest stored result is 42 days before this match; newer results are not " \
            "in the database" in out["warnings"]
+    assert out["basis"]["home"]["path"] == "record"
     assert competition_for("football_data", "fd-2013", league_code="BSA") is None
     assert competition_for("sofascore", 8) is None and competition_for(None, None) is None
     assert competition_for("api_football", "x") is None

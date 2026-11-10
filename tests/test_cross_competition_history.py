@@ -32,6 +32,18 @@ def _member(conn, tid, lid, lname, country, name, n=8, rounds=None, first="2026-
                  ("api_football", str(tid), lid, lname, country, name, n, n if rounds is None else rounds, first, last))
 
 
+def _ucl_history(conn, n=40):
+    """n stored UCL results between other clubs (league id 2): the fallback chain's league baseline.
+    Home 2 goals, away 1; corners 6/4; cards 2/3."""
+    for i in range(n):
+        conn.execute("INSERT INTO matches (id, date, home_team, away_team, league_name, league_id, status, provider) "
+                     "VALUES (?, '2026-09-20', ?, ?, 'UEFA Champions League', 2, 'FT', 'api_football')",
+                     (f"ucl{i}", f"H{i}", f"A{i}"))
+        conn.execute("INSERT INTO match_history (match_id, match_date, league, home_team, away_team, home_goals, "
+                     "away_goals, home_corners, away_corners, home_cards, away_cards) VALUES (?, '2026-09-20', "
+                     "'UEFA Champions League', ?, ?, 2, 1, 6, 4, 2, 3)", (f"ucl{i}", f"H{i}", f"A{i}"))
+
+
 def _clubs(conn):
     """Feyenoord (209): 8 Eredivisie + 2 UCL. Inter (505): 5 Serie A, 0 UCL. Another 'Inter' (1150) in
     Colombia's Primera A, and Feyenoord U19 (7981) in the UEFA Youth League."""
@@ -54,6 +66,7 @@ def _clubs(conn):
     _member(conn, 505, 2, "UEFA Champions League", "World", "Inter", n=3, rounds=0)
     _member(conn, 1150, 239, "Primera A", "Colombia", "Inter", n=11, last="2026-10-31")
     _member(conn, 7981, 14, "UEFA Youth League", "World", "Feyenoord U19", n=3, rounds=0)
+    _ucl_history(conn)
 
 
 def _ucl(conn, **kw):
@@ -64,13 +77,17 @@ def _ucl(conn, **kw):
 # 1. Feyenoord in the Eredivisie and in the Champions League
 def test_feyenoord_uses_its_eredivisie_record_in_the_champions_league(engine_db):
     _clubs(engine_db)
+    engine_db.execute("UPDATE team_state SET matches_played = 12 WHERE team_name = 'Feyenoord' AND league = "
+                      "'Eredivisie'")
     out = _ucl(engine_db)
     assert out["available"], out["blocking"]
     h = out["identity"]["home_history"]
     assert h["source"] == "domestic_league" and h["record"]["history_league"] == "Eredivisie"
     assert out["identity"]["home"]["matches_played"] == 2          # own UCL record is still reported
-    assert out["home_stats"].matches_played == 8 and out["home_stats"].scored == round(2.4 * 1.12, 2)
-    assert ("home_team 'Feyenoord' uses its domestic 'Eredivisie' history (8 matches); it has 2 verified "
+    assert out["home_stats"].matches_played == 12 and out["home_stats"].scored == round(2.4 * 1.12, 2)
+    assert out["basis"]["home"]["path"] == "record"
+    assert out["home_stats"].corners == 6.0                # no stored corners for Feyenoord: league baseline
+    assert ("home_team 'Feyenoord' uses its domestic 'Eredivisie' history (12 matches); it has 2 verified "
             "'uefa-champions-league' matches") in out["warnings"]
     dom = resolve_for_analysis(engine_db, provider="api_football", league_id="88", league_name="Eredivisie",
                                country="Netherlands", profile_key="Eredivisie", match_date="2026-11-03",
@@ -86,7 +103,10 @@ def test_inter_uses_serie_a_by_provider_id_never_the_colombian_inter(engine_db):
     a = out["identity"]["away_history"]
     assert a["source"] == "domestic_league" and a["record"]["history_league"] == "Serie A"
     assert a["domestic"]["league_id"] == 135
-    assert out["away_stats"].matches_played == 5
+    # 5 matches (< FULL_HISTORY) and none stored as results: the chain, from the UCL league baseline
+    assert out["basis"]["away"]["path"] == "chain" and out["basis"]["away"]["goals"]["baseline_level"] == "league"
+    assert (out["away_stats"].scored, out["away_stats"].conceded) == (1.0, 2.0)
+    assert (out["away_stats"].corners, out["away_stats"].cards) == (4.0, 3.0)
     assert out["identity"]["away"]["status"] == "UNRESOLVED_NO_HISTORY"   # no UCL record of its own
     assert out["warnings"][-1] == ("home and away statistics come from different competitions ('Eredivisie', "
                                    "'Serie A'); the model applies no league-strength adjustment")
@@ -99,9 +119,10 @@ def test_provider_ids_are_never_shared_between_providers(engine_db):
                                league_name="UEFA Champions League", profile_key="Champions League",
                                match_date="2026-11-03", home="Feyenoord Rotterdam", away="FC Internazionale Milano",
                                home_id="675", away_id="108")
-    assert not out["available"]
+    assert out["available"] and out["confidence"]["level"] == "Low"     # predicted from UCL averages, labelled
     assert out["identity"]["away_history"]["domestic"]["status"] == "NOT_FOUND"
-    assert "listed in no domestic league" in out["blocking"][-1]
+    assert "listed in no domestic league" in out["identity"]["away_history"]["domestic"]["reason"]
+    assert out["basis"]["away"]["own_matches"] == 0 and out["basis"]["home"]["own_matches"] == 0
 
 
 # 4. Competition aliases
@@ -145,10 +166,12 @@ def test_sparse_domestic_history_is_used_with_a_warning_and_none_blocks(engine_d
     _member(engine_db, 327, 103, "Eliteserien", "Norway", "Bodo/Glimt", n=1)
     out = _ucl(engine_db, home="Bodo/Glimt", home_id="327", away="Lille", away_id="79")
     assert out["identity"]["home_history"]["record"]["history_league"] == "Eliteserien"
-    assert "home_team 'Bodo/Glimt' has only 1 matches in its 'Eliteserien' history" in out["warnings"]
-    assert out["blocking"] == ["away_team 'Lille' has NO real data — identity UNRESOLVED_NO_HISTORY: no "
-                               "uefa-champions-league history for normalised 'lille'; domestic league: provider "
-                               "team 79 is listed in no domestic league before this match"]
+    assert out["available"] and out["blocking"] == []
+    assert out["basis"]["away"]["identity"].startswith("UNRESOLVED_NO_HISTORY")
+    assert out["confidence"]["level"] == "Low"
+    assert out["confidence"]["note"] == ("Low confidence: Bodo/Glimt has no stored results; Lille has no stored "
+                                         "results; league averages used (UEFA Champions League, 40 matches); "
+                                         "domestic-league history used for this competition.")
 
 
 def test_a_sufficient_competition_record_is_kept(engine_db):
@@ -165,9 +188,13 @@ def test_records_with_results_on_or_after_kickoff_are_not_used(engine_db):
     _clubs(engine_db)
     engine_db.execute("UPDATE team_state SET last_match_date = '2026-11-03' WHERE team_name = 'Inter' AND "
                       "league = 'Serie A'")
+    for mid, d in (("s1", "2026-10-20"), ("s2", "2026-11-03")):          # one before, one on match day
+        engine_db.execute("INSERT INTO match_history (match_id, match_date, league, home_team, away_team, "
+                          "home_goals, away_goals) VALUES (?, ?, 'Serie A', 'Inter', 'Napoli', 3, 0)", (mid, d))
     out = _ucl(engine_db)
-    assert not out["available"] and out["away_stats"] is None
-    assert "already includes results dated 2026-11-03" in out["blocking"][0]
+    a = out["basis"]["away"]
+    assert out["available"] and a["path"] == "chain" and a["own_matches"] == 1     # 2026-11-03 is never read
+    assert "already includes results dated 2026-11-03" in a["record_not_used"]
 
 
 def test_membership_evidence_only_from_before_the_match(engine_db):
