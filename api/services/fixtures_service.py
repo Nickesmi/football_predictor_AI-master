@@ -1078,3 +1078,48 @@ def precompute_predictions_service(date_str: str, background_tasks: BackgroundTa
 def get_prediction_status_service(fixture_id: str):
     """Get pre-computation status for a single fixture."""
     return _PREDICTION_STATUS.get(fixture_id, {"status": "unknown"})
+
+
+BEST_BET_STATUSES = {"NS", "TBD", ""}
+
+
+def best_bets_service(date_str: str, include_low: bool = False, limit: int = 50) -> dict:
+    """Bankroll-qualified picks across the date's fixtures (2026-11-10), from analyses already computed
+    (the page-load precompute fills them; nothing is computed here). Low data-confidence matches are left
+    out unless include_low: their picks are listed with confidence "Low" and their pre-confidence gate."""
+    fixtures = []
+    path = _get_cache_path(date_str)
+    if path.exists():
+        try:
+            fixtures = _coerce_fixture_list(json.loads(path.read_text(encoding="utf-8")))
+        except (OSError, ValueError):
+            fixtures = []
+    picks, pending, excluded_low = [], 0, 0
+    for f in fixtures:
+        if (f.get("status") or "") not in BEST_BET_STATUSES:
+            continue
+        a = _ANALYSIS_CACHE.get(f.get("id"))
+        if a is None:
+            pending += 1
+            continue
+        if not a.get("prediction_available", True):
+            continue
+        level = (a.get("confidence") or {}).get("level")
+        if level == "Low" and not include_low:
+            excluded_low += 1
+            continue
+        seen = set()
+        for p in a.get("top_picks") or []:
+            ok = p.get("bankroll_qualified") or (level == "Low" and p.get("gate_qualified_before_confidence"))
+            if not ok or p.get("market") in seen:
+                continue
+            seen.add(p.get("market"))
+            picks.append({"fixture_id": f.get("id"), "home": (f.get("home_team") or {}).get("name"),
+                          "away": (f.get("away_team") or {}).get("name"),
+                          "league": (f.get("league") or {}).get("name"), "time": f.get("time"),
+                          "market": p.get("market"), "section": p.get("section"),
+                          "probability": p.get("probability"), "fair_odds": p.get("fair_odds"),
+                          "confidence": level, "confidence_note": (a.get("confidence") or {}).get("note")})
+    picks.sort(key=lambda x: x["probability"] or 0, reverse=True)
+    return {"date": date_str, "include_low": include_low, "picks": picks[:limit], "total": len(picks),
+            "excluded_low_confidence_matches": excluded_low, "analyses_pending": pending}

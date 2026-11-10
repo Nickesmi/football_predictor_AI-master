@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { identityQuery, predictionAvailability } from './predictionInputs.js';
+import { confidenceView, identityQuery, predictionAvailability } from './predictionInputs.js';
 
 test('a team without real data makes the prediction unavailable', () => {
   const a = predictionAvailability({ missing_inputs: [
@@ -49,4 +49,33 @@ test('cross-competition notes on an available prediction stay warnings', () => {
     + "league-strength adjustment"];
   assert.deepEqual(predictionAvailability({ prediction_available: true, missing_inputs: notes }),
     { available: true, blocking: [], warnings: notes });
+});
+
+test('a fallback-chain prediction is available and carries its confidence and basis', () => {
+  const analysis = {
+    prediction_available: true, missing_inputs: [],
+    confidence: { level: 'Low', note: 'Low confidence: Anguilla has 3 recent matches; league averages used (Friendlies, 80 matches).',
+                  baseline: { level: 'league', source: 'Friendlies', matches: 80, window_days: 365 } },
+    data_basis: {
+      home: { team: 'Anguilla', own_matches: 3, goals: { level: 'team+league' }, corners: { level: 'all_results' },
+              cards: { level: 'gender_age' } },
+      away: { team: 'Aruba', own_matches: 0, goals: { level: 'league' }, corners: { level: 'league' }, cards: { level: 'league' } },
+    },
+  };
+  assert.equal(predictionAvailability(analysis).available, true);
+  const v = confidenceView(analysis);
+  assert.equal(v.level, 'Low');
+  assert.match(v.note, /Anguilla has 3 recent matches/);
+  assert.deepEqual(v.sides.map((s) => [s.team, s.goals, s.corners]), [
+    ['Anguilla', 'own results + league averages', 'all stored results'],
+    ['Aruba', 'league averages', 'league averages'],
+  ]);
+  assert.match(v.style, /rose/);
+});
+
+test('no stored results at any level still blocks', () => {
+  const a = predictionAvailability({ prediction_available: false, missing_inputs: [
+    'no stored results before 2026-11-10 at any level of the fallback chain for goals (league)'] });
+  assert.equal(a.available, false);
+  assert.equal(confidenceView({}), null);
 });

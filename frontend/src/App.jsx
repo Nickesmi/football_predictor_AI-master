@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Trophy, Loader2, AlertCircle, Calendar, Target } from 'lucide-react';
 import MatchRow from './components/MatchRow';
+import BestBets from './components/BestBets';
 import MatchDetail from './components/MatchDetail';
 import DatePicker from './components/DatePicker';
 import ResultsTracker from './components/ResultsTracker';
@@ -549,6 +550,8 @@ function App() {
                 }
                 return (
                   <div className="py-1">
+                    <BestBets api={API} date={selectedDate} fixturesCount={realtimeFixtures.length}
+                      onSelect={(id) => { const m = realtimeFixtures.find((f) => f.id === id); if (m) handleMatchSelect(m); }} />
                     {/* Total count header */}
                     <div className="px-4 py-2 flex items-center gap-2 border-b border-white/5">
                       <span className="text-[10px] text-slate-500 uppercase tracking-widest">All Matches</span>

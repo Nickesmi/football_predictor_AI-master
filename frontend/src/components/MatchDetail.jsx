@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { Loader2, AlertCircle, ShieldAlert, Cpu, ChevronDown, ChevronRight, Activity, Zap, Target, CornerUpRight, CreditCard, Trophy, Layers, Filter, BarChart3, TrendingUp, Shuffle, Crosshair, Crown, Shield, Dice5 } from 'lucide-react';
-import { predictionAvailability } from '../demo/predictionInputs';
+import { confidenceView, predictionAvailability } from '../demo/predictionInputs';
 
 const getBarColor = (pct) => {
   if (pct >= 95) return "bg-emerald-500";
@@ -482,6 +482,48 @@ const ConfidenceChartCard = ({ picks, tiers = [] }) => {
 };
 
 
+/* ── Data confidence (fallback chain) ─────────── */
+const ConfidencePanel = ({ view }) => {
+  const [open, setOpen] = useState(false);
+  if (!view) return null;
+  return (
+    <div className="bg-[#111318] border border-white/5 rounded-xl px-4 py-3 mb-6">
+      <div className="flex flex-wrap items-center gap-3">
+        <span data-testid="confidence-badge" className={`px-2.5 py-0.5 rounded-full border text-[11px] font-bold uppercase tracking-wider ${view.style}`}>
+          {view.level} confidence
+        </span>
+        <span className="text-[12px] text-slate-300 flex-1 min-w-[200px]">{view.note}</span>
+        <button type="button" onClick={() => setOpen(!open)} className="text-[10px] text-slate-500 hover:text-slate-300 uppercase tracking-wider">
+          {open ? 'Hide basis' : 'What is this based on?'}
+        </button>
+      </div>
+      {view.level === 'Low' && (
+        <p className="text-[10px] text-slate-500 mt-2">Low-confidence picks are shown but left out of best bets by default.</p>
+      )}
+      {open && (
+        <div className="mt-3 grid gap-2 sm:grid-cols-2 text-[11px] text-slate-400">
+          {view.sides.map((s) => (
+            <div key={s.side} className="bg-black/30 rounded-lg px-3 py-2">
+              <div className="text-slate-200 font-semibold mb-1">{s.team} <span className="text-slate-500 font-normal">({s.side}, {s.ownMatches} own results)</span></div>
+              <div>Goals: {s.goals}</div>
+              <div>Corners: {s.corners}</div>
+              <div>Cards: {s.cards}</div>
+            </div>
+          ))}
+          {view.baseline && (
+            <div className="sm:col-span-2 text-slate-500">
+              Baseline: {view.baseline.source} — {view.baseline.matches} matches in the last {view.baseline.window_days} days
+              (home {view.baseline.home_goals}, away {view.baseline.away_goals} goals per match).
+              {view.profile && ' This league has no stored profile; these averages are used as its profile.'}
+              {view.elo && ` National-team Elo: ${view.elo.home} vs ${view.elo.away} (fitted on ${view.elo.fitted_on} international results).`}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
+
 /* ── Random Suggested Picks List (Unsorted) ─────────── */
 const SuggestedPicksCard = ({ picks = [], pick = null }) => {
   const initialList = useMemo(() => {
@@ -688,11 +730,11 @@ const MatchDetail = ({ fixture, analysis, loading, error }) => {
         </div>
         <div className="bg-amber-500/10 border border-amber-500/25 rounded-xl p-6">
           <div className="flex items-center gap-2 text-amber-400 font-bold mb-2">
-            <AlertCircle className="w-5 h-5" /> Prediction unavailable: required data is missing
+            <AlertCircle className="w-5 h-5" /> Prediction unavailable: no stored results at any level
           </div>
           <p className="text-sm text-slate-300 mb-3">
-            At least one team has no verified history that can be used for this match, so no probabilities or
-            picks are shown. Nothing is filled in from defaults. Reasons:
+            Neither the teams, the league, the country nor this type of competition has stored results before
+            kick-off, so there is nothing real to base probabilities on. Nothing is filled in from defaults. Reasons:
           </p>
           <ul className="text-xs text-slate-400 list-disc pl-5 space-y-1">
             {[...inputs.blocking, ...inputs.warnings].map((n) => <li key={n}>{n}</li>)}
@@ -778,6 +820,8 @@ const MatchDetail = ({ fixture, analysis, loading, error }) => {
           {analysis.total_qualified} QUALIFIED (≥80%)
         </span>
       </div>
+
+      <ConfidencePanel view={confidenceView(analysis)} />
 
       {inputs.warnings.length > 0 && (
         <div className="bg-amber-500/5 border border-amber-500/20 rounded-xl px-4 py-3 mb-6 text-[11px] text-amber-300/90">

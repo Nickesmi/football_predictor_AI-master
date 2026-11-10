@@ -26,6 +26,11 @@ def get_prediction_status(fixture_id: str):
     return fixtures_service.get_prediction_status_service(fixture_id)
 
 
+@router.get("/api/best-bets/{date_str}")
+def get_best_bets(date_str: str, include_low: bool = False):
+    return fixtures_service.best_bets_service(date_str, include_low=include_low)
+
+
 @router.get("/api/fixtures/{date_str}")
 def get_fixtures_by_date(date_str: str, background_tasks: BackgroundTasks, force_refresh: bool = False):
     return fixtures_service.get_fixtures_by_date_service(date_str, background_tasks, force_refresh=force_refresh)
