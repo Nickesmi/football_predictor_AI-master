@@ -35,6 +35,7 @@ then never contacted.
 from __future__ import annotations
 
 import json
+import os
 import threading
 from datetime import date, datetime, timedelta
 
@@ -430,12 +431,34 @@ def live_tick() -> list[dict]:
         return []
     d = date.fromisoformat(_today())
     out = []
-    for day in ((d - timedelta(days=1)).isoformat(), d.isoformat(), (d + timedelta(days=1)).isoformat()):
+    ahead = _settings["mode"].days_ahead
+    for day in [(d + timedelta(days=i)).isoformat() for i in range(-1, ahead + 1)]:
         due, why = _due(day)
         if due:
             r = _refresh(day, BackgroundTasks(), automatic=True)
             out.append({"date": day, "reason": why, "state": r.get("state")})
+    hist = team_history_pass()
+    if hist:
+        out.append({"team_history": hist})
     return out
+
+
+def team_history_pass(max_requests: int | None = None) -> dict | None:
+    """Live mode with TEAM_HISTORY_FETCH=on: fetch history for teams in the next 7 days of cached fixtures
+    with thin stored history (src/ops/team_history_fetch.py). Off by default; the budget applies."""
+    from src.ops import team_history_fetch as thf
+
+    if not live() or not thf.enabled():
+        return None
+    from api.services import fixtures_service
+    from src.db.database import get_db
+
+    n = max_requests if max_requests is not None else int(os.environ.get("TEAM_HISTORY_PER_TICK") or 10)
+    rep = thf.prefetch_upcoming(get_db(), fixtures_service._FIXTURE_CACHE_DIR, _today(), days=7, max_requests=n)
+    if rep.get("inserted"):
+        from api.services.match_analysis_service import _ANALYSIS_CACHE
+        _ANALYSIS_CACHE.clear()
+    return rep
 
 
 def start_live_scheduler(interval_seconds: int = 600) -> bool:

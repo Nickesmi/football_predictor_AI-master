@@ -12,6 +12,11 @@ Read once at start-up by scripts/demo_server.py, from the environment or the lau
     LIVE_TOMORROW_REFRESH_MINUTES=360  live only: re-fetch tomorrow at most this often.
     LIVE_MANUAL_MIN_MINUTES=10         live only: a manual refresh of a date is refused within this time of its
                                        last update.
+    LIVE_FIXTURE_DAYS_AHEAD=1          live only: fetch fixtures up to this many days ahead (1..7). Keep 1 on the
+                                       free plan (it refuses later dates); 7 on a paid plan for the 7-day
+                                       team-history prefetch. Days after tomorrow refresh like tomorrow.
+    TEAM_HISTORY_FETCH=off             live only: on = fetch a team's last results by provider team id
+                                       (src/ops/team_history_fetch.py). Needs a paid plan.
 
 Live mode fetches only yesterday, today and tomorrow (display time zone): the API-Football free plan refuses
 other dates. Yesterday is fetched again until all of its fixtures are finished; that is the daily results
@@ -38,6 +43,7 @@ class ModeSettings:
     today_minutes: int
     tomorrow_minutes: int
     manual_min_minutes: int
+    days_ahead: int = 1
 
     @property
     def live(self) -> bool:
@@ -67,7 +73,8 @@ def settings(env: dict | None = None) -> ModeSettings:
     return ModeSettings(mode, budget,
                         _int(env, "LIVE_TODAY_REFRESH_MINUTES", 120, 15, 24 * 60),
                         _int(env, "LIVE_TOMORROW_REFRESH_MINUTES", 360, 30, 24 * 60),
-                        _int(env, "LIVE_MANUAL_MIN_MINUTES", 10, 1, 24 * 60))
+                        _int(env, "LIVE_MANUAL_MIN_MINUTES", 10, 1, 24 * 60),
+                        _int(env, "LIVE_FIXTURE_DAYS_AHEAD", 1, 1, 7))
 
 
 def _age_minutes(updated_at: str | None, now: datetime) -> float | None:
@@ -85,8 +92,9 @@ def refresh_due(s: ModeSettings, date_str: str, today: str, updated_at: str | No
     if not s.live:
         return False, "demo mode"
     d, t = date.fromisoformat(date_str), date.fromisoformat(today)
-    if not t - timedelta(days=1) <= d <= t + timedelta(days=1):
-        return False, "outside yesterday..tomorrow (the free plan refuses other dates)"
+    if not t - timedelta(days=1) <= d <= t + timedelta(days=s.days_ahead):
+        return False, (f"outside yesterday..today+{s.days_ahead} (LIVE_FIXTURE_DAYS_AHEAD; the free plan refuses "
+                       "dates after tomorrow)")
     age = _age_minutes(updated_at, now)
     if age is None:
         return True, "not fetched yet"
