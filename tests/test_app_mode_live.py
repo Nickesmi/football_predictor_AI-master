@@ -159,3 +159,23 @@ OUT["same"] = before == after; OUT["n"] = len(r["fixtures"])
 OUT["last"] = r["demo"]["last_attempt"]["state"]
 """, [_ok(TODAY), {"status": 500}])
     assert out["calls"] == 2 and out["same"] and out["n"] == 2 and out["last"] == "provider_error"
+
+
+def test_a_failed_refresh_is_not_retried_on_every_page_load(env):
+    out = _ok_live(env, f"""
+client.get("/api/fixtures/{TODAY}")
+client.get("/api/fixtures/{TODAY}")
+client.get("/api/fixtures/{TODAY}")
+demo_quota._state['clock'] = lambda: datetime(2030, 1, 5, 12, 31, tzinfo=timezone.utc)
+client.get("/api/fixtures/{TODAY}")
+""", [{"status": 500}, {"status": 500}])
+    assert out["calls"] == 2                     # first load, then once more after LIVE_RETRY_MINUTES (30)
+
+
+def test_retry_policy_unit():
+    s = app_mode.settings({"APP_MODE": "live"})
+    now = datetime(2030, 1, 5, 12, 0, tzinfo=timezone.utc)
+    failed = {"at": "2030-01-05T11:45:00+00:00", "state": "provider_error"}
+    assert not app_mode.refresh_due(s, TODAY, TODAY, None, None, now, failed)[0]
+    assert app_mode.refresh_due(s, TODAY, TODAY, None, None, now, {**failed, "at": "2030-01-05T11:20:00+00:00"})[0]
+    assert app_mode.refresh_due(s, TODAY, TODAY, None, None, now, {**failed, "state": "fresh"})[0]

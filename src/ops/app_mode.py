@@ -12,6 +12,8 @@ Read once at start-up by scripts/demo_server.py, from the environment or the lau
     LIVE_TOMORROW_REFRESH_MINUTES=360  live only: re-fetch tomorrow at most this often.
     LIVE_MANUAL_MIN_MINUTES=10         live only: a manual refresh of a date is refused within this time of its
                                        last update.
+    LIVE_RETRY_MINUTES=30              live only: after a failed refresh of a date, wait this long before an
+                                       automatic retry (page loads and the scheduler).
     LIVE_FIXTURE_DAYS_AHEAD=1          live only: fetch fixtures up to this many days ahead (1..7). Keep 1 on the
                                        free plan (it refuses later dates); 7 on a paid plan for the 7-day
                                        team-history prefetch. Days after tomorrow refresh like tomorrow.
@@ -44,6 +46,7 @@ class ModeSettings:
     tomorrow_minutes: int
     manual_min_minutes: int
     days_ahead: int = 1
+    retry_minutes: int = 30
 
     @property
     def live(self) -> bool:
@@ -74,7 +77,8 @@ def settings(env: dict | None = None) -> ModeSettings:
                         _int(env, "LIVE_TODAY_REFRESH_MINUTES", 120, 15, 24 * 60),
                         _int(env, "LIVE_TOMORROW_REFRESH_MINUTES", 360, 30, 24 * 60),
                         _int(env, "LIVE_MANUAL_MIN_MINUTES", 10, 1, 24 * 60),
-                        _int(env, "LIVE_FIXTURE_DAYS_AHEAD", 1, 1, 7))
+                        _int(env, "LIVE_FIXTURE_DAYS_AHEAD", 1, 1, 7),
+                        _int(env, "LIVE_RETRY_MINUTES", 30, 5, 24 * 60))
 
 
 def _age_minutes(updated_at: str | None, now: datetime) -> float | None:
@@ -87,10 +91,18 @@ def _age_minutes(updated_at: str | None, now: datetime) -> float | None:
 
 
 def refresh_due(s: ModeSettings, date_str: str, today: str, updated_at: str | None, fixtures: list | None,
-                now: datetime) -> tuple[bool, str]:
-    """Whether live mode should fetch `date_str` now, and why (for the log and the interface)."""
+                now: datetime, last_attempt: dict | None = None) -> tuple[bool, str]:
+    """Whether live mode should fetch `date_str` now, and why (for the log and the interface).
+
+    `last_attempt` ({"at", "state"}): a failed refresh is retried only after retry_minutes, so an
+    unreachable or refusing provider is not asked again on every page load."""
     if not s.live:
         return False, "demo mode"
+    if last_attempt and last_attempt.get("state") not in (None, "fresh"):
+        age = _age_minutes(last_attempt.get("at"), now)
+        if age is not None and age < s.retry_minutes:
+            return False, (f"last refresh failed ({last_attempt.get('state')}) {int(age)} min ago; retry after "
+                           f"{s.retry_minutes} min")
     d, t = date.fromisoformat(date_str), date.fromisoformat(today)
     if not t - timedelta(days=1) <= d <= t + timedelta(days=s.days_ahead):
         return False, (f"outside yesterday..today+{s.days_ahead} (LIVE_FIXTURE_DAYS_AHEAD; the free plan refuses "

@@ -327,7 +327,7 @@ def _due(date_str: str, fixtures: list | None = None) -> tuple[bool, str]:
     if fixtures is None:
         fixtures = _storage_file(date_str)
     return app_mode.refresh_due(_settings["mode"], date_str, _today(), demo_quota.last_fixture_update(date_str),
-                                fixtures, demo_quota._now())
+                                fixtures, demo_quota._now(), demo_quota.last_refresh_attempt(date_str))
 
 
 def _manual_too_soon(date_str: str) -> str | None:
